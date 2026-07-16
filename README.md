@@ -1,3 +1,5 @@
+![ic_launcher.png](app/src/main/res/mipmap-xxxhdpi/ic_launcher.png)
+
 # SoundCloud Android
 
 Супер пупер форк на Android (на IOS не будет, я за ваш SWIFT не бум бум)

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SoundCloud</string>
+    <string name="search_hint">Поиск треков…</string>
+    <string name="search_empty">Ничего не найдено</string>
+    <string name="search_idle">Введи запрос и жми поиск</string>
+    <string name="wave_title">Волна</string>
+    <string name="results_title">Результаты</string>
+    <string name="wave_empty">Волна пока пустая - послушай что-нибудь через поиск</string>
+    <string name="tab_search">Поиск</string>
+    <string name="tab_wave">Волна</string>
+    <string name="tab_history">История</string>
+    <string name="history_empty">История пуста — включи что-нибудь</string>
+    <string name="load_more">Показать ещё</string>
+    <string name="error_network">Ошибка сети. Проверь соединение.</string>
+    <string name="login_explain">Войди через аккаунт SoundCloud — откроется браузер. После входа вернись в приложение.</string>
+    <string name="login_button">Войти через SoundCloud</string>
+    <string name="login_waiting">Жду завершения входа в браузере…</string>
+    <string name="login_failed">Не удалось войти</string>
+    <string name="login_timeout">Время вышло - попробуй ещё раз</string>
+</resources>

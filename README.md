@@ -15,8 +15,6 @@
 <a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
 <img src="https://img.shields.io/github/v/release/okeydw/SoundCloud-Android?style=for-the-badge&logo=github&color=0048FF&label=VERSION" alt="Version"/>
 </a>
-<a href="https://github.com/okeydw/SoundCloud-Android/releases">
-<img src="https://img.shields.io/github/downloads/okeydw/SoundCloud-Android/total?style=for-the-badge&logo=android&color=0048FF&label=Downloads" alt="Downloads"/>
 </a>
 <a href="LICENSE">
 <img src="https://img.shields.io/badge/License-MIT-0048FF?style=for-the-badge" alt="License"/>

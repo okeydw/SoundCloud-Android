@@ -5,6 +5,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val appVersionName = "0.3.5"
+val appVersionCode = 3
+
 android {
     namespace = "com.scd.android"
     compileSdk = 35
@@ -13,8 +16,21 @@ android {
         applicationId = "com.scd.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.3.4"
+        versionCode = appVersionCode
+        versionName = appVersionName
+    }
+
+    val ciKeystore = System.getenv("KEYSTORE_FILE")
+
+    signingConfigs {
+        if (ciKeystore != null) {
+            create("release") {
+                storeFile = file(ciKeystore)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -25,6 +41,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (ciKeystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -34,6 +51,13 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    applicationVariants.all {
+        outputs.all {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
+                "SoundCloud-Android-$appVersionName-${buildType.name}.apk"
+        }
     }
 
     buildFeatures {
@@ -46,6 +70,10 @@ android {
         htmlReport = true
         textReport = true
     }
+}
+
+base {
+    archivesName = "SoundCloud-Android-$appVersionName"
 }
 
 dependencies {

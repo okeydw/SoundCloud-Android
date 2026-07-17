@@ -43,6 +43,11 @@
     <string name="create">Создать</string>
     <string name="add_to_playlist">Добавить в плейлист</string>
     <string name="added">Добавлено</string>
+    <string name="liked_playlists">Понравившиеся плейлисты</string>
+    <string name="greeting_morning">Доброе утро</string>
+    <string name="greeting_day">Добрый день</string>
+    <string name="greeting_evening">Добрый вечер</string>
+    <string name="greeting_night">Доброй ночи</string>
     <string name="playlist_created">Плейлист создан</string>
     <string name="playlist_creating_slow">Создаётся… появится через пару секунд</string>
     <string name="immersive_artwork">Обложка на весь экран</string>

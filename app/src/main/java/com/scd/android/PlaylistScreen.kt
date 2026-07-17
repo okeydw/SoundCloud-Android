@@ -40,9 +40,13 @@ fun PlaylistScreen(
     var hasMore by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
+    var downloadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scope = rememberCoroutineScope()
+    val liked = LikedPlaylists.isLiked(playlist.urn)
 
     BackHandler(onBack = onBack)
+
+    LaunchedEffect(Unit) { LikedPlaylists.seed() }
 
     fun load(p: Int) {
         if (loading) return
@@ -72,15 +76,27 @@ fun PlaylistScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            IconButton(onClick = { scope.launch { LikedPlaylists.toggle(playlist) } }) {
+                Icon(
+                    painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                    null,
+                    tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
             if (downloading) {
-                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(12.dp))
+                IconButton(onClick = { downloadJob?.cancel() }) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
             } else {
                 IconButton(onClick = {
-                    scope.launch {
+                    downloadJob = scope.launch {
                         downloading = true
-                        Downloads.downloadBatch(tracks)
-                        downloading = false
+                        try {
+                            Downloads.downloadBatch(tracks, playlist.urn, playlist.title)
+                        } finally {
+                            downloading = false
+                        }
                     }
                 }) {
                     Icon(painterResource(R.drawable.ic_download), null, modifier = Modifier.size(20.dp))

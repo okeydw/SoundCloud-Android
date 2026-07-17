@@ -17,6 +17,8 @@ object Prefs {
         private set
     var immersiveArtwork by mutableStateOf(false)
         private set
+    var username by mutableStateOf<String?>(null)
+        private set
 
     fun init(context: Context) {
         if (::sp.isInitialized) return
@@ -25,6 +27,12 @@ object Prefs {
         offline = sp.getBoolean("offline", false)
         language = sp.getString("language", "system") ?: "system"
         immersiveArtwork = sp.getBoolean("immersive_artwork", false)
+        username = sp.getString("username", null)
+    }
+
+    fun saveUsername(value: String?) {
+        username = value
+        sp.edit().putString("username", value).apply()
     }
 
     fun changeImmersiveArtwork(value: Boolean) {

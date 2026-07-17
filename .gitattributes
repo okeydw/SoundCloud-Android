@@ -1,13 +1,9 @@
-# Нормализация окончаний строк
 * text=auto eol=lf
 
-# Windows-скрипты — только CRLF
 *.bat text eol=crlf
 
-# Gradle wrapper — Unix LF, иначе CI-раннер не запустит
 gradlew text eol=lf
 
-# Бинарные файлы — не трогать
 *.png binary
 *.jpg binary
 *.jpeg binary

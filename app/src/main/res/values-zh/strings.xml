@@ -43,6 +43,11 @@
     <string name="create">创建</string>
     <string name="add_to_playlist">添加到播放列表</string>
     <string name="added">已添加</string>
+    <string name="liked_playlists">喜欢的播放列表</string>
+    <string name="greeting_morning">早上好</string>
+    <string name="greeting_day">下午好</string>
+    <string name="greeting_evening">晚上好</string>
+    <string name="greeting_night">晚安</string>
     <string name="playlist_created">播放列表已创建</string>
     <string name="playlist_creating_slow">正在创建…稍后即会显示</string>
     <string name="immersive_artwork">全屏封面</string>

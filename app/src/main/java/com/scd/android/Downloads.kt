@@ -85,18 +85,59 @@ object Downloads {
         }
     }
 
-    suspend fun downloadBatch(tracks: List<Track>) {
+    suspend fun downloadBatch(
+        tracks: List<Track>,
+        playlistUrn: String? = null,
+        playlistTitle: String? = null,
+    ) {
         val pending = tracks.filter { !isDownloaded(it.urn) }
         val total = pending.size
         if (total == 0) return
+        val single = tracks.size == 1
         var done = 0
-        notifyProgress(done, total)
-        for (t in pending) {
-            download(t)
-            done++
-            notifyProgress(done, total)
+        try {
+            notifyProgress(done, total, playlistUrn, playlistTitle, single)
+            for (t in pending) {
+                download(t)
+                done++
+                notifyProgress(done, total, playlistUrn, playlistTitle, single)
+            }
+            notifyComplete(done, total, playlistUrn, playlistTitle, single)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            dismissNotification()
+            throw e
         }
-        notifyComplete(done, total)
+    }
+
+    fun dismissNotification() {
+        if (::appContext.isInitialized) {
+            runCatching { NotificationManagerCompat.from(appContext).cancel(NOTIF_ID) }
+        }
+    }
+
+    private fun contentIntent(
+        playlistUrn: String?,
+        playlistTitle: String?,
+        single: Boolean,
+    ): android.app.PendingIntent {
+        val intent = android.content.Intent(appContext, MainActivity::class.java).apply {
+            action = android.content.Intent.ACTION_MAIN
+            addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+            flags = android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+            when {
+                playlistUrn != null -> {
+                    putExtra("open_playlist_urn", playlistUrn)
+                    putExtra("open_playlist_title", playlistTitle ?: "")
+                }
+                single -> putExtra("open_player", true)
+            }
+        }
+        return android.app.PendingIntent.getActivity(
+            appContext, 1,
+            intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     suspend fun remove(urn: String): Unit = withContext(Dispatchers.IO) {
@@ -109,28 +150,43 @@ object Downloads {
     }
 
     @SuppressLint("MissingPermission")
-    private fun notifyProgress(done: Int, total: Int) {
+    private fun notifyProgress(
+        done: Int,
+        total: Int,
+        playlistUrn: String?,
+        playlistTitle: String?,
+        single: Boolean,
+    ) {
         if (!::appContext.isInitialized) return
         val notif = NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_download)
-            .setContentTitle(appContext.getString(R.string.downloading))
+            .setContentTitle(playlistTitle ?: appContext.getString(R.string.downloading))
             .setContentText("$done / $total")
             .setProgress(total, done, false)
             .setOngoing(true)
             .setSilent(true)
+            .setContentIntent(contentIntent(playlistUrn, playlistTitle, single))
             .build()
         runCatching { NotificationManagerCompat.from(appContext).notify(NOTIF_ID, notif) }
     }
 
     @SuppressLint("MissingPermission")
-    private fun notifyComplete(done: Int, total: Int) {
+    private fun notifyComplete(
+        done: Int,
+        total: Int,
+        playlistUrn: String?,
+        playlistTitle: String?,
+        single: Boolean,
+    ) {
         if (!::appContext.isInitialized) return
         val notif = NotificationCompat.Builder(appContext, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_check)
             .setContentTitle(appContext.getString(R.string.download_done))
             .setContentText(appContext.getString(R.string.download_done_count, done))
             .setOngoing(false)
+            .setAutoCancel(true)
             .setSilent(true)
+            .setContentIntent(contentIntent(playlistUrn, playlistTitle, single))
             .build()
         runCatching { NotificationManagerCompat.from(appContext).notify(NOTIF_ID, notif) }
     }

@@ -15,7 +15,7 @@
 <a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
 <img src="https://img.shields.io/github/v/release/okeydw/SoundCloud-Android?style=for-the-badge&logo=github&color=0048FF&label=VERSION" alt="Version"/>
 </a>
-</a>
+
 <a href="LICENSE">
 <img src="https://img.shields.io/badge/License-MIT-0048FF?style=for-the-badge" alt="License"/>
 </a>
@@ -110,7 +110,7 @@
 
 Тот же бэкенд, что и у [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) - приложение работает как ещё один клиент к нему.
 
-**Совместимость:** `minSdk 26` (Android 8.0) … `targetSdk 35`, `compileSdk 35`.
+**Совместимость:** `minSdk 26` (Android 8.0) … (Android `targetSdk 35`, `compileSdk 35` .
 
 ---
 
@@ -118,29 +118,33 @@
 
 ```
 app/src/main/java/com/scd/android/
-  App.kt              - Application: инициализация сессии, кэша, настроек, Coil-загрузчик обложек через прокси
-  MainActivity.kt     - точка входа, навигация (Поиск / Волна / Я), баннер «нет интернета», Scaffold
-  Api.kt              - API-клиент: поиск, стрим, обложки, лайки/дизлайки, плейлисты, история, HTTP-кэш
+  App.kt              - Application: инициализация сессии, кэша, настроек, Coil-загрузчик обложек через прокси (уникальный ключ на картинку)
+  MainActivity.kt     - точка входа, навигация (Поиск / Волна / Я), плитки-мозаика, баннер «нет интернета», отсев недоступных треков, deep-link из уведомлений
+  Api.kt              - API-клиент: поиск, стрим, обложки, лайки/дизлайки треков и плейлистов, история, модели данных; многоуровневый HTTP-кэш (холодные данные - надолго)
   NetMonitor.kt       - проверка сети (Wi-Fi / моб. данные) + офлайн-фолбэк из кэша
-  Prefs.kt            - настройки: тема, язык, офлайн-режим, иммерсивная обложка
+  Prefs.kt            - настройки (тема, язык, офлайн, иммерсив) + кэш имени пользователя
   LocaleHelper.kt     - подмена локали приложения (смена языка)
 
   PlaybackService.kt  - MediaSessionService: фоновый плеер, уведомление, лайк/дизлайк в нём, открытие плеера по тапу
-  Player.kt           - мини-плеер и полноэкранный плеер (waveform, жесты, shuffle/repeat, иммерсив, marquee)
-  NowPlaying.kt       - глобальное состояние текущего трека (подсветка в списках, открытие плеера)
+  Player.kt           - мини-плеер и полноэкранный плеер (waveform, жесты, shuffle/repeat, иммерсив, marquee, добавление в плейлист)
+  NowPlaying.kt       - глобальное состояние плеера + события навигации/обновления плейлистов (PlaylistEvents, NavEvents)
 
-  WaveScreen.kt       - Волна: лента с пейджером, свайпы лайк/дизлайк, обновление
+  WaveScreen.kt       - Волна: лента с пейджером, свайпы и двойной тап = лайк с анимацией, обновление
   ArtistScreen.kt     - профиль автора: треки и плейлисты (в т.ч. офлайн из скачанного)
-  PlaylistScreen.kt   - экран плейлиста: список треков, скачать всё
-  LibraryScreen.kt    - вкладка «Я»: лайкнутые, скачанные, плейлисты, история + экран настроек
+  PlaylistScreen.kt   - экран плейлиста: список треков, лайк плейлиста, скачать всё / отменить
+  LibraryScreen.kt    - вкладка «Я»: приветствие, лайкнутые, скачанные, свои и лайкнутые плейлисты, история + экран настроек
 
-  Likes.kt / Dislikes.kt - состояние лайков/дизлайков (взаимоисключающие, синк с бэкендом)
-  Downloads.kt        - скачивание треков в приватную папку, индекс, уведомление прогресса
+  Likes.kt / Dislikes.kt - состояние лайков/дизлайков треков (взаимоисключающие, синк с бэкендом)
+  LikedPlaylists.kt   - состояние лайкнутых плейлистов (синк с бэкендом)
+  Downloads.kt        - скачивание треков в приватную папку, индекс, уведомление с прогрессом, отмена и deep-link
   Genres.kt           - список жанров для плиток на пустом поиске
 
 app/src/main/res/
   drawable/           - векторные иконки (стиль Lucide) + логотип
   values/, values-*/  - строки на 9 языках + values-night (тёмная тема)
+
+proguard-rules.pro    - правила R8 для release-сборки (serialization / OkHttp)
+.github/workflows/    - CI: lint, тесты, сборка debug APK
 ```
 
 Полный список изменений - в [CHANGELOG.md](CHANGELOG.md).

@@ -60,7 +60,20 @@ private sealed interface LibView {
     data object Liked : LibView
     data object Downloaded : LibView
     data object HistoryView : LibView
-    data class PlaylistView(val urn: String, val title: String) : LibView
+    data class PlaylistView(val urn: String, val title: String, val owned: Boolean = true) : LibView
+}
+
+@Composable
+private fun greeting(): String {
+    val hour = remember { java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY) }
+    return stringResource(
+        when (hour) {
+            in 5..11 -> R.string.greeting_morning
+            in 12..17 -> R.string.greeting_day
+            in 18..22 -> R.string.greeting_evening
+            else -> R.string.greeting_night
+        }
+    )
 }
 
 @Composable
@@ -72,21 +85,30 @@ fun LibraryScreen(
 ) {
     val context = LocalContext.current
     var view by remember { mutableStateOf<LibView>(LibView.Root) }
-    var username by remember { mutableStateOf<String?>(null) }
+    var username by remember { mutableStateOf(Prefs.username) }
     var playlists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
+    var likedPls by remember { mutableStateOf<List<Playlist>>(emptyList()) }
     var showSettings by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
-        runCatching { Api.authStatus() }.onSuccess { username = it.username }
+        runCatching { Api.authStatus() }.onSuccess {
+            username = it.username
+            Prefs.saveUsername(it.username)
+        }
     }
 
     LaunchedEffect(view, PlaylistEvents.version) {
-        if (view == LibView.Root) {
-            runCatching { Api.myPlaylists(fresh = !offline) }
-                .recoverCatching { if (!offline) Api.myPlaylists(fresh = false) else throw it }
-                .onSuccess { playlists = it.collection }
+        if (view != LibView.Root) return@LaunchedEffect
+        runCatching { Api.myPlaylists(fresh = false) }.onSuccess { playlists = it.collection }
+        runCatching { Api.likedPlaylists(fresh = false) }.onSuccess { likedPls = it.collection }
+        if (!offline) {
+            runCatching { Api.myPlaylists(fresh = true) }.onSuccess { playlists = it.collection }
+            runCatching { Api.likedPlaylists(fresh = true) }.onSuccess {
+                likedPls = it.collection
+                LikedPlaylists.seed(force = true)
+            }
         }
     }
 
@@ -96,6 +118,7 @@ fun LibraryScreen(
             onBack = { showSettings = false },
             onLogout = {
                 showSettings = false
+                Prefs.saveUsername(null)
                 Api.storeSession(context, null)
                 onSessionExpired()
             },
@@ -111,28 +134,20 @@ fun LibraryScreen(
                 Modifier.fillMaxWidth().padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    Modifier
-                        .size(36.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painterResource(R.drawable.ic_user),
-                        null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        greeting(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        username ?: "SoundCloud",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    username ?: "SoundCloud",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
                 IconButton(onClick = { showCreate = true }) {
                     Icon(painterResource(R.drawable.ic_plus), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -158,6 +173,16 @@ fun LibraryScreen(
                         view = LibView.PlaylistView(p.urn, p.title)
                     }
                 }
+                items(likedPls) { p ->
+                    LibRow(
+                        R.drawable.ic_music,
+                        p.title,
+                        subtitle = p.user?.username ?: stringResource(R.string.tracks_count, p.track_count),
+                        artworkUrl = p.artwork_url,
+                    ) {
+                        view = LibView.PlaylistView(p.urn, p.title, owned = false)
+                    }
+                }
                 item {
                     LibRow(R.drawable.ic_history, stringResource(R.string.history)) { view = LibView.HistoryView }
                 }
@@ -171,7 +196,7 @@ fun LibraryScreen(
             dimUndownloaded = offline,
             downloadAll = !offline,
             loader = { page ->
-                val res = Api.likedTracks(page)
+                val res = Api.likedTracks(page, fresh = page == 0 && !offline)
                 Likes.seed(res.collection)
                 res.collection to res.has_more
             },
@@ -192,6 +217,10 @@ fun LibraryScreen(
             loader = { page ->
                 val res = Api.history(offset = page * 50, limit = 50)
                 val batch = res.collection.map { it.toTrack() }
+                    .fold(mutableListOf<Track>()) { acc, t ->
+                        if (acc.lastOrNull()?.urn != t.urn) acc.add(t)
+                        acc
+                    }
                 batch to (page * 50 + res.collection.size < res.total)
             },
         )
@@ -206,18 +235,19 @@ fun LibraryScreen(
                 res.collection to res.has_more
             },
             downloadAll = !offline,
-            onRename = if (offline) null else { newTitle ->
+            onRename = if (offline || !v.owned) null else { newTitle ->
                 Api.renamePlaylist(v.urn, newTitle)
                 playlists = playlists.map { if (it.urn == v.urn) it.copy(title = newTitle) else it }
                 view = LibView.PlaylistView(v.urn, newTitle)
             },
-            onDelete = if (offline) null else {
+            onDelete = if (offline || !v.owned) null else {
                 {
                     runCatching { Api.deletePlaylist(v.urn) }
                     playlists = playlists.filterNot { it.urn == v.urn }
                     view = LibView.Root
                 }
             },
+            likedPlaylistUrn = if (v.owned) null else v.urn,
         )
     }
 
@@ -351,6 +381,7 @@ private fun LibTracks(
     dimUndownloaded: Boolean = false,
     onRename: (suspend (String) -> Unit)? = null,
     onDelete: (suspend () -> Unit)? = null,
+    likedPlaylistUrn: String? = null,
 ) {
     var items by remember { mutableStateOf<List<Track>>(emptyList()) }
     var page by remember { mutableStateOf(0) }
@@ -360,6 +391,7 @@ private fun LibTracks(
     var showRename by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
+    var downloadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scope = rememberCoroutineScope()
 
     fun load(p: Int) {
@@ -398,6 +430,17 @@ private fun LibTracks(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            likedPlaylistUrn?.let { urn ->
+                val plLiked = LikedPlaylists.isLiked(urn)
+                IconButton(onClick = { scope.launch { LikedPlaylists.toggle(Playlist(urn = urn, title = title)) } }) {
+                    Icon(
+                        painterResource(if (plLiked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                        null,
+                        tint = if (plLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
             if (onRename != null || onDelete != null) {
                 var menuOpen by remember { mutableStateOf(false) }
                 Box {
@@ -441,27 +484,31 @@ private fun LibTracks(
             }
             if (downloadAll) {
                 if (downloading) {
-                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(12.dp))
+                    IconButton(onClick = { downloadJob?.cancel() }) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
                 } else {
                     IconButton(onClick = {
-                        scope.launch {
+                        downloadJob = scope.launch {
                             downloading = true
-                            val all = items.toMutableList()
-                            var p = page
-                            var more = hasMore
-                            while (more) {
-                                p++
-                                val (batch, hasNext) = runCatching { loader(p) }.getOrNull() ?: break
-                                all += batch
-                                more = hasNext
+                            try {
+                                val all = items.toMutableList()
+                                var p = page
+                                var more = hasMore
+                                while (more) {
+                                    p++
+                                    val (batch, hasNext) = runCatching { loader(p) }.getOrNull() ?: break
+                                    all += batch
+                                    more = hasNext
+                                }
+                                val full = all.distinctBy { it.urn }
+                                items = full
+                                page = p
+                                hasMore = false
+                                Downloads.downloadBatch(full)
+                            } finally {
+                                downloading = false
                             }
-                            val full = all.distinctBy { it.urn }
-                            items = full
-                            page = p
-                            hasMore = false
-                            Downloads.downloadBatch(full)
-                            downloading = false
                         }
                     }) {
                         Icon(painterResource(R.drawable.ic_download), null, modifier = Modifier.size(20.dp))

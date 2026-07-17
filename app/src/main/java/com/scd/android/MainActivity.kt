@@ -129,19 +129,25 @@ class MainActivity : ComponentActivity() {
     private val notifPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
+    private fun handleIntentExtras(intent: Intent?) {
+        intent ?: return
         if (intent.getBooleanExtra("open_player", false)) {
             NowPlaying.openPlayerRequest = true
         }
+        intent.getStringExtra("open_playlist_urn")?.let { urn ->
+            NavEvents.openPlaylist(urn, intent.getStringExtra("open_playlist_title") ?: "")
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntentExtras(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (intent?.getBooleanExtra("open_player", false) == true) {
-            NowPlaying.openPlayerRequest = true
-        }
+        handleIntentExtras(intent)
 
         if (Build.VERSION.SDK_INT >= 33) {
             notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -361,6 +367,14 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         }
     }
 
+    LaunchedEffect(NavEvents.playlistUrn) {
+        NavEvents.playlistUrn?.let { urn ->
+            openArtist = null
+            openPlaylist = Playlist(urn = urn, title = NavEvents.playlistTitle ?: "")
+            NavEvents.consume()
+        }
+    }
+
     fun handleError(e: Exception) {
         if (e is ApiHttpException && e.code == 401) {
             Api.storeSession(context, null)
@@ -443,7 +457,9 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             error = null
             try {
                 val (batch, cursor) = Api.waveTracks(if (more) waveCursor.ifEmpty { null } else null)
-                wave = if (more) (wave + batch).distinctBy { it.urn } else batch
+                wave = (if (more) wave + batch else batch)
+                    .distinctBy { it.urn }
+                    .filter { !it.unavailable }
                 waveCursor = cursor
             } catch (e: Exception) {
                 handleError(e)
@@ -460,7 +476,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             error = null
             try {
                 val (batch, cursor) = Api.waveTracks(null)
-                val fresh = batch.distinctBy { it.urn }
+                val fresh = batch.distinctBy { it.urn }.filter { !it.unavailable }
                 wave = fresh
                 waveCursor = cursor
                 controller?.let { c ->
@@ -489,7 +505,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             val all = mutableListOf<Track>()
             for (g in picked) {
                 runCatching { Api.searchTracks(g, 0, 12) }.onSuccess {
-                    all += it.collection.filter { t -> t.artwork_url != null }
+                    all += it.collection.filter { t -> t.artwork_url != null && !t.unavailable }
                 }
             }
             tiles = all.distinctBy { it.urn }.shuffled()
@@ -497,9 +513,11 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     }
 
     fun play(list: List<Track>, track: Track) {
+        if (track.unavailable) return
         controller?.let { c ->
-            val index = list.indexOfFirst { it.urn == track.urn }
-            c.setMediaItems(list.map { it.toMediaItem() }, index.coerceAtLeast(0), 0)
+            val playable = list.filter { !it.unavailable }
+            val index = playable.indexOfFirst { it.urn == track.urn }.coerceAtLeast(0)
+            c.setMediaItems(playable.map { it.toMediaItem() }, index, 0)
             c.prepare()
             c.play()
         }
@@ -692,19 +710,20 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                                             contentScale = ContentScale.Crop,
                                         )
                                         Spacer(Modifier.width(10.dp))
-                                        Text(
-                                            u.username,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            fontWeight = FontWeight.Medium,
-                                        )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(
-                                            stringResource(R.string.artist_label),
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                u.username,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                            Text(
+                                                stringResource(R.string.artist_label),
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
                                     }
                                 }
                                 playlistResults.forEach { p ->
@@ -722,18 +741,19 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                                             contentScale = ContentScale.Crop,
                                         )
                                         Spacer(Modifier.width(10.dp))
-                                        Text(
-                                            p.title,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(
-                                            stringResource(R.string.playlist_label),
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                p.title,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            Text(
+                                                stringResource(R.string.playlist_label),
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
                                     }
                                 }
                                 suggestions.take(4).forEach { s ->
@@ -821,16 +841,32 @@ fun TileGrid(tiles: List<Track>, topPadding: Dp = 0.dp, onPlay: (Track) -> Unit)
                 3 -> 0.85f
                 else -> 1f
             }
-            AsyncImage(
-                model = Api.artworkUrl(track.artwork_url, "t250x250"),
-                contentDescription = null,
-                modifier = Modifier
+            val isCurrent = NowPlaying.urn == track.urn
+            Box(
+                Modifier
                     .fillMaxWidth()
                     .aspectRatio(ratio)
                     .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .clickable { onPlay(track) },
-                contentScale = ContentScale.Crop,
-            )
+            ) {
+                AsyncImage(
+                    model = Api.artworkUrl(track.artwork_url, "t250x250"),
+                    contentDescription = null,
+                    modifier = Modifier.matchParentSize(),
+                    contentScale = ContentScale.Crop,
+                )
+                if (isCurrent) {
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .background(Color.Black.copy(alpha = 0.45f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        EqualizerBars(playing = NowPlaying.isPlaying, color = Color.White)
+                    }
+                }
+            }
         }
     }
 }
@@ -890,14 +926,15 @@ fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
     val liked = Likes.isLiked(track.urn)
     val isCurrent = NowPlaying.urn == track.urn
     val accent = MaterialTheme.colorScheme.primary
-    val rowAlpha = if (dimmed) 0.4f else 1f
+    val dim = dimmed || track.unavailable
+    val rowAlpha = if (dim) 0.4f else 1f
 
     Row(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(if (isCurrent) accent.copy(alpha = 0.12f) else Color.Transparent)
-            .then(if (dimmed) Modifier else Modifier.clickable(onClick = onClick))
+            .then(if (dim) Modifier else Modifier.clickable(onClick = onClick))
             .padding(vertical = 6.dp, horizontal = 4.dp)
             .graphicsLayer { alpha = rowAlpha },
         verticalAlignment = Alignment.CenterVertically,
@@ -906,9 +943,13 @@ fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
             AsyncImage(
                 model = Api.artworkUrl(track.artwork_url, "t120x120"),
                 contentDescription = null,
-                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
             )
-            if (dimmed) {
+            if (dimmed && !track.unavailable) {
                 Box(
                     Modifier
                         .matchParentSize()
@@ -953,6 +994,15 @@ fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
             )
         }
         Spacer(Modifier.width(4.dp))
+        if (Downloads.isDownloaded(track.urn)) {
+            Icon(
+                painterResource(R.drawable.ic_check),
+                null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(15.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+        }
         Text(
             formatDuration(track.duration),
             color = MaterialTheme.colorScheme.onSurfaceVariant,

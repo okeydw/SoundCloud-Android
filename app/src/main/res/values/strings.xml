@@ -44,6 +44,11 @@
     <string name="create">Create</string>
     <string name="add_to_playlist">Add to playlist</string>
     <string name="added">Added</string>
+    <string name="liked_playlists">Liked playlists</string>
+    <string name="greeting_morning">Good morning</string>
+    <string name="greeting_day">Good afternoon</string>
+    <string name="greeting_evening">Good evening</string>
+    <string name="greeting_night">Good night</string>
     <string name="playlist_created">Playlist created</string>
     <string name="playlist_creating_slow">Creating… it may take a moment to appear</string>
     <string name="immersive_artwork">Full-screen artwork</string>

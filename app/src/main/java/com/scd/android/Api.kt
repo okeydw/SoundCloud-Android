@@ -8,6 +8,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.DeserializationStrategy
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -65,13 +66,22 @@ object Api {
                 val req = chain.request()
                 val res = chain.proceed(req)
                 val host = req.url.host
-                val cacheable = req.method == "GET" &&
-                    (host == "api.scdinternal.site" || host == "images.scdinternal.site" ||
-                        host.endsWith("sndcdn.com"))
-                if (cacheable) {
+                val path = req.url.encodedPath
+                val maxAge = when {
+                    host == "images.scdinternal.site" || host.endsWith("sndcdn.com") -> 604800
+                    host == "api.scdinternal.site" && (
+                        path.contains("/playlists") ||
+                            path.startsWith("/users/") ||
+                            path.startsWith("/me/likes") ||
+                            path.startsWith("/me/playlists")
+                        ) -> 86400
+                    host == "api.scdinternal.site" -> 60
+                    else -> null
+                }
+                if (req.method == "GET" && maxAge != null) {
                     res.newBuilder()
                         .removeHeader("Pragma")
-                        .header("Cache-Control", "public, max-age=60")
+                        .header("Cache-Control", "public, max-age=$maxAge")
                         .build()
                 } else res
             }
@@ -126,8 +136,8 @@ object Api {
     suspend fun history(offset: Int = 0, limit: Int = 50): HistoryPage =
         getJson("$API_BASE/history?limit=$limit&offset=$offset", HistoryPage.serializer())
 
-    suspend fun likedTracks(page: Int = 0, limit: Int = 50): PagedTracks =
-        getJson("$API_BASE/me/likes/tracks?limit=$limit&page=$page", PagedTracks.serializer())
+    suspend fun likedTracks(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedTracks =
+        getJson("$API_BASE/me/likes/tracks?limit=$limit&page=$page", PagedTracks.serializer(), fresh)
 
     suspend fun likeTrack(track: Track): Unit = withContext(Dispatchers.IO) {
         val body = json.encodeToString(Track.serializer(), track)
@@ -154,6 +164,27 @@ object Api {
 
     suspend fun playlistTracks(urn: String, page: Int = 0, limit: Int = 50): PagedTracks =
         getJson("$API_BASE/playlists/${enc(urn)}/tracks?limit=$limit&page=$page", PagedTracks.serializer())
+
+    suspend fun likedPlaylists(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedPlaylists =
+        getJson("$API_BASE/me/likes/playlists?limit=$limit&page=$page", PagedPlaylists.serializer(), fresh)
+
+    suspend fun likePlaylist(urn: String): Unit = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$API_BASE/likes/playlists/${enc(urn)}")
+            .post(ByteArray(0).toRequestBody(null))
+            .apply { sessionId?.let { header("x-session-id", it) } }
+            .build()
+        http.newCall(req).execute().use { it.checkOk() }
+    }
+
+    suspend fun unlikePlaylist(urn: String): Unit = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$API_BASE/likes/playlists/${enc(urn)}")
+            .delete()
+            .apply { sessionId?.let { header("x-session-id", it) } }
+            .build()
+        http.newCall(req).execute().use { it.checkOk() }
+    }
 
     suspend fun authStatus(): AuthStatus =
         getJson("$API_BASE/auth/status", AuthStatus.serializer())
@@ -342,6 +373,22 @@ data class Track(
     val waveform_url: String? = null,
     val genre: String? = null,
     val user: TrackUser? = null,
+    val access: String? = null,
+    @SerialName("_scd_meta") val scdMeta: ScdMeta? = null,
+) {
+    val isPreview: Boolean get() = access == "preview"
+
+    val unavailable: Boolean
+        get() = access == "blocked" ||
+            scdMeta?.storage_state == "missing" ||
+            scdMeta?.storage_state == "failed" ||
+            scdMeta?.storage_state == "too_long"
+}
+
+@Serializable
+data class ScdMeta(
+    val storage_state: String? = null,
+    val storage_quality: String? = null,
 )
 
 @Serializable
@@ -384,6 +431,7 @@ data class Playlist(
     val title: String = "",
     val artwork_url: String? = null,
     val track_count: Int = 0,
+    val user: TrackUser? = null,
 )
 
 @Serializable

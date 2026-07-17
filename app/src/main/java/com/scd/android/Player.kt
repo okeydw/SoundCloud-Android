@@ -123,11 +123,21 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
                 AsyncImage(
                     model = artworkUri,
                     contentDescription = null,
-                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(4.dp)),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
                 )
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(t, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Text(
+                        t,
+                        maxLines = 1,
+                        softWrap = false,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.basicMarquee(),
+                    )
                     if (artist.isNotEmpty()) {
                         Text(
                             artist,
@@ -313,29 +323,34 @@ fun NowPlayingScreen(
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
+                            var titleOverflows by remember(title) { mutableStateOf(false) }
                             Text(
                                 title,
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 softWrap = false,
+                                overflow = TextOverflow.Clip,
                                 color = titleColor,
-                                modifier = Modifier
-                                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                                    .drawWithContent {
-                                        drawContent()
-                                        val fade = 24.dp.toPx()
-                                        drawRect(
-                                            brush = Brush.horizontalGradient(
-                                                0f to Color.Transparent,
-                                                fade / size.width to Color.Black,
-                                                1f - fade / size.width to Color.Black,
-                                                1f to Color.Transparent,
-                                            ),
-                                            blendMode = BlendMode.DstIn,
-                                        )
-                                    }
-                                    .basicMarquee(),
+                                onTextLayout = { if (!titleOverflows) titleOverflows = it.hasVisualOverflow },
+                                modifier = if (titleOverflows) {
+                                    Modifier
+                                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                                        .drawWithContent {
+                                            drawContent()
+                                            val fade = 24.dp.toPx()
+                                            drawRect(
+                                                brush = Brush.horizontalGradient(
+                                                    0f to Color.Transparent,
+                                                    fade / size.width to Color.Black,
+                                                    1f - fade / size.width to Color.Black,
+                                                    1f to Color.Transparent,
+                                                ),
+                                                blendMode = BlendMode.DstIn,
+                                            )
+                                        }
+                                        .basicMarquee()
+                                } else Modifier,
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(

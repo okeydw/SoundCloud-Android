@@ -112,9 +112,9 @@ class PlaybackService : MediaSessionService() {
     private fun likeButton(): CommandButton {
         val urn = mediaSession?.player?.currentMediaItem?.mediaId
         val liked = urn != null && Likes.isLiked(urn)
-        return CommandButton.Builder()
+        return CommandButton.Builder(CommandButton.ICON_UNDEFINED)
             .setDisplayName(if (liked) "Unlike" else "Like")
-            .setIconResId(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart)
+            .setCustomIconResId(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart)
             .setSessionCommand(SessionCommand(CMD_LIKE, Bundle.EMPTY))
             .build()
     }
@@ -122,9 +122,9 @@ class PlaybackService : MediaSessionService() {
     private fun dislikeButton(): CommandButton {
         val urn = mediaSession?.player?.currentMediaItem?.mediaId
         val disliked = urn != null && Dislikes.isDisliked(urn)
-        return CommandButton.Builder()
+        return CommandButton.Builder(CommandButton.ICON_UNDEFINED)
             .setDisplayName("Dislike")
-            .setIconResId(if (disliked) R.drawable.ic_thumb_down_filled else R.drawable.ic_thumb_down)
+            .setCustomIconResId(if (disliked) R.drawable.ic_thumb_down_filled else R.drawable.ic_thumb_down)
             .setSessionCommand(SessionCommand(CMD_DISLIKE, Bundle.EMPTY))
             .build()
     }

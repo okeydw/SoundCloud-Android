@@ -1,9 +1,13 @@
 package com.scd.android
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -33,7 +37,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.key
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -114,6 +120,8 @@ fun WaveFeed(
                 ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction).absoluteValue
                     .coerceIn(0f, 1f)
             var hDrag by remember(track.urn) { mutableStateOf(0f) }
+            var heartBurst by remember(track.urn) { mutableStateOf(0) }
+            var burstLiked by remember(track.urn) { mutableStateOf(false) }
             val liked = Likes.isLiked(track.urn)
             val disliked = Dislikes.isDisliked(track.urn)
 
@@ -145,25 +153,39 @@ fun WaveFeed(
                             },
                         )
                     }
-                    .clickable {
-                        if (track.urn == currentUrn) {
-                            controller?.let { if (it.isPlaying) it.pause() else it.play() }
-                        } else {
-                            onPlay(track)
-                        }
+                    .pointerInput(track.urn) {
+                        detectTapGestures(
+                            onDoubleTap = {
+                                scope.launch {
+                                    burstLiked = Likes.toggle(track)
+                                    heartBurst++
+                                }
+                            },
+                            onTap = {
+                                if (track.urn == currentUrn) {
+                                    controller?.let { if (it.isPlaying) it.pause() else it.play() }
+                                } else {
+                                    onPlay(track)
+                                }
+                            },
+                        )
                     },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                AsyncImage(
-                    model = Api.artworkUrl(track.artwork_url, "t500x500"),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(16.dp)),
-                    contentScale = ContentScale.Crop,
-                )
+                Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
+                    AsyncImage(
+                        model = Api.artworkUrl(track.artwork_url, "t500x500"),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .matchParentSize()
+                            .clip(RoundedCornerShape(16.dp)),
+                        contentScale = ContentScale.Crop,
+                    )
+                    if (heartBurst > 0) {
+                        key(heartBurst) { HeartBurst(liked = burstLiked) }
+                    }
+                }
                 Spacer(Modifier.height(14.dp))
                 Text(
                     track.title,
@@ -221,4 +243,27 @@ fun WaveFeed(
             }
         }
     }
+}
+
+@Composable
+private fun BoxScope.HeartBurst(liked: Boolean) {
+    val scale = remember { Animatable(0.5f) }
+    val alpha = remember { Animatable(0.95f) }
+    LaunchedEffect(Unit) {
+        launch { scale.animateTo(1.3f, tween(450)) }
+        alpha.animateTo(0f, tween(600, delayMillis = 200))
+    }
+    Icon(
+        painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+        null,
+        tint = if (liked) MaterialTheme.colorScheme.primary else Color.White,
+        modifier = Modifier
+            .align(Alignment.Center)
+            .size(120.dp)
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+                this.alpha = alpha.value
+            },
+    )
 }

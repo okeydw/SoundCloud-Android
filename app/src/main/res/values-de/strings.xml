@@ -43,6 +43,11 @@
     <string name="create">Erstellen</string>
     <string name="add_to_playlist">Zur Playlist hinzufügen</string>
     <string name="added">Hinzugefügt</string>
+    <string name="liked_playlists">Gelikte Playlists</string>
+    <string name="greeting_morning">Guten Morgen</string>
+    <string name="greeting_day">Guten Tag</string>
+    <string name="greeting_evening">Guten Abend</string>
+    <string name="greeting_night">Gute Nacht</string>
     <string name="playlist_created">Playlist erstellt</string>
     <string name="playlist_creating_slow">Wird erstellt… erscheint gleich</string>
     <string name="immersive_artwork">Vollbild-Cover</string>

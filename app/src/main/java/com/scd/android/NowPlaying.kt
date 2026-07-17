@@ -38,3 +38,18 @@ object PlaylistEvents {
     var version by mutableStateOf(0)
     fun bump() { version++ }
 }
+
+object NavEvents {
+    var playlistUrn by mutableStateOf<String?>(null)
+    var playlistTitle by mutableStateOf<String?>(null)
+
+    fun openPlaylist(urn: String, title: String) {
+        playlistTitle = title
+        playlistUrn = urn
+    }
+
+    fun consume() {
+        playlistUrn = null
+        playlistTitle = null
+    }
+}

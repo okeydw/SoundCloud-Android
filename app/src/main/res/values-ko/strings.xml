@@ -43,6 +43,11 @@
     <string name="create">만들기</string>
     <string name="add_to_playlist">재생목록에 추가</string>
     <string name="added">추가됨</string>
+    <string name="liked_playlists">좋아요한 재생목록</string>
+    <string name="greeting_morning">좋은 아침이에요</string>
+    <string name="greeting_day">안녕하세요</string>
+    <string name="greeting_evening">좋은 저녁이에요</string>
+    <string name="greeting_night">안녕히 주무세요</string>
     <string name="playlist_created">재생목록이 생성되었습니다</string>
     <string name="playlist_creating_slow">생성 중… 잠시 후 표시됩니다</string>
     <string name="immersive_artwork">전체 화면 커버</string>

@@ -1,42 +1,160 @@
-![ic_launcher.png](app/src/main/res/mipmap-xxxhdpi/ic_launcher.png)
+<p align="center">
+<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
+<img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="160px" style="border-radius: 50%;" />
+</a>
+</p>
 
-# SoundCloud Android
+<h1 align="center">SoundCloud Android</h1>
 
-Супер пупер форк на Android (на IOS не будет, я за ваш SWIFT не бум бум)
+<p align="center">
+<b>Неофициальный клиент SoundCloud для Android</b><br>
+Без рекламы · Без капчи · Без цензуры · Доступно в России
+</p>
 
-## Что умеет
-на момент первого комита
-- умеем логиниться 
-- искать треки
-- включать волну
+<p align="center">
+<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
+<img src="https://img.shields.io/github/v/release/okeydw/SoundCloud-Android?style=for-the-badge&logo=github&color=FF5500&label=VERSION" alt="Version"/>
+</a>
+<a href="https://github.com/okeydw/SoundCloud-Android/releases">
+<img src="https://img.shields.io/github/downloads/okeydw/SoundCloud-Android/total?style=for-the-badge&logo=android&color=FF5500&label=Downloads" alt="Downloads"/>
+</a>
+<a href="https://github.com/okeydw/SoundCloud-Android/stargazers">
+<img src="https://img.shields.io/github/stars/okeydw/SoundCloud-Android?style=for-the-badge&logo=github&color=FF5500&label=Stars" alt="Stars"/>
+</a>
+<a href="LICENSE">
+<img src="https://img.shields.io/badge/License-MIT-FF5500?style=for-the-badge" alt="License"/>
+</a>
+</p>
 
+<p align="center">
+<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
+<img src="https://img.shields.io/badge/Скачать_APK-FF5500?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"/>
+</a>
+</p>
 
-## НЕ умеем ~~(пока что)~~
-- оптимизация, ну как бы да, но как бы пойдёт
-- нет системы лайков
-- нет плейлистов
-- и всё остальное тоже не умеем
+---
+
+> [!WARNING]
+> ⚠️ **Из-за систем безопасности основного API при входе вас может выкинуть из другой сессии.** Если вы залогинены на другом устройстве (например в десктоп-клиенте), вход здесь может «отвязать» ту сессию, и наоборот. Это ограничение бэкенда, а не бага приложения - просто войдите заново там, где нужно.
+
+---
+
+## Что это?
+
+**SoundCloud Android** - нативный клиент SoundCloud для телефона. Использует тот же бэкенд, что и [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop), поэтому весь каталог доступен напрямую.
+
+Написан на **Kotlin + Jetpack Compose + Media3**, работает нативно и потребляет минимум ресурсов.
+
+На данный момент сделана лёгковесная версия без излишеств, дизайн прикручу, когда пойму что багов нет и функционал в полном объёме, после разделю на две версии: 
+
+> `Full` - много красивых блестяшек и дизайн схожий с декстопной версией.
+
+> `Lite` - упрощённый дизайн, кто ценит минимализм и слабые телефоны. 
+
+### Для IOS порта не будет!
 
 
 ---
+
+## Возможности
+
+- **Поиск и Волна** - поиск треков/артистов/плейлистов и персональная лента рекомендаций
+- **Плеер** - фоновое воспроизведение, управление из уведомления, waveform, shuffle/repeat, жесты
+- **Библиотека** - лайки/дизлайки, плейлисты, история, профили артистов
+- **Оффлайн** - скачивание треков и автономный режим с кэшем
+- **Оформление** - тёмная/светлая тема, иммерсивный режим и 9 языков
+
+---
+
+## Скачать
+
+Перейди на [страницу релизов](https://github.com/okeydw/SoundCloud-Android/releases/latest) и скачай `.apk`.
+
+**Установка:** открой скачанный файл на телефоне и разреши установку из неизвестных источников.
+
+**Требования:** Android 8.0 (Oreo) или новее.
+
+---
+
+## Скриншоты
+
+<p align="center">
+<img src="docs/screenshots/wave.png" width="24%" />
+<img src="docs/screenshots/player.png" width="24%" />
+<img src="docs/screenshots/player_immersive.png" width="24%" />
+<img src="docs/screenshots/search.png" width="24%" />
+</p>
+<p align="center">
+<img src="docs/screenshots/suggestions.png" width="24%" />
+<img src="docs/screenshots/library.png" width="24%" />
+<img src="docs/screenshots/history.png" width="24%" />
+<img src="docs/screenshots/settings.png" width="24%" />
+</p>
+
+---
+
+## Обратная связь
+
+Нашёл баг или есть идея? - [открой issue](https://github.com/okeydw/SoundCloud-Android/issues/new/choose).
+
+
+---
+
+
+
 ## Стек
 
-Kotlin, Jetpack Compose (Material 3), Media3 (ExoPlayer + MediaSession), OkHttp, kotlinx.serialization, Coil.
+| Слой | Технологии |
+| --- | --- |
+| Язык | Kotlin |
+| UI | Jetpack Compose, Material 3 |
+| Аудио | Media3 (ExoPlayer + MediaSession), фоновый сервис с уведомлением |
+| Сеть | OkHttp (+ дисковый кэш), kotlinx.serialization |
+| Изображения | Coil (+ Palette для подкраски под обложку) |
+| Хранение | SharedPreferences (настройки, сессия), JSON-индекс скачанных треков |
 
-Требования: JDK 17 (идёт в комплекте с Android Studio), Android SDK 35. minSdk 26 (Android 8.0).
+Тот же бэкенд, что и у [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) - приложение работает как ещё один клиент к нему.
+
+**Совместимость:** `minSdk 26` (Android 8.0) … `targetSdk 35`, `compileSdk 35`.
 
 ---
+
 ## Структура
 
 ```
 app/src/main/java/com/scd/android/
-  Api.kt              - API-клиент: поиск, stream-URL, прокси обложек
-  App.kt              - Coil ImageLoader с интерцептором прокси обложек
-  PlaybackService.kt  - MediaSessionService (фоновый плеер + уведомление)
-  MainActivity.kt     - Compose UI: поиск, список, мини-плеер
+  App.kt              - Application: инициализация сессии, кэша, настроек, Coil-загрузчик обложек через прокси
+  MainActivity.kt     - точка входа, навигация (Поиск / Волна / Я), баннер «нет интернета», Scaffold
+  Api.kt              - API-клиент: поиск, стрим, обложки, лайки/дизлайки, плейлисты, история, HTTP-кэш
+  NetMonitor.kt       - проверка сети (Wi-Fi / моб. данные) + офлайн-фолбэк из кэша
+  Prefs.kt            - настройки: тема, язык, офлайн-режим, иммерсивная обложка
+  LocaleHelper.kt     - подмена локали приложения (смена языка)
+
+  PlaybackService.kt  - MediaSessionService: фоновый плеер, уведомление, лайк/дизлайк в нём, открытие плеера по тапу
+  Player.kt           - мини-плеер и полноэкранный плеер (waveform, жесты, shuffle/repeat, иммерсив, marquee)
+  NowPlaying.kt       - глобальное состояние текущего трека (подсветка в списках, открытие плеера)
+
+  WaveScreen.kt       - Волна: лента с пейджером, свайпы лайк/дизлайк, обновление
+  ArtistScreen.kt     - профиль автора: треки и плейлисты (в т.ч. офлайн из скачанного)
+  PlaylistScreen.kt   - экран плейлиста: список треков, скачать всё
+  LibraryScreen.kt    - вкладка «Я»: лайкнутые, скачанные, плейлисты, история + экран настроек
+
+  Likes.kt / Dislikes.kt - состояние лайков/дизлайков (взаимоисключающие, синк с бэкендом)
+  Downloads.kt        - скачивание треков в приватную папку, индекс, уведомление прогресса
+  Genres.kt           - список жанров для плиток на пустом поиске
+
+app/src/main/res/
+  drawable/           - векторные иконки (стиль Lucide) + логотип
+  values/, values-*/  - строки на 9 языках + values-night (тёмная тема)
 ```
+
+Полный список изменений - в [CHANGELOG.md](CHANGELOG.md).
+
 ---
-## А ещё...
-- я попрошу нн чтобы допили мне синхру между клиентами
-- попробую сделать красивый интерфейс, но если производительность упадёт, то либо сделаю лайт версию, либо идите нахер с красивым оформлением
-- нуууууу, мб мб даже сделаю что предложите
+
+## Лицензия
+
+MIT. Подробности - в файле [LICENSE](LICENSE).
+
+_SoundCloud - торговая марка SoundCloud Ltd. Это приложение не аффилировано с SoundCloud._
+

@@ -9,7 +9,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,7 +33,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -40,7 +47,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -48,7 +54,6 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,9 +63,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -70,13 +74,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.palette.graphics.Palette
@@ -105,7 +107,19 @@ private val LightColors = lightColorScheme(
     surface = Color(0xFFFAFAFA),
 )
 
+@Composable
+fun isAppDark(): Boolean = when (Prefs.theme) {
+    "dark" -> true
+    "light" -> false
+    else -> isSystemInDarkTheme()
+}
+
 class MainActivity : ComponentActivity() {
+
+    override fun attachBaseContext(newBase: android.content.Context) {
+        Prefs.init(newBase)
+        super.attachBaseContext(LocaleHelper.wrap(newBase, Prefs.language))
+    }
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private val controllerState = mutableStateOf<MediaController?>(null)
@@ -113,8 +127,19 @@ class MainActivity : ComponentActivity() {
     private val notifPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra("open_player", false)) {
+            NowPlaying.openPlayerRequest = true
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        if (intent?.getBooleanExtra("open_player", false) == true) {
+            NowPlaying.openPlayerRequest = true
+        }
 
         if (Build.VERSION.SDK_INT >= 33) {
             notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -130,7 +155,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme(
-                colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
+                colorScheme = if (isAppDark()) DarkColors else LightColors,
             ) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Root(controllerState.value)
@@ -149,7 +174,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun rememberArtworkColor(artworkUri: String?): Color {
     val context = LocalContext.current
-    val dark = isSystemInDarkTheme()
+    val dark = isAppDark()
     val fallback = MaterialTheme.colorScheme.surfaceVariant
     var color by remember { mutableStateOf(fallback) }
 
@@ -270,7 +295,7 @@ fun LoginScreen(onDone: () -> Unit) {
     }
 }
 
-enum class Tab { Search, Wave, History }
+enum class Tab { Search, Wave, Me }
 
 @Composable
 fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
@@ -280,20 +305,41 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
 
+    var noInternet by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            noInternet = !hasNetwork(context)
+            delay(4000)
+        }
+    }
+
+    LaunchedEffect(NowPlaying.openPlayerRequest) {
+        if (NowPlaying.openPlayerRequest) {
+            showPlayer = true
+            NowPlaying.openPlayerRequest = false
+        }
+    }
+
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<Track>>(emptyList()) }
     var page by remember { mutableStateOf(0) }
     var hasMore by remember { mutableStateOf(false) }
     var searchLoading by remember { mutableStateOf(false) }
     var searched by remember { mutableStateOf(false) }
+    var suggestions by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var userSuggestions by remember { mutableStateOf<List<Artist>>(emptyList()) }
+    var playlistResults by remember { mutableStateOf<List<Playlist>>(emptyList()) }
+    var vibePreparing by remember { mutableStateOf(false) }
+    var tiles by remember { mutableStateOf<List<Track>>(emptyList()) }
 
     var wave by remember { mutableStateOf<List<Track>>(emptyList()) }
     var waveCursor by remember { mutableStateOf("") }
     var waveLoading by remember { mutableStateOf(false) }
 
-    var history by remember { mutableStateOf<List<Track>>(emptyList()) }
-    var historyTotal by remember { mutableStateOf(0) }
-    var historyLoading by remember { mutableStateOf(false) }
+    var openArtist by remember { mutableStateOf<String?>(null) }
+    var openPlaylist by remember { mutableStateOf<Playlist?>(null) }
+
+    LaunchedEffect(Unit) { Dislikes.seed() }
 
     fun handleError(e: Exception) {
         if (e is ApiHttpException && e.code == 401) {
@@ -307,12 +353,13 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     fun search(nextPage: Int) {
         val q = query.trim()
         if (q.isEmpty() || searchLoading) return
+        suggestions = emptyList()
         scope.launch {
             searchLoading = true
             error = null
             try {
                 val res = Api.searchTracks(q, nextPage)
-                results = if (nextPage == 0) res.collection else results + res.collection
+                results = if (nextPage == 0) res.collection else (results + res.collection).distinctBy { it.urn }
                 page = res.page
                 hasMore = res.has_more
                 searched = true
@@ -324,8 +371,53 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         }
     }
 
+    fun vibeSearch() {
+        val q = query.trim()
+        if (q.isEmpty() || searchLoading) return
+        suggestions = emptyList()
+        scope.launch {
+            searchLoading = true
+            error = null
+            try {
+                repeat(12) {
+                    val res = Api.vibeSearch(q)
+                    if (res.status == "preparing") {
+                        vibePreparing = true
+                        delay(2500)
+                    } else {
+                        results = res.items
+                        hasMore = false
+                        searched = true
+                        vibePreparing = false
+                        return@launch
+                    }
+                }
+                vibePreparing = false
+            } catch (e: Exception) {
+                vibePreparing = false
+                handleError(e)
+            } finally {
+                searchLoading = false
+            }
+        }
+    }
+
+    LaunchedEffect(query, searched) {
+        val q = query.trim()
+        if (q.length < 2 || searched) {
+            suggestions = emptyList()
+            userSuggestions = emptyList()
+            playlistResults = emptyList()
+            return@LaunchedEffect
+        }
+        delay(300)
+        runCatching { Api.searchTracks(q, 0, 6) }.onSuccess { suggestions = it.collection.distinctBy { t -> t.urn } }
+        runCatching { Api.searchUsers(q, 0, 8) }.onSuccess { userSuggestions = it.collection.distinctBy { u -> u.urn }.take(4) }
+        runCatching { Api.searchPlaylists(q, 0, 8) }.onSuccess { playlistResults = it.collection.distinctBy { p -> p.urn }.take(4) }
+    }
+
     fun loadWave(more: Boolean) {
-        if (waveLoading) return
+        if (waveLoading || Prefs.offline) return
         scope.launch {
             waveLoading = true
             error = null
@@ -341,30 +433,47 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         }
     }
 
-    fun loadHistory(offset: Int) {
-        if (historyLoading) return
+    fun refreshWave() {
+        if (waveLoading || Prefs.offline) return
         scope.launch {
-            historyLoading = true
+            waveLoading = true
             error = null
             try {
-                val res = Api.history(offset)
-                val batch = res.collection.map { it.toTrack() }
-                history = if (offset == 0) batch else history + batch
-                historyTotal = res.total
+                val (batch, cursor) = Api.waveTracks(null)
+                val fresh = batch.distinctBy { it.urn }
+                wave = fresh
+                waveCursor = cursor
+                // Текущий трек не трогаем, а «следующее» в очереди подменяем новой волной.
+                controller?.let { c ->
+                    if (c.mediaItemCount > 0) {
+                        val curUrn = c.currentMediaItem?.mediaId
+                        val curIndex = c.currentMediaItemIndex
+                        if (c.mediaItemCount > curIndex + 1) {
+                            c.removeMediaItems(curIndex + 1, c.mediaItemCount)
+                        }
+                        c.addMediaItems(fresh.filter { it.urn != curUrn }.map { it.toMediaItem() })
+                    }
+                }
             } catch (e: Exception) {
                 handleError(e)
             } finally {
-                historyLoading = false
+                waveLoading = false
             }
         }
     }
 
-    LaunchedEffect(tab) {
+    LaunchedEffect(tab, Prefs.offline) {
         error = null
-        when (tab) {
-            Tab.Wave -> if (wave.isEmpty()) loadWave(false)
-            Tab.History -> loadHistory(0)
-            Tab.Search -> {}
+        if (tab == Tab.Wave && wave.isEmpty()) loadWave(false)
+        if (tab == Tab.Search && tiles.isEmpty() && !Prefs.offline) {
+            val picked = GENRES.shuffled().take(3)
+            val all = mutableListOf<Track>()
+            for (g in picked) {
+                runCatching { Api.searchTracks(g, 0, 12) }.onSuccess {
+                    all += it.collection.filter { t -> t.artwork_url != null }
+                }
+            }
+            tiles = all.distinctBy { it.urn }.shuffled()
         }
     }
 
@@ -382,35 +491,103 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         bottomBar = {
             Column {
                 PlayerBar(controller, onExpand = { showPlayer = true })
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = tab == Tab.Search,
-                        onClick = { tab = Tab.Search },
-                        icon = { Icon(painterResource(R.drawable.ic_search), null) },
-                        label = { Text(stringResource(R.string.tab_search)) },
-                    )
-                    NavigationBarItem(
-                        selected = tab == Tab.Wave,
-                        onClick = { tab = Tab.Wave },
-                        icon = { Icon(painterResource(R.drawable.ic_wave), null) },
-                        label = { Text(stringResource(R.string.tab_wave)) },
-                    )
-                    NavigationBarItem(
-                        selected = tab == Tab.History,
-                        onClick = { tab = Tab.History },
-                        icon = { Icon(painterResource(R.drawable.ic_history), null) },
-                        label = { Text(stringResource(R.string.tab_history)) },
-                    )
+                if (!Prefs.offline) {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = tab == Tab.Search,
+                            onClick = { tab = Tab.Search; openArtist = null; openPlaylist = null },
+                            icon = { Icon(painterResource(R.drawable.ic_search), null) },
+                            label = { Text(stringResource(R.string.tab_search)) },
+                        )
+                        NavigationBarItem(
+                            selected = tab == Tab.Wave,
+                            onClick = { tab = Tab.Wave; openArtist = null; openPlaylist = null },
+                            icon = { Icon(painterResource(R.drawable.ic_wave), null) },
+                            label = { Text(stringResource(R.string.tab_wave)) },
+                        )
+                        NavigationBarItem(
+                            selected = tab == Tab.Me,
+                            onClick = { tab = Tab.Me; openArtist = null; openPlaylist = null },
+                            icon = { Icon(painterResource(R.drawable.ic_user), null) },
+                            label = { Text(stringResource(R.string.tab_me)) },
+                        )
+                    }
                 }
             }
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp)) {
-            when (tab) {
-                Tab.Search -> {
+            if (noInternet && !Prefs.offline) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_no_wifi),
+                        null,
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.no_internet),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            if (openArtist != null) {
+                ArtistScreen(
+                    urn = openArtist!!,
+                    onBack = { openArtist = null },
+                    onPlay = ::play,
+                    onOpenPlaylist = { openPlaylist = it },
+                    offline = Prefs.offline,
+                )
+            } else if (openPlaylist != null) {
+                PlaylistScreen(
+                    playlist = openPlaylist!!,
+                    onBack = { openPlaylist = null },
+                    onPlay = ::play,
+                )
+            } else if (Prefs.offline) {
+                LibraryScreen(
+                    play = ::play,
+                    onSessionExpired = onSessionExpired,
+                    onOpenArtist = { openArtist = it },
+                    offline = true,
+                )
+            } else when (tab) {
+                Tab.Search -> Box(Modifier.fillMaxSize()) {
+                    val barPad = 76.dp
+                    // Фоновый слой: плитки / результаты (скроллятся под плавающей строкой)
+                    when {
+                        searched || searchLoading || error != null -> TrackList(
+                            tracks = results,
+                            loading = searchLoading,
+                            error = error,
+                            emptyText = stringResource(R.string.search_empty),
+                            canLoadMore = hasMore,
+                            onLoadMore = { search(page + 1) },
+                            onPlay = { play(results, it) },
+                            topPadding = barPad,
+                        )
+                        query.isBlank() -> TileGrid(tiles, topPadding = barPad) { play(tiles, it) }
+                    }
+
+                    // Плавающая строка поиска + подсказки поверх
+                    Column(Modifier.fillMaxWidth()) {
                     TextField(
                         value = query,
-                        onValueChange = { query = it },
+                        onValueChange = {
+                            query = it
+                            searched = false
+                        },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                         placeholder = {
                             Text(
@@ -421,8 +598,8 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                         singleLine = true,
                         shape = RoundedCornerShape(28.dp),
                         colors = TextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
                             focusedIndicatorColor = Color.Transparent,
                             unfocusedIndicatorColor = Color.Transparent,
                             disabledIndicatorColor = Color.Transparent,
@@ -437,211 +614,205 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                                 searched = false
                                 results = emptyList()
                                 hasMore = false
+                                suggestions = emptyList()
                             }) {
                                 Icon(painterResource(R.drawable.ic_clear), null)
                             }
                         },
                     )
-                    TrackList(
-                        tracks = results,
-                        loading = searchLoading,
-                        error = error,
-                        emptyText = stringResource(if (searched) R.string.search_empty else R.string.search_idle),
-                        canLoadMore = hasMore,
-                        onLoadMore = { search(page + 1) },
-                        onPlay = { play(results, it) },
-                    )
+
+                    if (vibePreparing) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(12.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                stringResource(R.string.vibe_preparing),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    if (suggestions.isNotEmpty() && !searched && query.trim().length >= 2) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { vibeSearch() }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    painterResource(R.drawable.ic_wave),
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    stringResource(R.string.vibe_search) + ": «${query.trim()}»",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                            userSuggestions.forEach { u ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { openArtist = u.urn }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    AsyncImage(
+                                        model = Api.artworkUrl(u.avatar_url, "t120x120"),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(28.dp).clip(androidx.compose.foundation.shape.CircleShape),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        u.username,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        stringResource(R.string.artist_label),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                            playlistResults.forEach { p ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { openPlaylist = p }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    AsyncImage(
+                                        model = Api.artworkUrl(p.artwork_url, "t120x120"),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(28.dp).clip(RoundedCornerShape(4.dp)),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        p.title,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        stringResource(R.string.playlist_label),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                            suggestions.take(4).forEach { s ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            query = s.title
+                                            search(0)
+                                        }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        painterResource(R.drawable.ic_search),
+                                        null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        s.title + (s.user?.username?.let { " — $it" } ?: ""),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    }
                 }
-                Tab.Wave -> TrackList(
+                Tab.Wave -> WaveFeed(
+                    controller = controller,
                     tracks = wave,
                     loading = waveLoading,
                     error = error,
-                    emptyText = stringResource(R.string.wave_empty),
-                    canLoadMore = wave.isNotEmpty() && waveCursor.isNotEmpty(),
+                    canLoadMore = waveCursor.isNotEmpty(),
                     onLoadMore = { loadWave(true) },
+                    onRefresh = { refreshWave() },
                     onPlay = { play(wave, it) },
                 )
-                Tab.History -> TrackList(
-                    tracks = history,
-                    loading = historyLoading,
-                    error = error,
-                    emptyText = stringResource(R.string.history_empty),
-                    canLoadMore = history.size < historyTotal,
-                    onLoadMore = { loadHistory(history.size) },
-                    onPlay = { play(history, it) },
+                Tab.Me -> LibraryScreen(
+                    play = ::play,
+                    onSessionExpired = onSessionExpired,
+                    onOpenArtist = { openArtist = it },
                 )
             }
         }
     }
 
     if (showPlayer && controller != null) {
-        NowPlayingScreen(controller, onClose = { showPlayer = false })
+        NowPlayingScreen(
+            controller,
+            onClose = { showPlayer = false },
+            onOpenArtist = { urn ->
+                showPlayer = false
+                openArtist = urn
+            },
+        )
     }
 }
 
 @Composable
-fun NowPlayingScreen(controller: MediaController, onClose: () -> Unit) {
-    var title by remember { mutableStateOf("") }
-    var artist by remember { mutableStateOf("") }
-    var artworkUri by remember { mutableStateOf<String?>(null) }
-    var isPlaying by remember { mutableStateOf(false) }
-    var duration by remember { mutableStateOf(0L) }
-    var position by remember { mutableStateOf(0L) }
-    var dragging by remember { mutableStateOf(false) }
-    var dragValue by remember { mutableStateOf(0f) }
-
-    DisposableEffect(controller) {
-        fun sync() {
-            val md = controller.currentMediaItem?.mediaMetadata
-            title = md?.title?.toString() ?: ""
-            artist = md?.artist?.toString() ?: ""
-            artworkUri = md?.artworkUri?.toString()
-            isPlaying = controller.isPlaying
-        }
-        val listener = object : Player.Listener {
-            override fun onEvents(player: Player, events: Player.Events) = sync()
-        }
-        controller.addListener(listener)
-        sync()
-        onDispose { controller.removeListener(listener) }
+fun TileGrid(tiles: List<Track>, topPadding: Dp = 0.dp, onPlay: (Track) -> Unit) {
+    if (tiles.isEmpty()) {
+        Row(
+            Modifier.fillMaxWidth().padding(32.dp),
+            horizontalArrangement = Arrangement.Center,
+        ) { CircularProgressIndicator() }
+        return
     }
-
-    LaunchedEffect(controller) {
-        while (true) {
-            if (!dragging) {
-                position = controller.currentPosition.coerceAtLeast(0L)
-                duration = controller.duration.coerceAtLeast(0L)
-            }
-            delay(400)
-        }
-    }
-
-    val background = MaterialTheme.colorScheme.background
-    val tintTarget = rememberArtworkColor(artworkUri)
-    val tint by animateColorAsState(tintTarget, tween(800), label = "playerTint")
-    val topColor = tint.copy(alpha = 0.65f).compositeOver(background)
-
-    Dialog(
-        onDismissRequest = onClose,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    LazyVerticalStaggeredGrid(
+        columns = StaggeredGridCells.Fixed(3),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = topPadding, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalItemSpacing = 8.dp,
     ) {
-        Surface(
-            Modifier.fillMaxSize(),
-            color = Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.onBackground,
-        ) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0f to topColor,
-                            0.75f to background,
-                            1f to background,
-                        )
-                    )
-                    .padding(horizontal = 24.dp),
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onClose) {
-                        Icon(painterResource(R.drawable.ic_chevron_down), null)
-                    }
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                AsyncImage(
-                    model = artworkUri,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Crop,
-                )
-
-                Spacer(Modifier.height(32.dp))
-
-                Text(
-                    title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    artist,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-
-                Spacer(Modifier.height(16.dp))
-
-                Slider(
-                    value = if (dragging) dragValue else if (duration > 0) position.toFloat() / duration else 0f,
-                    onValueChange = {
-                        dragging = true
-                        dragValue = it
-                    },
-                    onValueChangeFinished = {
-                        if (duration > 0) controller.seekTo((dragValue * duration).toLong())
-                        dragging = false
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(
-                        formatDuration(if (dragging && duration > 0) (dragValue * duration).toLong() else position),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        formatDuration(duration),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = { controller.seekToPrevious() }, modifier = Modifier.size(56.dp)) {
-                        Icon(painterResource(R.drawable.ic_prev), null, modifier = Modifier.size(36.dp))
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clickable { if (controller.isPlaying) controller.pause() else controller.play() },
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
-                                null,
-                                tint = MaterialTheme.colorScheme.background,
-                                modifier = Modifier.size(40.dp),
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(16.dp))
-                    IconButton(onClick = { controller.seekToNext() }, modifier = Modifier.size(56.dp)) {
-                        Icon(painterResource(R.drawable.ic_next), null, modifier = Modifier.size(36.dp))
-                    }
-                }
-
-                Spacer(Modifier.weight(1.4f))
+        itemsIndexed(tiles) { index, track ->
+            val ratio = when ((track.urn.hashCode() + index) % 5) {
+                0 -> 1.6f
+                1 -> 0.7f
+                2 -> 1.15f
+                3 -> 0.85f
+                else -> 1f
             }
+            AsyncImage(
+                model = Api.artworkUrl(track.artwork_url, "t250x250"),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(ratio)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onPlay(track) },
+                contentScale = ContentScale.Crop,
+            )
         }
     }
 }
@@ -655,29 +826,39 @@ fun TrackList(
     canLoadMore: Boolean,
     onLoadMore: () -> Unit,
     onPlay: (Track) -> Unit,
+    dimUndownloaded: Boolean = false,
+    topPadding: Dp = 0.dp,
 ) {
     when {
         error != null -> Text(
             stringResource(R.string.error_network) + "\n" + error,
             color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(top = topPadding).padding(16.dp),
         )
         loading && tracks.isEmpty() -> Row(
-            Modifier.fillMaxWidth().padding(32.dp),
+            Modifier.fillMaxWidth().padding(top = topPadding).padding(32.dp),
             horizontalArrangement = Arrangement.Center,
         ) { CircularProgressIndicator() }
         tracks.isEmpty() -> Text(
             emptyText,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(top = topPadding).padding(16.dp),
         )
     }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = topPadding),
+    ) {
         items(tracks) { track ->
-            TrackRow(track = track, onClick = { onPlay(track) })
+            val unavailable = dimUndownloaded && !Downloads.isDownloaded(track.urn)
+            TrackRow(
+                track = track,
+                onClick = { onPlay(track) },
+                dimmed = unavailable,
+            )
         }
-        if (canLoadMore) {
+        if (canLoadMore && tracks.isNotEmpty()) {
             item {
                 Button(
                     onClick = onLoadMore,
@@ -690,19 +871,56 @@ fun TrackList(
 }
 
 @Composable
-fun TrackRow(track: Track, onClick: () -> Unit) {
+fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
+    val scope = rememberCoroutineScope()
+    val liked = Likes.isLiked(track.urn)
+    val isCurrent = NowPlaying.urn == track.urn
+    val accent = MaterialTheme.colorScheme.primary
+    val rowAlpha = if (dimmed) 0.4f else 1f
+
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (isCurrent) accent.copy(alpha = 0.12f) else Color.Transparent)
+            .then(if (dimmed) Modifier else Modifier.clickable(onClick = onClick))
+            .padding(vertical = 6.dp, horizontal = 4.dp)
+            .graphicsLayer { alpha = rowAlpha },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(
-            model = Api.artworkUrl(track.artwork_url, "t120x120"),
-            contentDescription = null,
-            modifier = Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)),
-        )
+        Box {
+            AsyncImage(
+                model = Api.artworkUrl(track.artwork_url, "t120x120"),
+                contentDescription = null,
+                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)),
+            )
+            if (dimmed) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clip(RoundedCornerShape(6.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_download),
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            if (isCurrent) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.45f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    EqualizerBars(playing = NowPlaying.isPlaying, color = Color.White)
+                }
+            }
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
@@ -710,6 +928,7 @@ fun TrackRow(track: Track, onClick: () -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 fontWeight = FontWeight.Medium,
+                color = if (isCurrent) accent else MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 track.user?.username ?: "",
@@ -719,94 +938,58 @@ fun TrackRow(track: Track, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(4.dp))
         Text(
             formatDuration(track.duration),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
         )
+        IconButton(onClick = { scope.launch { Likes.toggle(track) } }, modifier = Modifier.size(40.dp)) {
+            Icon(
+                painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                null,
+                tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
 @Composable
-fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
-    var title by remember { mutableStateOf<String?>(null) }
-    var artist by remember { mutableStateOf("") }
-    var artworkUri by remember { mutableStateOf<String?>(null) }
-    var isPlaying by remember { mutableStateOf(false) }
-
-    DisposableEffect(controller) {
-        if (controller == null) return@DisposableEffect onDispose {}
-        fun sync() {
-            val md = controller.currentMediaItem?.mediaMetadata
-            title = md?.title?.toString()
-            artist = md?.artist?.toString() ?: ""
-            artworkUri = md?.artworkUri?.toString()
-            isPlaying = controller.isPlaying
-        }
-        val listener = object : Player.Listener {
-            override fun onEvents(player: Player, events: Player.Events) = sync()
-        }
-        controller.addListener(listener)
-        sync()
-        onDispose { controller.removeListener(listener) }
+fun EqualizerBars(playing: Boolean, color: Color) {
+    val transition = rememberInfiniteTransition(label = "eq")
+    val heights = (0 until 3).map { i ->
+        transition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                tween(durationMillis = 340 + i * 120, easing = LinearEasing),
+                RepeatMode.Reverse,
+            ),
+            label = "eqBar$i",
+        )
     }
-
-    val t = title ?: return
-
-    val surface = MaterialTheme.colorScheme.surfaceVariant
-    val tintTarget = rememberArtworkColor(artworkUri)
-    val barColor by animateColorAsState(
-        tintTarget.copy(alpha = 0.45f).compositeOver(surface),
-        tween(800),
-        label = "barTint",
-    )
-
-    Surface(color = barColor, contentColor = MaterialTheme.colorScheme.onSurface) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onExpand)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AsyncImage(
-                model = artworkUri,
-                contentDescription = null,
-                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(4.dp)),
+    Row(
+        Modifier.size(20.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        heights.forEach { h ->
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .fillMaxHeight(if (playing) h.value else 0.3f)
+                    .background(color, RoundedCornerShape(1.dp)),
             )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(t, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                if (artist.isNotEmpty()) {
-                    Text(
-                        artist,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-            IconButton(onClick = { controller?.seekToPrevious() }) {
-                Icon(painterResource(R.drawable.ic_prev), null)
-            }
-            IconButton(onClick = {
-                controller?.let { if (it.isPlaying) it.pause() else it.play() }
-            }) {
-                Icon(painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play), null)
-            }
-            IconButton(onClick = { controller?.seekToNext() }) {
-                Icon(painterResource(R.drawable.ic_next), null)
-            }
         }
     }
 }
 
-fun Track.toMediaItem(): MediaItem =
-    MediaItem.Builder()
+fun Track.toMediaItem(): MediaItem {
+    val local = if (Downloads.isDownloaded(urn)) Downloads.fileFor(urn) else null
+    return MediaItem.Builder()
         .setMediaId(urn)
-        .setUri(Api.streamUrl(urn))
+        .setUri(local?.toUri() ?: Api.streamUrl(urn).toUri())
         .setMediaMetadata(
             MediaMetadata.Builder()
                 .setTitle(title)
@@ -816,12 +999,31 @@ fun Track.toMediaItem(): MediaItem =
                     Bundle().apply {
                         putString("artist_urn", user?.urn)
                         putString("artwork_url", artwork_url)
+                        putString("waveform_url", waveform_url)
                         putLong("duration", duration)
                     }
                 )
                 .build()
         )
         .build()
+}
+
+fun MediaItem.toTrackOrNull(): Track? {
+    if (mediaId.isEmpty()) return null
+    val md = mediaMetadata
+    val title = md.title?.toString() ?: return null
+    return Track(
+        urn = mediaId,
+        title = title,
+        duration = md.extras?.getLong("duration") ?: 0L,
+        artwork_url = md.extras?.getString("artwork_url"),
+        waveform_url = md.extras?.getString("waveform_url"),
+        user = TrackUser(
+            urn = md.extras?.getString("artist_urn"),
+            username = md.artist?.toString() ?: "",
+        ),
+    )
+}
 
 fun formatDuration(ms: Long): String {
     val totalSec = ms / 1000
@@ -829,3 +1031,5 @@ fun formatDuration(ms: Long): String {
     val s = totalSec % 60
     return "%d:%02d".format(m, s)
 }
+
+fun hasNetwork(context: android.content.Context): Boolean = NetMonitor.hasTransport(context)

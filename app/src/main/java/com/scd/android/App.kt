@@ -1,15 +1,31 @@
 package com.scd.android
 
 import android.app.Application
+import android.content.Context
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import okhttp3.Request
 
 class App : Application(), ImageLoaderFactory {
 
+    override fun attachBaseContext(base: Context) {
+        Prefs.init(base)
+        super.attachBaseContext(LocaleHelper.wrap(base, Prefs.language))
+    }
+
     override fun onCreate() {
         super.onCreate()
+        Prefs.init(this)
+        Api.initHttp(this)
         Api.loadSession(this)
+        Downloads.init(this)
+    }
+
+    companion object {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 
     override fun newImageLoader(): ImageLoader =

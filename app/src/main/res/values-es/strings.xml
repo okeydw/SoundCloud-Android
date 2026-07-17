@@ -43,8 +43,12 @@
     <string name="create">Crear</string>
     <string name="add_to_playlist">Añadir a la lista</string>
     <string name="added">Añadido</string>
+    <string name="playlist_created">Playlist creada</string>
+    <string name="playlist_creating_slow">Creando… aparecerá en unos segundos</string>
     <string name="immersive_artwork">Portada a pantalla completa</string>
     <string name="immersive_artwork_hint">Usar la portada como fondo del reproductor</string>
     <string name="version">Versión %1$s</string>
     <string name="no_internet">Sin conexión a Internet</string>
+    <string name="delete">Eliminar</string>
+    <string name="delete_playlist_q">¿Eliminar la lista «%1$s»?</string>
 </resources>

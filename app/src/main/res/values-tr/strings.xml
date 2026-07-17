@@ -43,8 +43,12 @@
     <string name="create">Oluştur</string>
     <string name="add_to_playlist">Çalma listesine ekle</string>
     <string name="added">Eklendi</string>
+    <string name="playlist_created">Çalma listesi oluşturuldu</string>
+    <string name="playlist_creating_slow">Oluşturuluyor… birazdan görünecek</string>
     <string name="immersive_artwork">Tam ekran kapak</string>
     <string name="immersive_artwork_hint">Kapağı oynatıcı arka planı olarak kullan</string>
     <string name="version">Sürüm %1$s</string>
     <string name="no_internet">İnternet bağlantısı yok</string>
+    <string name="delete">Sil</string>
+    <string name="delete_playlist_q">«%1$s» çalma listesi silinsin mi?</string>
 </resources>

@@ -56,7 +56,6 @@ fun ArtistScreen(
     LaunchedEffect(urn) {
         loading = true
         if (offline) {
-            // Офлайн: собираем треки этого автора из скачанных
             val downloaded = Downloads.tracks().filter { it.user?.urn == urn }
             tracks = downloaded
             val u = downloaded.firstOrNull()?.user

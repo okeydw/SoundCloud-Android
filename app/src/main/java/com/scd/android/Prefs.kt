@@ -27,7 +27,7 @@ object Prefs {
         immersiveArtwork = sp.getBoolean("immersive_artwork", false)
     }
 
-    fun updateImmersiveArtwork(value: Boolean) {
+    fun changeImmersiveArtwork(value: Boolean) {
         immersiveArtwork = value
         sp.edit().putBoolean("immersive_artwork", value).apply()
     }

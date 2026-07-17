@@ -1,5 +1,6 @@
 package com.scd.android
 
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -50,7 +51,8 @@ object Downloads {
         downloaded = index.keys.toSet()
     }
 
-    fun fileFor(urn: String): File = File(dir, urn.replace(':', '_') + ".m4a")
+    fun fileFor(urn: String): File =
+        File(dir, urn.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".m4a")
 
     fun isDownloaded(urn: String) = urn in downloaded
 
@@ -69,11 +71,13 @@ object Downloads {
                 tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
             }
             if (!tmp.renameTo(target)) return@withContext false
-            index[track.urn] = track
-            saveIndex()
+            synchronized(index) {
+                index[track.urn] = track
+                saveIndex()
+            }
             downloaded = downloaded + track.urn
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             tmp.delete()
             false
         } finally {
@@ -97,11 +101,14 @@ object Downloads {
 
     suspend fun remove(urn: String): Unit = withContext(Dispatchers.IO) {
         fileFor(urn).delete()
-        index.remove(urn)
-        saveIndex()
+        synchronized(index) {
+            index.remove(urn)
+            saveIndex()
+        }
         downloaded = downloaded - urn
     }
 
+    @SuppressLint("MissingPermission")
     private fun notifyProgress(done: Int, total: Int) {
         if (!::appContext.isInitialized) return
         val notif = NotificationCompat.Builder(appContext, CHANNEL_ID)
@@ -115,6 +122,7 @@ object Downloads {
         runCatching { NotificationManagerCompat.from(appContext).notify(NOTIF_ID, notif) }
     }
 
+    @SuppressLint("MissingPermission")
     private fun notifyComplete(done: Int, total: Int) {
         if (!::appContext.isInitialized) return
         val notif = NotificationCompat.Builder(appContext, CHANNEL_ID)

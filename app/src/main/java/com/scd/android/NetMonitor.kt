@@ -9,7 +9,6 @@ import java.util.concurrent.TimeUnit
 
 object NetMonitor {
 
-    /** Есть ли активное подключение (Wi-Fi или мобильные данные). Ручной офлайн не учитывает. */
     fun hasTransport(context: Context): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return true
@@ -26,11 +25,6 @@ object NetMonitor {
         return hasTransport(context)
     }
 
-    /**
-     * Когда сети нет (или включён ручной офлайн) — просим OkHttp отдать ответ из
-     * дискового кэша, даже устаревший (до 30 дней). Так библиотека/история/плейлисты
-     * открываются офлайн из последних загруженных данных.
-     */
     fun offlineInterceptor(context: Context) = Interceptor { chain ->
         var request = chain.request()
         if (!isOnline(context)) {

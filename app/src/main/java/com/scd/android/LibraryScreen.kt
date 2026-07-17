@@ -3,8 +3,6 @@ package com.scd.android
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,8 +15,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -83,7 +83,9 @@ fun LibraryScreen(
 
     LaunchedEffect(view, PlaylistEvents.version) {
         if (view == LibView.Root) {
-            runCatching { Api.myPlaylists() }.onSuccess { playlists = it.collection }
+            runCatching { Api.myPlaylists(fresh = !offline) }
+                .recoverCatching { if (!offline) Api.myPlaylists(fresh = false) else throw it }
+                .onSuccess { playlists = it.collection }
         }
     }
 
@@ -131,31 +133,19 @@ fun LibraryScreen(
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = { showCreate = true }) {
-                    Icon(
-                        painterResource(R.drawable.ic_plus),
-                        null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Icon(painterResource(R.drawable.ic_plus), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { showSettings = true }) {
-                    Icon(
-                        painterResource(R.drawable.ic_settings),
-                        null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Icon(painterResource(R.drawable.ic_settings), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
             LazyColumn(Modifier.fillMaxSize()) {
                 item {
-                    LibRow(R.drawable.ic_heart, stringResource(R.string.liked)) {
-                        view = LibView.Liked
-                    }
+                    LibRow(R.drawable.ic_heart, stringResource(R.string.liked)) { view = LibView.Liked }
                 }
                 item {
-                    LibRow(R.drawable.ic_download, stringResource(R.string.downloads)) {
-                        view = LibView.Downloaded
-                    }
+                    LibRow(R.drawable.ic_download, stringResource(R.string.downloads)) { view = LibView.Downloaded }
                 }
                 items(playlists) { p ->
                     LibRow(
@@ -168,9 +158,7 @@ fun LibraryScreen(
                     }
                 }
                 item {
-                    LibRow(R.drawable.ic_history, stringResource(R.string.history)) {
-                        view = LibView.HistoryView
-                    }
+                    LibRow(R.drawable.ic_history, stringResource(R.string.history)) { view = LibView.HistoryView }
                 }
             }
         }
@@ -217,12 +205,17 @@ fun LibraryScreen(
                 res.collection to res.has_more
             },
             downloadAll = !offline,
-            onRename = { newTitle ->
+            onRename = if (offline) null else { newTitle ->
                 Api.renamePlaylist(v.urn, newTitle)
-                playlists = playlists.map {
-                    if (it.urn == v.urn) it.copy(title = newTitle) else it
-                }
+                playlists = playlists.map { if (it.urn == v.urn) it.copy(title = newTitle) else it }
                 view = LibView.PlaylistView(v.urn, newTitle)
+            },
+            onDelete = if (offline) null else {
+                {
+                    runCatching { Api.deletePlaylist(v.urn) }
+                    playlists = playlists.filterNot { it.urn == v.urn }
+                    view = LibView.Root
+                }
             },
         )
     }
@@ -248,11 +241,43 @@ fun LibraryScreen(
                         Button(
                             enabled = name.isNotBlank(),
                             onClick = {
+                                val title = name.trim()
+                                val beforeUrns = playlists.map { it.urn }.toSet()
                                 scope.launch {
-                                    runCatching { Api.createPlaylist(name.trim()) }.onSuccess { pl ->
-                                        playlists = listOf(pl) + playlists
-                                    }
+                                    val result = runCatching { Api.createPlaylist(title) }
                                     showCreate = false
+                                    val err = result.exceptionOrNull()
+                                    val gatewayTimeout = (err as? ApiHttpException)?.code in setOf(502, 503, 504)
+                                    if (result.isSuccess || gatewayTimeout) {
+                                        var appeared = false
+                                        var tries = 0
+                                        while (tries < 15) {
+                                            kotlinx.coroutines.delay(1000)
+                                            val fresh = runCatching { Api.myPlaylists(fresh = true) }.getOrNull()
+                                            if (fresh != null) {
+                                                playlists = fresh.collection
+                                                if (fresh.collection.any { it.urn !in beforeUrns && it.title == title } ||
+                                                    fresh.collection.size > beforeUrns.size
+                                                ) {
+                                                    appeared = true
+                                                    break
+                                                }
+                                            }
+                                            tries++
+                                        }
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            if (appeared || result.isSuccess) context.getString(R.string.playlist_created)
+                                            else context.getString(R.string.playlist_creating_slow),
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                    } else {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            err?.message ?: context.getString(R.string.error_network),
+                                            android.widget.Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
                                 }
                             },
                         ) { Text(stringResource(R.string.create)) }
@@ -324,6 +349,7 @@ private fun LibTracks(
     downloadAll: Boolean = false,
     dimUndownloaded: Boolean = false,
     onRename: (suspend (String) -> Unit)? = null,
+    onDelete: (suspend () -> Unit)? = null,
 ) {
     var items by remember { mutableStateOf<List<Track>>(emptyList()) }
     var page by remember { mutableStateOf(0) }
@@ -331,6 +357,7 @@ private fun LibTracks(
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var showRename by remember { mutableStateOf(false) }
+    var showDelete by remember { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -370,9 +397,45 @@ private fun LibTracks(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (onRename != null) {
-                IconButton(onClick = { showRename = true }) {
-                    Icon(painterResource(R.drawable.ic_edit), null, modifier = Modifier.size(20.dp))
+            if (onRename != null || onDelete != null) {
+                var menuOpen by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(painterResource(R.drawable.ic_more_vert), null, modifier = Modifier.size(20.dp))
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        if (onRename != null) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.rename)) },
+                                leadingIcon = {
+                                    Icon(painterResource(R.drawable.ic_edit), null, modifier = Modifier.size(18.dp))
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    showRename = true
+                                },
+                            )
+                        }
+                        if (onDelete != null) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        painterResource(R.drawable.ic_trash),
+                                        null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    showDelete = true
+                                },
+                            )
+                        }
+                    }
                 }
             }
             if (downloadAll) {
@@ -383,7 +446,6 @@ private fun LibTracks(
                     IconButton(onClick = {
                         scope.launch {
                             downloading = true
-                            // Догружаем ВСЕ страницы, потом качаем целиком
                             val all = items.toMutableList()
                             var p = page
                             var more = hasMore
@@ -418,11 +480,7 @@ private fun LibTracks(
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = newTitle,
-                            onValueChange = { newTitle = it },
-                            singleLine = true,
-                        )
+                        OutlinedTextField(value = newTitle, onValueChange = { newTitle = it }, singleLine = true)
                         Spacer(Modifier.height(16.dp))
                         Row {
                             Spacer(Modifier.weight(1f))
@@ -443,6 +501,40 @@ private fun LibTracks(
                 }
             }
         }
+
+        if (showDelete && onDelete != null) {
+            Dialog(onDismissRequest = { showDelete = false }) {
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
+                    Column(Modifier.padding(24.dp)) {
+                        Text(
+                            stringResource(R.string.delete_playlist_q, title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Row {
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { showDelete = false }) {
+                                Text(stringResource(R.string.cancel))
+                            }
+                            Button(
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error,
+                                    contentColor = MaterialTheme.colorScheme.onError,
+                                ),
+                                onClick = {
+                                    scope.launch {
+                                        showDelete = false
+                                        onDelete()
+                                    }
+                                },
+                            ) { Text(stringResource(R.string.delete)) }
+                        }
+                    }
+                }
+            }
+        }
+
         TrackList(
             tracks = items,
             loading = loading,
@@ -463,6 +555,7 @@ fun SettingsScreen(
     onLogout: () -> Unit,
 ) {
     val activity = LocalContext.current as? android.app.Activity
+    val ctx = LocalContext.current
     BackHandler(onBack = onBack)
 
     Column(Modifier.fillMaxSize()) {
@@ -507,15 +600,10 @@ fun SettingsScreen(
                 "light" to stringResource(R.string.theme_light),
             ).forEach { (value, label) ->
                 Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { Prefs.setThemeMode(value) },
+                    Modifier.fillMaxWidth().clickable { Prefs.setThemeMode(value) },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RadioButton(
-                        selected = Prefs.theme == value,
-                        onClick = { Prefs.setThemeMode(value) },
-                    )
+                    RadioButton(selected = Prefs.theme == value, onClick = { Prefs.setThemeMode(value) })
                     Text(label)
                 }
             }
@@ -539,11 +627,7 @@ fun SettingsScreen(
                 Box {
                     TextButton(onClick = { langOpen = true }) {
                         Text(langLabels[Prefs.language] ?: Prefs.language)
-                        Icon(
-                            painterResource(R.drawable.ic_chevron_down),
-                            null,
-                            modifier = Modifier.size(18.dp),
-                        )
+                        Icon(painterResource(R.drawable.ic_chevron_down), null, modifier = Modifier.size(18.dp))
                     }
                     DropdownMenu(expanded = langOpen, onDismissRequest = { langOpen = false }) {
                         LocaleHelper.languages.forEach { code ->
@@ -572,19 +656,13 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                Switch(
-                    checked = Prefs.immersiveArtwork,
-                    onCheckedChange = { Prefs.updateImmersiveArtwork(it) },
-                )
+                Switch(checked = Prefs.immersiveArtwork, onCheckedChange = { Prefs.changeImmersiveArtwork(it) })
             }
 
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.offline_mode), Modifier.weight(1f), fontWeight = FontWeight.Medium)
-                Switch(
-                    checked = Prefs.offline,
-                    onCheckedChange = { Prefs.setOfflineMode(it) },
-                )
+                Switch(checked = Prefs.offline, onCheckedChange = { Prefs.setOfflineMode(it) })
             }
 
             Spacer(Modifier.height(24.dp))
@@ -600,7 +678,6 @@ fun SettingsScreen(
             }
 
             Spacer(Modifier.height(16.dp))
-            val ctx = LocalContext.current
             val version = remember {
                 runCatching {
                     ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName

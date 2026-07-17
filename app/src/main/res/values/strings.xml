@@ -44,8 +44,12 @@
     <string name="create">Create</string>
     <string name="add_to_playlist">Add to playlist</string>
     <string name="added">Added</string>
+    <string name="playlist_created">Playlist created</string>
+    <string name="playlist_creating_slow">Creating… it may take a moment to appear</string>
     <string name="immersive_artwork">Full-screen artwork</string>
     <string name="immersive_artwork_hint">Use the cover as the player background</string>
     <string name="version">Version %1$s</string>
     <string name="no_internet">No internet connection</string>
+    <string name="delete">Delete</string>
+    <string name="delete_playlist_q">Delete playlist «%1$s»?</string>
 </resources>

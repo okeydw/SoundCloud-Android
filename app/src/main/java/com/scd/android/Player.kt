@@ -40,7 +40,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,54 +72,24 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import coil.compose.AsyncImage
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @Composable
 fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
-    var title by remember { mutableStateOf<String?>(null) }
-    var artist by remember { mutableStateOf("") }
-    var artworkUri by remember { mutableStateOf<String?>(null) }
-    var isPlaying by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
-
-    DisposableEffect(controller) {
-        if (controller == null) return@DisposableEffect onDispose {}
-        fun sync() {
-            val md = controller.currentMediaItem?.mediaMetadata
-            title = md?.title?.toString()
-            artist = md?.artist?.toString() ?: ""
-            artworkUri = md?.artworkUri?.toString()
-            isPlaying = controller.isPlaying
-            NowPlaying.urn = controller.currentMediaItem?.mediaId
-            NowPlaying.isPlaying = controller.isPlaying
-        }
-        val listener = object : Player.Listener {
-            override fun onEvents(player: Player, events: Player.Events) = sync()
-        }
-        controller.addListener(listener)
-        sync()
-        onDispose { controller.removeListener(listener) }
-    }
-
-    LaunchedEffect(controller) {
-        if (controller == null) return@LaunchedEffect
-        while (true) {
-            val dur = controller.duration
-            progress = if (dur > 0) (controller.currentPosition.toFloat() / dur).coerceIn(0f, 1f) else 0f
-            delay(250)
-        }
-    }
+    val t = NowPlaying.title.takeIf { it.isNotEmpty() } ?: return
+    val artist = NowPlaying.artist
+    val artworkUri = NowPlaying.artworkUri
+    val isPlaying = NowPlaying.isPlaying
+    val progress = if (NowPlaying.duration > 0)
+        (NowPlaying.position.toFloat() / NowPlaying.duration).coerceIn(0f, 1f) else 0f
 
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
         animationSpec = tween(durationMillis = 260, easing = LinearEasing),
         label = "miniProgress",
     )
-
-    val t = title ?: return
 
     val surface = MaterialTheme.colorScheme.surfaceVariant
     val tintTarget = rememberArtworkColor(artworkUri)
@@ -145,49 +114,49 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
                     )
                 },
         ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AsyncImage(
-                model = artworkUri,
-                contentDescription = null,
-                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(4.dp)),
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(t, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-                if (artist.isNotEmpty()) {
-                    Text(
-                        artist,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AsyncImage(
+                    model = artworkUri,
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(4.dp)),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(t, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    if (artist.isNotEmpty()) {
+                        Text(
+                            artist,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                IconButton(onClick = { controller?.seekToPrevious() }) {
+                    Icon(painterResource(R.drawable.ic_prev), null)
+                }
+                IconButton(onClick = {
+                    controller?.let { if (it.isPlaying) it.pause() else it.play() }
+                }) {
+                    Icon(painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play), null)
+                }
+                IconButton(onClick = { controller?.seekToNext() }) {
+                    Icon(painterResource(R.drawable.ic_next), null)
                 }
             }
-            IconButton(onClick = { controller?.seekToPrevious() }) {
-                Icon(painterResource(R.drawable.ic_prev), null)
-            }
-            IconButton(onClick = {
-                controller?.let { if (it.isPlaying) it.pause() else it.play() }
-            }) {
-                Icon(painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play), null)
-            }
-            IconButton(onClick = { controller?.seekToNext() }) {
-                Icon(painterResource(R.drawable.ic_next), null)
-            }
-        }
-        LinearProgressIndicator(
-            progress = { animatedProgress },
-            modifier = Modifier.fillMaxWidth().height(2.dp),
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f),
-            drawStopIndicator = {},
-        )
+            LinearProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f),
+                drawStopIndicator = {},
+            )
         }
     }
 }
@@ -199,52 +168,24 @@ fun NowPlayingScreen(
     onOpenArtist: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    var title by remember { mutableStateOf("") }
-    var artist by remember { mutableStateOf("") }
-    var artworkUri by remember { mutableStateOf<String?>(null) }
-    var currentUrn by remember { mutableStateOf("") }
-    var isPlaying by remember { mutableStateOf(false) }
-    var shuffle by remember { mutableStateOf(false) }
-    var repeatMode by remember { mutableStateOf(Player.REPEAT_MODE_OFF) }
-    var duration by remember { mutableStateOf(0L) }
-    var position by remember { mutableStateOf(0L) }
+    val title = NowPlaying.title
+    val artist = NowPlaying.artist
+    val artistUrn = NowPlaying.artistUrn
+    val artworkUri = NowPlaying.artworkUri
+    val currentUrn = NowPlaying.urn
+    val isPlaying = NowPlaying.isPlaying
+    val shuffle = NowPlaying.shuffle
+    val repeatMode = NowPlaying.repeatMode
+    val position = NowPlaying.position
+    val duration = NowPlaying.duration
+
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableStateOf(0f) }
-
-    DisposableEffect(controller) {
-        fun sync() {
-            val md = controller.currentMediaItem?.mediaMetadata
-            title = md?.title?.toString() ?: ""
-            artist = md?.artist?.toString() ?: ""
-            artworkUri = md?.artworkUri?.toString()
-            currentUrn = controller.currentMediaItem?.mediaId ?: ""
-            isPlaying = controller.isPlaying
-            shuffle = controller.shuffleModeEnabled
-            repeatMode = controller.repeatMode
-        }
-        val listener = object : Player.Listener {
-            override fun onEvents(player: Player, events: Player.Events) = sync()
-        }
-        controller.addListener(listener)
-        sync()
-        onDispose { controller.removeListener(listener) }
-    }
-
-    LaunchedEffect(controller) {
-        while (true) {
-            if (!dragging) {
-                position = controller.currentPosition.coerceAtLeast(0L)
-                duration = controller.duration.coerceAtLeast(0L)
-            }
-            delay(400)
-        }
-    }
 
     var waveform by remember { mutableStateOf<List<Float>?>(null) }
     LaunchedEffect(currentUrn) {
         waveform = null
-        val url = controller.currentMediaItem?.mediaMetadata?.extras?.getString("waveform_url")
-            ?: return@LaunchedEffect
+        val url = NowPlaying.waveformUrl ?: return@LaunchedEffect
         waveform = runCatching { Api.waveform(url) }.getOrNull()
     }
 
@@ -325,10 +266,10 @@ fun NowPlayingScreen(
                         }
                         .padding(horizontal = 24.dp),
                 ) {
-                    val track = controller.currentMediaItem?.toTrackOrNull()
                     val titleColor = if (immersive) Color.White else MaterialTheme.colorScheme.onBackground
                     val subColor = if (immersive) Color.White.copy(alpha = 0.75f)
                     else MaterialTheme.colorScheme.onSurfaceVariant
+                    val hasTrack = currentUrn != null
 
                     Row(
                         Modifier.fillMaxWidth().padding(top = 12.dp),
@@ -338,21 +279,19 @@ fun NowPlayingScreen(
                             Icon(painterResource(R.drawable.ic_chevron_down), null, tint = titleColor)
                         }
                         Spacer(Modifier.weight(1f))
-                        if (track != null) {
+                        if (hasTrack) {
                             Box {
                                 var menuOpen by remember { mutableStateOf(false) }
                                 IconButton(onClick = { menuOpen = true }) {
-                                    Icon(
-                                        painterResource(R.drawable.ic_plus),
-                                        null,
-                                        tint = titleColor,
+                                    Icon(painterResource(R.drawable.ic_plus), null, tint = titleColor)
+                                }
+                                controller.currentMediaItem?.toTrackOrNull()?.let { track ->
+                                    AddToPlaylistMenu(
+                                        expanded = menuOpen,
+                                        track = track,
+                                        onDismiss = { menuOpen = false },
                                     )
                                 }
-                                AddToPlaylistMenu(
-                                    expanded = menuOpen,
-                                    track = track,
-                                    onDismiss = { menuOpen = false },
-                                )
                             }
                         }
                     }
@@ -399,8 +338,6 @@ fun NowPlayingScreen(
                                     .basicMarquee(),
                             )
                             Spacer(Modifier.height(4.dp))
-                            val artistUrn = controller.currentMediaItem?.mediaMetadata
-                                ?.extras?.getString("artist_urn")
                             Text(
                                 artist,
                                 color = subColor,
@@ -412,163 +349,168 @@ fun NowPlayingScreen(
                             )
                         }
                     }
-                    if (track != null) {
+
+                    if (currentUrn != null) {
                         Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                        val liked = Likes.isLiked(track.urn)
-                        val disliked = Dislikes.isDisliked(track.urn)
-                        IconButton(onClick = { scope.launch { Likes.toggle(track) } }) {
-                            Icon(
-                                painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                                null,
-                                tint = if (liked) MaterialTheme.colorScheme.primary else subColor,
-                            )
-                        }
-                        IconButton(onClick = {
-                            scope.launch {
-                                if (Dislikes.toggle(track)) controller.seekToNext()
+                            val liked = Likes.isLiked(currentUrn)
+                            val disliked = Dislikes.isDisliked(currentUrn)
+                            IconButton(onClick = {
+                                controller.currentMediaItem?.toTrackOrNull()?.let {
+                                    scope.launch { Likes.toggle(it) }
+                                }
+                            }) {
+                                Icon(
+                                    painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                                    null,
+                                    tint = if (liked) MaterialTheme.colorScheme.primary else subColor,
+                                )
                             }
-                        }) {
-                            Icon(
-                                painterResource(R.drawable.ic_thumb_down),
-                                null,
-                                tint = if (disliked) MaterialTheme.colorScheme.error else subColor,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        when {
-                            track.urn in Downloads.inProgress ->
-                                CircularProgressIndicator(Modifier.size(22.dp).padding(2.dp), strokeWidth = 2.dp)
-                            Downloads.isDownloaded(track.urn) ->
-                                IconButton(onClick = { scope.launch { Downloads.remove(track.urn) } }) {
-                                    Icon(
-                                        painterResource(R.drawable.ic_check),
-                                        null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
+                            IconButton(onClick = {
+                                controller.currentMediaItem?.toTrackOrNull()?.let {
+                                    scope.launch { if (Dislikes.toggle(it)) controller.seekToNext() }
                                 }
-                            else ->
-                                IconButton(onClick = { scope.launch { Downloads.download(track) } }) {
-                                    Icon(
-                                        painterResource(R.drawable.ic_download),
-                                        null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
+                            }) {
+                                Icon(
+                                    painterResource(R.drawable.ic_thumb_down),
+                                    null,
+                                    tint = if (disliked) MaterialTheme.colorScheme.error else subColor,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            when {
+                                currentUrn in Downloads.inProgress ->
+                                    CircularProgressIndicator(Modifier.size(22.dp).padding(2.dp), strokeWidth = 2.dp)
+                                Downloads.isDownloaded(currentUrn) ->
+                                    IconButton(onClick = { scope.launch { Downloads.remove(currentUrn) } }) {
+                                        Icon(
+                                            painterResource(R.drawable.ic_check),
+                                            null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                else ->
+                                    IconButton(onClick = {
+                                        controller.currentMediaItem?.toTrackOrNull()?.let {
+                                            scope.launch { Downloads.download(it) }
+                                        }
+                                    }) {
+                                        Icon(
+                                            painterResource(R.drawable.ic_download),
+                                            null,
+                                            tint = subColor,
+                                        )
+                                    }
+                            }
                         }
                     }
-                }
 
-                Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(12.dp))
 
-                val wf = waveform
-                if (wf != null) {
-                    WaveformSeekBar(
-                        samples = wf,
-                        progress = if (duration > 0) position.toFloat() / duration else 0f,
-                        isPlaying = isPlaying,
-                        onSeek = { frac ->
-                            if (duration > 0) controller.seekTo((frac * duration).toLong())
-                        },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                    )
-                } else {
-                    Slider(
-                        value = if (dragging) dragValue else if (duration > 0) position.toFloat() / duration else 0f,
-                        onValueChange = {
-                            dragging = true
-                            dragValue = it
-                        },
-                        onValueChangeFinished = {
-                            if (duration > 0) controller.seekTo((dragValue * duration).toLong())
-                            dragging = false
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(
-                        formatDuration(if (dragging && duration > 0) (dragValue * duration).toLong() else position),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        formatDuration(duration),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = { controller.shuffleModeEnabled = !shuffle }) {
-                        Icon(
-                            painterResource(R.drawable.ic_shuffle),
-                            null,
-                            tint = if (shuffle) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp),
+                    val wf = waveform
+                    if (wf != null) {
+                        WaveformSeekBar(
+                            samples = wf,
+                            progress = if (duration > 0) position.toFloat() / duration else 0f,
+                            isPlaying = isPlaying,
+                            onSeek = { frac -> if (duration > 0) controller.seekTo((frac * duration).toLong()) },
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                        )
+                    } else {
+                        Slider(
+                            value = if (dragging) dragValue else if (duration > 0) position.toFloat() / duration else 0f,
+                            onValueChange = {
+                                dragging = true
+                                dragValue = it
+                            },
+                            onValueChangeFinished = {
+                                if (duration > 0) controller.seekTo((dragValue * duration).toLong())
+                                dragging = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    Spacer(Modifier.width(12.dp))
-                    IconButton(onClick = { controller.seekToPrevious() }, modifier = Modifier.size(56.dp)) {
-                        Icon(painterResource(R.drawable.ic_prev), null, modifier = Modifier.size(36.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            formatDuration(if (dragging && duration > 0) (dragValue * duration).toLong() else position),
+                            color = subColor,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            formatDuration(duration),
+                            color = subColor,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     }
-                    Spacer(Modifier.width(12.dp))
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clickable { if (controller.isPlaying) controller.pause() else controller.play() },
+
+                    Spacer(Modifier.height(8.dp))
+
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
+                        IconButton(onClick = { controller.shuffleModeEnabled = !shuffle }) {
                             Icon(
-                                painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                                painterResource(R.drawable.ic_shuffle),
                                 null,
-                                tint = MaterialTheme.colorScheme.background,
-                                modifier = Modifier.size(40.dp),
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    IconButton(onClick = { controller.seekToNext() }, modifier = Modifier.size(56.dp)) {
-                        Icon(painterResource(R.drawable.ic_next), null, modifier = Modifier.size(36.dp))
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Box {
-                        IconButton(onClick = {
-                            controller.repeatMode = when (repeatMode) {
-                                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                                else -> Player.REPEAT_MODE_OFF
-                            }
-                        }) {
-                            Icon(
-                                painterResource(R.drawable.ic_repeat),
-                                null,
-                                tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (shuffle) MaterialTheme.colorScheme.primary else subColor,
                                 modifier = Modifier.size(22.dp),
                             )
                         }
-                        if (repeatMode == Player.REPEAT_MODE_ONE) {
-                            Text(
-                                "1",
-                                color = MaterialTheme.colorScheme.primary,
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 4.dp),
-                            )
+                        Spacer(Modifier.width(12.dp))
+                        IconButton(onClick = { controller.seekToPrevious() }, modifier = Modifier.size(56.dp)) {
+                            Icon(painterResource(R.drawable.ic_prev), null, modifier = Modifier.size(36.dp), tint = titleColor)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clickable { if (controller.isPlaying) controller.pause() else controller.play() },
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                                    null,
+                                    tint = MaterialTheme.colorScheme.background,
+                                    modifier = Modifier.size(40.dp),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        IconButton(onClick = { controller.seekToNext() }, modifier = Modifier.size(56.dp)) {
+                            Icon(painterResource(R.drawable.ic_next), null, modifier = Modifier.size(36.dp), tint = titleColor)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Box {
+                            IconButton(onClick = {
+                                controller.repeatMode = when (repeatMode) {
+                                    Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                                    Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                                    else -> Player.REPEAT_MODE_OFF
+                                }
+                            }) {
+                                Icon(
+                                    painterResource(R.drawable.ic_repeat),
+                                    null,
+                                    tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else subColor,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                            if (repeatMode == Player.REPEAT_MODE_ONE) {
+                                Text(
+                                    "1",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 4.dp),
+                                )
+                            }
                         }
                     }
-                }
 
-                Spacer(Modifier.weight(1.4f))
+                    Spacer(Modifier.weight(1.4f))
                 }
             }
         }
@@ -591,21 +533,18 @@ fun AddToPlaylistMenu(expanded: Boolean, track: Track, onDismiss: () -> Unit) {
     fun addTo(urn: String) {
         scope.launch {
             val ok = runCatching { Api.addToPlaylist(urn, track.urn) }.isSuccess
-            if (ok) {
-                PlaylistEvents.bump()
-                android.widget.Toast.makeText(
-                    context,
-                    context.getString(R.string.added),
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
-            }
+            if (ok) PlaylistEvents.bump()
+            android.widget.Toast.makeText(
+                context,
+                context.getString(if (ok) R.string.added else R.string.error_network),
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
         }
     }
 
     androidx.compose.material3.DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         val list = playlists
         if (list != null && list.isEmpty()) {
-            // нет плейлистов — сразу предлагаем создать
             androidx.compose.material3.DropdownMenuItem(
                 text = { androidx.compose.material3.Text(stringResource(R.string.new_playlist)) },
                 leadingIcon = { Icon(painterResource(R.drawable.ic_plus), null, Modifier.size(18.dp)) },
@@ -667,11 +606,10 @@ fun AddToPlaylistMenu(expanded: Boolean, track: Track, onDismiss: () -> Unit) {
                             enabled = name.isNotBlank(),
                             onClick = {
                                 scope.launch {
-                                    val pl = runCatching { Api.createPlaylist(name.trim()) }.getOrNull()
+                                    val urn = runCatching { Api.createPlaylist(name.trim()) }.getOrNull()
                                     showCreate = false
-                                    if (pl != null) {
-                                        addTo(pl.urn)
-                                    }
+                                    if (urn != null) addTo(urn)
+                                    PlaylistEvents.bump()
                                 }
                             },
                         ) { androidx.compose.material3.Text(stringResource(R.string.create)) }

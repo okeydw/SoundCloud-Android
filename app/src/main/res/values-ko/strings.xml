@@ -43,8 +43,12 @@
     <string name="create">만들기</string>
     <string name="add_to_playlist">재생목록에 추가</string>
     <string name="added">추가됨</string>
+    <string name="playlist_created">재생목록이 생성되었습니다</string>
+    <string name="playlist_creating_slow">생성 중… 잠시 후 표시됩니다</string>
     <string name="immersive_artwork">전체 화면 커버</string>
     <string name="immersive_artwork_hint">커버를 플레이어 배경으로 사용</string>
     <string name="version">버전 %1$s</string>
     <string name="no_internet">인터넷 연결 없음</string>
+    <string name="delete">삭제</string>
+    <string name="delete_playlist_q">재생목록 «%1$s»을(를) 삭제할까요?</string>
 </resources>

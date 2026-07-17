@@ -43,8 +43,12 @@
     <string name="create">Créer</string>
     <string name="add_to_playlist">Ajouter à la playlist</string>
     <string name="added">Ajouté</string>
+    <string name="playlist_created">Playlist créée</string>
+    <string name="playlist_creating_slow">Création… elle apparaîtra dans un instant</string>
     <string name="immersive_artwork">Pochette plein écran</string>
     <string name="immersive_artwork_hint">Utiliser la pochette comme fond du lecteur</string>
     <string name="version">Version %1$s</string>
     <string name="no_internet">Pas de connexion Internet</string>
+    <string name="delete">Supprimer</string>
+    <string name="delete_playlist_q">Supprimer la playlist «%1$s» ?</string>
 </resources>

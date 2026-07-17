@@ -38,7 +38,7 @@ class App : Application(), ImageLoaderFactory {
                             val (name, value) = Api.imageProxyTarget(req.url.toString())
                             chain.proceed(
                                 Request.Builder()
-                                    .url(Api.IMAGES_BASE)
+                                    .url("${Api.IMAGES_BASE}/?t=${android.net.Uri.encode(value)}")
                                     .header(name, value)
                                     .build()
                             )

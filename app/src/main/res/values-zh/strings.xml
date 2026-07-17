@@ -43,8 +43,12 @@
     <string name="create">创建</string>
     <string name="add_to_playlist">添加到播放列表</string>
     <string name="added">已添加</string>
+    <string name="playlist_created">播放列表已创建</string>
+    <string name="playlist_creating_slow">正在创建…稍后即会显示</string>
     <string name="immersive_artwork">全屏封面</string>
     <string name="immersive_artwork_hint">将封面用作播放器背景</string>
     <string name="version">版本 %1$s</string>
     <string name="no_internet">无网络连接</string>
+    <string name="delete">删除</string>
+    <string name="delete_playlist_q">删除播放列表「%1$s」？</string>
 </resources>

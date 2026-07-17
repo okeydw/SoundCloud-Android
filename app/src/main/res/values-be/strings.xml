@@ -43,8 +43,12 @@
     <string name="create">Стварыць</string>
     <string name="add_to_playlist">Дадаць у плэйліст</string>
     <string name="added">Дададзена</string>
+    <string name="playlist_created">Плэйліст створаны</string>
+    <string name="playlist_creating_slow">Ствараецца… з\'явіцца праз пару секунд</string>
     <string name="immersive_artwork">Вокладка на ўвесь экран</string>
     <string name="immersive_artwork_hint">Выкарыстоўваць вокладку як фон плэера</string>
     <string name="version">Версія %1$s</string>
     <string name="no_internet">Няма падлучэння да інтэрнэту</string>
+    <string name="delete">Выдаліць</string>
+    <string name="delete_playlist_q">Выдаліць плэйліст «%1$s»?</string>
 </resources>

@@ -36,6 +36,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -54,6 +55,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -195,13 +197,9 @@ fun rememberArtworkColor(artworkUri: String?): Color {
                 val palette = Palette.from(bitmap).generate()
                 val fb = fallback.toArgb()
                 if (dark) {
-                    palette.getDarkMutedColor(
-                        palette.getMutedColor(palette.getDominantColor(fb))
-                    )
+                    palette.getDarkMutedColor(palette.getMutedColor(palette.getDominantColor(fb)))
                 } else {
-                    palette.getLightMutedColor(
-                        palette.getMutedColor(palette.getDominantColor(fb))
-                    )
+                    palette.getLightMutedColor(palette.getMutedColor(palette.getDominantColor(fb)))
                 }
             }
         }.getOrNull()
@@ -305,21 +303,6 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
 
-    var noInternet by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            noInternet = !hasNetwork(context)
-            delay(4000)
-        }
-    }
-
-    LaunchedEffect(NowPlaying.openPlayerRequest) {
-        if (NowPlaying.openPlayerRequest) {
-            showPlayer = true
-            NowPlaying.openPlayerRequest = false
-        }
-    }
-
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<Track>>(emptyList()) }
     var page by remember { mutableStateOf(0) }
@@ -340,6 +323,43 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     var openPlaylist by remember { mutableStateOf<Playlist?>(null) }
 
     LaunchedEffect(Unit) { Dislikes.seed() }
+
+    DisposableEffect(controller) {
+        if (controller == null) return@DisposableEffect onDispose {}
+        NowPlaying.sync(controller)
+        val listener = object : androidx.media3.common.Player.Listener {
+            override fun onEvents(
+                player: androidx.media3.common.Player,
+                events: androidx.media3.common.Player.Events,
+            ) = NowPlaying.sync(controller)
+        }
+        controller.addListener(listener)
+        onDispose { controller.removeListener(listener) }
+    }
+
+    LaunchedEffect(controller) {
+        if (controller == null) return@LaunchedEffect
+        while (true) {
+            NowPlaying.position = controller.currentPosition.coerceAtLeast(0L)
+            NowPlaying.duration = controller.duration.coerceAtLeast(0L)
+            delay(250)
+        }
+    }
+
+    var noInternet by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            noInternet = !hasNetwork(context)
+            delay(4000)
+        }
+    }
+
+    LaunchedEffect(NowPlaying.openPlayerRequest) {
+        if (NowPlaying.openPlayerRequest) {
+            showPlayer = true
+            NowPlaying.openPlayerRequest = false
+        }
+    }
 
     fun handleError(e: Exception) {
         if (e is ApiHttpException && e.code == 401) {
@@ -443,7 +463,6 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                 val fresh = batch.distinctBy { it.urn }
                 wave = fresh
                 waveCursor = cursor
-                // Текущий трек не трогаем, а «следующее» в очереди подменяем новой волной.
                 controller?.let { c ->
                     if (c.mediaItemCount > 0) {
                         val curUrn = c.currentMediaItem?.mediaId
@@ -565,7 +584,6 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             } else when (tab) {
                 Tab.Search -> Box(Modifier.fillMaxSize()) {
                     val barPad = 76.dp
-                    // Фоновый слой: плитки / результаты (скроллятся под плавающей строкой)
                     when {
                         searched || searchLoading || error != null -> TrackList(
                             tracks = results,
@@ -580,172 +598,172 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                         query.isBlank() -> TileGrid(tiles, topPadding = barPad) { play(tiles, it) }
                     }
 
-                    // Плавающая строка поиска + подсказки поверх
                     Column(Modifier.fillMaxWidth()) {
-                    TextField(
-                        value = query,
-                        onValueChange = {
-                            query = it
-                            searched = false
-                        },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        placeholder = {
-                            Text(
-                                stringResource(R.string.search_hint),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(28.dp),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent,
-                            cursorColor = MaterialTheme.colorScheme.primary,
-                        ),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { search(0) }),
-                        leadingIcon = { Icon(painterResource(R.drawable.ic_search), null) },
-                        trailingIcon = {
-                            if (query.isNotEmpty()) IconButton(onClick = {
-                                query = ""
+                        TextField(
+                            value = query,
+                            onValueChange = {
+                                query = it
                                 searched = false
-                                results = emptyList()
-                                hasMore = false
-                                suggestions = emptyList()
-                            }) {
-                                Icon(painterResource(R.drawable.ic_clear), null)
-                            }
-                        },
-                    )
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            placeholder = {
+                                Text(
+                                    stringResource(R.string.search_hint),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(28.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                disabledIndicatorColor = Color.Transparent,
+                                cursorColor = MaterialTheme.colorScheme.primary,
+                            ),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { search(0) }),
+                            leadingIcon = { Icon(painterResource(R.drawable.ic_search), null) },
+                            trailingIcon = {
+                                if (query.isNotEmpty()) IconButton(onClick = {
+                                    query = ""
+                                    searched = false
+                                    results = emptyList()
+                                    hasMore = false
+                                    suggestions = emptyList()
+                                }) {
+                                    Icon(painterResource(R.drawable.ic_clear), null)
+                                }
+                            },
+                        )
 
-                    if (vibePreparing) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                stringResource(R.string.vibe_preparing),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    if (suggestions.isNotEmpty() && !searched && query.trim().length >= 2) {
-                        Column(Modifier.fillMaxWidth()) {
+                        if (vibePreparing) {
                             Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { vibeSearch() }
-                                    .padding(vertical = 10.dp),
+                                Modifier.fillMaxWidth().padding(12.dp),
+                                horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(
-                                    painterResource(R.drawable.ic_wave),
-                                    null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp),
-                                )
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(10.dp))
                                 Text(
-                                    stringResource(R.string.vibe_search) + ": «${query.trim()}»",
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Medium,
+                                    stringResource(R.string.vibe_preparing),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            userSuggestions.forEach { u ->
+                        }
+
+                        if (!searched && query.trim().length >= 2 &&
+                            (suggestions.isNotEmpty() || userSuggestions.isNotEmpty() || playlistResults.isNotEmpty())
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
                                 Row(
                                     Modifier
                                         .fillMaxWidth()
-                                        .clickable { openArtist = u.urn }
-                                        .padding(vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    AsyncImage(
-                                        model = Api.artworkUrl(u.avatar_url, "t120x120"),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(28.dp).clip(androidx.compose.foundation.shape.CircleShape),
-                                        contentScale = ContentScale.Crop,
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        u.username,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontWeight = FontWeight.Medium,
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        stringResource(R.string.artist_label),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                            }
-                            playlistResults.forEach { p ->
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable { openPlaylist = p }
-                                        .padding(vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    AsyncImage(
-                                        model = Api.artworkUrl(p.artwork_url, "t120x120"),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(28.dp).clip(RoundedCornerShape(4.dp)),
-                                        contentScale = ContentScale.Crop,
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        p.title,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        stringResource(R.string.playlist_label),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                            }
-                            suggestions.take(4).forEach { s ->
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            query = s.title
-                                            search(0)
-                                        }
-                                        .padding(vertical = 8.dp),
+                                        .clickable { vibeSearch() }
+                                        .padding(vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Icon(
-                                        painterResource(R.drawable.ic_search),
+                                        painterResource(R.drawable.ic_wave),
                                         null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp),
                                     )
                                     Spacer(Modifier.width(10.dp))
                                     Text(
-                                        s.title + (s.user?.username?.let { " — $it" } ?: ""),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                        stringResource(R.string.vibe_search) + ": «${query.trim()}»",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Medium,
                                     )
+                                }
+                                userSuggestions.forEach { u ->
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clickable { openArtist = u.urn }
+                                            .padding(vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        AsyncImage(
+                                            model = Api.artworkUrl(u.avatar_url, "t120x120"),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(28.dp).clip(CircleShape),
+                                            contentScale = ContentScale.Crop,
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(
+                                            u.username,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            stringResource(R.string.artist_label),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                                playlistResults.forEach { p ->
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clickable { openPlaylist = p }
+                                            .padding(vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        AsyncImage(
+                                            model = Api.artworkUrl(p.artwork_url, "t120x120"),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(28.dp).clip(RoundedCornerShape(4.dp)),
+                                            contentScale = ContentScale.Crop,
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(
+                                            p.title,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            stringResource(R.string.playlist_label),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                                suggestions.take(4).forEach { s ->
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                query = s.title
+                                                search(0)
+                                            }
+                                            .padding(vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            painterResource(R.drawable.ic_search),
+                                            null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(
+                                            s.title + (s.user?.username?.let { " — $it" } ?: ""),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
-
                     }
                 }
                 Tab.Wave -> WaveFeed(
@@ -796,7 +814,7 @@ fun TileGrid(tiles: List<Track>, topPadding: Dp = 0.dp, onPlay: (Track) -> Unit)
         verticalItemSpacing = 8.dp,
     ) {
         itemsIndexed(tiles) { index, track ->
-            val ratio = when ((track.urn.hashCode() + index) % 5) {
+            val ratio = when (Math.floorMod(track.urn.hashCode() + index, 5)) {
                 0 -> 1.6f
                 1 -> 0.7f
                 2 -> 1.15f
@@ -852,11 +870,7 @@ fun TrackList(
     ) {
         items(tracks) { track ->
             val unavailable = dimUndownloaded && !Downloads.isDownloaded(track.urn)
-            TrackRow(
-                track = track,
-                onClick = { onPlay(track) },
-                dimmed = unavailable,
-            )
+            TrackRow(track = track, onClick = { onPlay(track) }, dimmed = unavailable)
         }
         if (canLoadMore && tracks.isNotEmpty()) {
             item {

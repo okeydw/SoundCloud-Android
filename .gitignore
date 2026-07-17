@@ -10,3 +10,9 @@ local.properties
 .cxx
 README-dev.md
 .gitattributes
+app/release/
+*.apk
+*.aab
+*.jks
+*.keystore
+docs/screenshots/tmp_*

@@ -9,7 +9,6 @@ local.properties
 .externalNativeBuild
 .cxx
 README-dev.md
-.gitattributes
 app/release/
 *.apk
 *.aab

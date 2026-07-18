@@ -44,6 +44,10 @@
     <string name="add_to_playlist">Дадаць у плэйліст</string>
     <string name="added">Дададзена</string>
     <string name="liked_playlists">Уподабаныя плэйлісты</string>
+    <string name="kind_album">Альбом</string>
+    <string name="kind_ep">EP</string>
+    <string name="kind_single">Сінгл</string>
+    <string name="kind_compilation">Зборнік</string>
     <string name="greeting_morning">Добрай раніцы</string>
     <string name="greeting_day">Добры дзень</string>
     <string name="greeting_evening">Добры вечар</string>

@@ -61,6 +61,7 @@ private sealed interface LibView {
     data object Downloaded : LibView
     data object HistoryView : LibView
     data class PlaylistView(val urn: String, val title: String, val owned: Boolean = true) : LibView
+    data class ArtistTracks(val urn: String, val title: String, val avatar: String?) : LibView
 }
 
 @Composable
@@ -183,6 +184,17 @@ fun LibraryScreen(
                         view = LibView.PlaylistView(p.urn, p.title, owned = false)
                     }
                 }
+                items(LikedArtists.artists) { a ->
+                    LibRow(
+                        R.drawable.ic_user,
+                        a.username,
+                        subtitle = stringResource(R.string.artist_label),
+                        artworkUrl = a.avatar_url,
+                        circle = true,
+                    ) {
+                        view = LibView.ArtistTracks(a.urn, a.username, a.avatar_url)
+                    }
+                }
                 item {
                     LibRow(R.drawable.ic_history, stringResource(R.string.history)) { view = LibView.HistoryView }
                 }
@@ -216,11 +228,7 @@ fun LibraryScreen(
             dimUndownloaded = offline,
             loader = { page ->
                 val res = Api.history(offset = page * 50, limit = 50)
-                val batch = res.collection.map { it.toTrack() }
-                    .fold(mutableListOf<Track>()) { acc, t ->
-                        if (acc.lastOrNull()?.urn != t.urn) acc.add(t)
-                        acc
-                    }
+                val batch = res.collection.map { it.toTrack() }.distinctBy { it.urn }
                 batch to (page * 50 + res.collection.size < res.total)
             },
         )
@@ -231,7 +239,7 @@ fun LibraryScreen(
             play = play,
             dimUndownloaded = offline,
             loader = { page ->
-                val res = Api.playlistTracks(v.urn, page)
+                val res = Api.playlistTracks(v.urn, page, fresh = page == 0 && !offline)
                 res.collection to res.has_more
             },
             downloadAll = !offline,
@@ -248,6 +256,19 @@ fun LibraryScreen(
                 }
             },
             likedPlaylistUrn = if (v.owned) null else v.urn,
+        )
+
+        is LibView.ArtistTracks -> LibTracks(
+            title = v.title,
+            onBack = { view = LibView.Root },
+            play = play,
+            dimUndownloaded = offline,
+            downloadAll = !offline,
+            loader = { page ->
+                val res = Api.userTracks(v.urn, page)
+                res.collection to res.has_more
+            },
+            likedArtist = Artist(urn = v.urn, username = v.title, avatar_url = v.avatar),
         )
     }
 
@@ -274,9 +295,9 @@ fun LibraryScreen(
                             onClick = {
                                 val title = name.trim()
                                 val beforeUrns = playlists.map { it.urn }.toSet()
+                                showCreate = false
                                 scope.launch {
                                     val result = runCatching { Api.createPlaylist(title) }
-                                    showCreate = false
                                     val err = result.exceptionOrNull()
                                     val gatewayTimeout = (err as? ApiHttpException)?.code in setOf(502, 503, 504)
                                     if (result.isSuccess || gatewayTimeout) {
@@ -325,6 +346,7 @@ private fun LibRow(
     title: String,
     subtitle: String? = null,
     artworkUrl: String? = null,
+    circle: Boolean = false,
     onClick: () -> Unit,
 ) {
     Row(
@@ -337,7 +359,7 @@ private fun LibRow(
         Box(
             Modifier
                 .size(48.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(if (circle) CircleShape else RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
@@ -382,6 +404,7 @@ private fun LibTracks(
     onRename: (suspend (String) -> Unit)? = null,
     onDelete: (suspend () -> Unit)? = null,
     likedPlaylistUrn: String? = null,
+    likedArtist: Artist? = null,
 ) {
     var items by remember { mutableStateOf<List<Track>>(emptyList()) }
     var page by remember { mutableStateOf(0) }
@@ -441,6 +464,17 @@ private fun LibTracks(
                     )
                 }
             }
+            likedArtist?.let { a ->
+                val arLiked = LikedArtists.isLiked(a.urn)
+                IconButton(onClick = { LikedArtists.toggle(a) }) {
+                    Icon(
+                        painterResource(if (arLiked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                        null,
+                        tint = if (arLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
             if (onRename != null || onDelete != null) {
                 var menuOpen by remember { mutableStateOf(false) }
                 Box {
@@ -482,11 +516,20 @@ private fun LibTracks(
                     }
                 }
             }
+            val allDownloaded = items.isNotEmpty() && !hasMore &&
+                items.all { Downloads.isDownloaded(it.urn) }
             if (downloadAll) {
                 if (downloading) {
                     IconButton(onClick = { downloadJob?.cancel() }) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     }
+                } else if (allDownloaded) {
+                    Icon(
+                        painterResource(R.drawable.ic_check),
+                        null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(12.dp).size(20.dp),
+                    )
                 } else {
                     IconButton(onClick = {
                         downloadJob = scope.launch {

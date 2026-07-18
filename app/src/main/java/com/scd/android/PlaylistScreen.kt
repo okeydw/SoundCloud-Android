@@ -52,11 +52,13 @@ fun PlaylistScreen(
         if (loading) return
         scope.launch {
             loading = true
-            runCatching { Api.playlistTracks(playlist.urn, p) }.onSuccess {
-                tracks = if (p == 0) it.collection else (tracks + it.collection).distinctBy { t -> t.urn }
+            fun apply(res: PagedTracks) {
+                tracks = if (p == 0) res.collection else (tracks + res.collection).distinctBy { t -> t.urn }
                 page = p
-                hasMore = it.has_more
+                hasMore = res.has_more
             }
+            runCatching { Api.playlistTracks(playlist.urn, p, fresh = false) }.onSuccess { apply(it) }
+            runCatching { Api.playlistTracks(playlist.urn, p, fresh = true) }.onSuccess { apply(it) }
             loading = false
         }
     }
@@ -84,12 +86,19 @@ fun PlaylistScreen(
                     modifier = Modifier.size(20.dp),
                 )
             }
-            if (downloading) {
-                IconButton(onClick = { downloadJob?.cancel() }) {
+            val allDownloaded = tracks.isNotEmpty() && !hasMore &&
+                tracks.all { Downloads.isDownloaded(it.urn) }
+            when {
+                downloading -> IconButton(onClick = { downloadJob?.cancel() }) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
-            } else {
-                IconButton(onClick = {
+                allDownloaded -> Icon(
+                    painterResource(R.drawable.ic_check),
+                    null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(12.dp).size(20.dp),
+                )
+                else -> IconButton(onClick = {
                     downloadJob = scope.launch {
                         downloading = true
                         try {

@@ -119,7 +119,6 @@ fun WaveFeed(
             val pageOffset =
                 ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction).absoluteValue
                     .coerceIn(0f, 1f)
-            var hDrag by remember(track.urn) { mutableStateOf(0f) }
             var heartBurst by remember(track.urn) { mutableStateOf(0) }
             var burstLiked by remember(track.urn) { mutableStateOf(false) }
             val liked = Likes.isLiked(track.urn)
@@ -133,25 +132,6 @@ fun WaveFeed(
                         scaleX = scale
                         scaleY = scale
                         alpha = 1f - 0.5f * pageOffset
-                    }
-                    .pointerInput(track.urn) {
-                        detectHorizontalDragGestures(
-                            onDragStart = { hDrag = 0f },
-                            onHorizontalDrag = { _, dx -> hDrag += dx },
-                            onDragEnd = {
-                                when {
-                                    hDrag > 120f -> scope.launch {
-                                        if (!Likes.isLiked(track.urn)) Likes.toggle(track)
-                                    }
-                                    hDrag < -120f -> scope.launch {
-                                        if (!Dislikes.isDisliked(track.urn)) Dislikes.toggle(track)
-                                        if (page + 1 < tracks.size) {
-                                            pagerState.animateScrollToPage(page + 1)
-                                        }
-                                    }
-                                }
-                            },
-                        )
                     }
                     .pointerInput(track.urn) {
                         detectTapGestures(

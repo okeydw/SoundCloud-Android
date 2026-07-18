@@ -162,8 +162,8 @@ object Api {
     suspend fun myPlaylists(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedPlaylists =
         getJson("$API_BASE/me/playlists?limit=$limit&page=$page", PagedPlaylists.serializer(), fresh)
 
-    suspend fun playlistTracks(urn: String, page: Int = 0, limit: Int = 50): PagedTracks =
-        getJson("$API_BASE/playlists/${enc(urn)}/tracks?limit=$limit&page=$page", PagedTracks.serializer())
+    suspend fun playlistTracks(urn: String, page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedTracks =
+        getJson("$API_BASE/playlists/${enc(urn)}/tracks?limit=$limit&page=$page", PagedTracks.serializer(), fresh)
 
     suspend fun likedPlaylists(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedPlaylists =
         getJson("$API_BASE/me/likes/playlists?limit=$limit&page=$page", PagedPlaylists.serializer(), fresh)
@@ -367,7 +367,7 @@ data class PagedTracks(
 data class Track(
     val id: Long = 0,
     val urn: String,
-    val title: String,
+    val title: String = "",
     val duration: Long = 0,
     val artwork_url: String? = null,
     val waveform_url: String? = null,
@@ -432,7 +432,19 @@ data class Playlist(
     val artwork_url: String? = null,
     val track_count: Int = 0,
     val user: TrackUser? = null,
-)
+    val kind: String? = null,
+) {
+    val isAlbum: Boolean
+        get() = kind == "album" || kind == "ep" || kind == "single" || kind == "compilation"
+
+    fun kindLabelRes(): Int = when (kind) {
+        "album" -> R.string.kind_album
+        "ep" -> R.string.kind_ep
+        "single" -> R.string.kind_single
+        "compilation" -> R.string.kind_compilation
+        else -> R.string.playlist_label
+    }
+}
 
 @Serializable
 data class AuthStatus(

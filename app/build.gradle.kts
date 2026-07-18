@@ -5,8 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-val appVersionName = "0.3.5"
-val appVersionCode = 3
+val appVersionName = "0.3.6"
+val appVersionCode = 4
 
 android {
     namespace = "com.scd.android"

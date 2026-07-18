@@ -25,7 +25,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 private const val CMD_LIKE = "com.scd.android.LIKE"
-private const val CMD_DISLIKE = "com.scd.android.DISLIKE"
+private const val CMD_SHUFFLE = "com.scd.android.SHUFFLE"
 
 class PlaybackService : MediaSessionService() {
 
@@ -49,6 +49,10 @@ class PlaybackService : MediaSessionService() {
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 reportHistory(mediaItem)
+                updateCustomLayout()
+            }
+
+            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                 updateCustomLayout()
             }
         })
@@ -80,7 +84,7 @@ class PlaybackService : MediaSessionService() {
         ): MediaSession.ConnectionResult {
             val cmds = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
                 .add(SessionCommand(CMD_LIKE, Bundle.EMPTY))
-                .add(SessionCommand(CMD_DISLIKE, Bundle.EMPTY))
+                .add(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(cmds)
@@ -93,16 +97,19 @@ class PlaybackService : MediaSessionService() {
             customCommand: SessionCommand,
             args: Bundle,
         ): ListenableFuture<SessionResult> {
-            val track = session.player.currentMediaItem?.toTrackOrNull()
-            if (track != null) {
-                scope.launch {
-                    when (customCommand.customAction) {
-                        CMD_LIKE -> Likes.toggle(track)
-                        CMD_DISLIKE -> if (Dislikes.toggle(track)) {
-                            launch(Dispatchers.Main) { session.player.seekToNext() }
+            when (customCommand.customAction) {
+                CMD_SHUFFLE -> {
+                    session.player.shuffleModeEnabled = !session.player.shuffleModeEnabled
+                    updateCustomLayout()
+                }
+                CMD_LIKE -> {
+                    val track = session.player.currentMediaItem?.toTrackOrNull()
+                    if (track != null) {
+                        scope.launch {
+                            Likes.toggle(track)
+                            launch(Dispatchers.Main) { updateCustomLayout() }
                         }
                     }
-                    launch(Dispatchers.Main) { updateCustomLayout() }
                 }
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -119,18 +126,17 @@ class PlaybackService : MediaSessionService() {
             .build()
     }
 
-    private fun dislikeButton(): CommandButton {
-        val urn = mediaSession?.player?.currentMediaItem?.mediaId
-        val disliked = urn != null && Dislikes.isDisliked(urn)
+    private fun shuffleButton(): CommandButton {
+        val on = mediaSession?.player?.shuffleModeEnabled == true
         return CommandButton.Builder(CommandButton.ICON_UNDEFINED)
-            .setDisplayName("Dislike")
-            .setCustomIconResId(if (disliked) R.drawable.ic_thumb_down_filled else R.drawable.ic_thumb_down)
-            .setSessionCommand(SessionCommand(CMD_DISLIKE, Bundle.EMPTY))
+            .setDisplayName(if (on) "Shuffle on" else "Shuffle")
+            .setCustomIconResId(R.drawable.ic_shuffle)
+            .setSessionCommand(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
             .build()
     }
 
     private fun updateCustomLayout() {
-        mediaSession?.setCustomLayout(ImmutableList.of(likeButton(), dislikeButton()))
+        mediaSession?.setCustomLayout(ImmutableList.of(shuffleButton(), likeButton()))
     }
 
     private fun reportHistory(item: MediaItem?) {

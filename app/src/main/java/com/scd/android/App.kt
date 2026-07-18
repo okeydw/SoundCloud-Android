@@ -22,6 +22,7 @@ class App : Application(), ImageLoaderFactory {
         Api.initHttp(this)
         Api.loadSession(this)
         Downloads.init(this)
+        LikedArtists.init(this)
     }
 
     companion object {

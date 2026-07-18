@@ -45,6 +45,14 @@
     <string name="add_to_playlist">Add to playlist</string>
     <string name="added">Added</string>
     <string name="liked_playlists">Liked playlists</string>
+    <string name="search_tracks">Tracks</string>
+    <string name="search_artists">Artists</string>
+    <string name="search_playlists">Playlists</string>
+    <string name="search_albums">Albums</string>
+    <string name="kind_album">Album</string>
+    <string name="kind_ep">EP</string>
+    <string name="kind_single">Single</string>
+    <string name="kind_compilation">Compilation</string>
     <string name="greeting_morning">Good morning</string>
     <string name="greeting_day">Good afternoon</string>
     <string name="greeting_evening">Good evening</string>

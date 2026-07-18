@@ -82,7 +82,19 @@ fun ArtistScreen(
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            artist?.let { a ->
+                val liked = LikedArtists.isLiked(a.urn)
+                IconButton(onClick = { LikedArtists.toggle(a) }) {
+                    Icon(
+                        painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                        null,
+                        tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
         }
 
         if (loading && tracks.isEmpty()) {
@@ -151,7 +163,8 @@ fun ArtistScreen(
                         Column(Modifier.weight(1f)) {
                             Text(p.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                             Text(
-                                stringResource(R.string.tracks_count, p.track_count),
+                                stringResource(p.kindLabelRes()) + " · " +
+                                    stringResource(R.string.tracks_count, p.track_count),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall,
                             )

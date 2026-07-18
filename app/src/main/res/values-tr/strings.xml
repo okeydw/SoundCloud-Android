@@ -44,6 +44,10 @@
     <string name="add_to_playlist">Çalma listesine ekle</string>
     <string name="added">Eklendi</string>
     <string name="liked_playlists">Beğenilen çalma listeleri</string>
+    <string name="kind_album">Albüm</string>
+    <string name="kind_ep">EP</string>
+    <string name="kind_single">Single</string>
+    <string name="kind_compilation">Derleme</string>
     <string name="greeting_morning">Günaydın</string>
     <string name="greeting_day">İyi günler</string>
     <string name="greeting_evening">İyi akşamlar</string>

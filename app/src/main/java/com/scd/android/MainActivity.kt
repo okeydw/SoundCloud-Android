@@ -31,8 +31,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
@@ -61,7 +64,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -301,6 +306,8 @@ fun LoginScreen(onDone: () -> Unit) {
 
 enum class Tab { Search, Wave, Me }
 
+enum class SearchCat { Tracks, Artists, Playlists, Albums }
+
 @Composable
 fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     val context = LocalContext.current
@@ -320,6 +327,14 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     var playlistResults by remember { mutableStateOf<List<Playlist>>(emptyList()) }
     var vibePreparing by remember { mutableStateOf(false) }
     var tiles by remember { mutableStateOf<List<Track>>(emptyList()) }
+
+    var searchCat by remember { mutableStateOf(SearchCat.Tracks) }
+    var artistResults by remember { mutableStateOf<List<Artist>>(emptyList()) }
+    var artistPage by remember { mutableStateOf(0) }
+    var artistHasMore by remember { mutableStateOf(false) }
+    var plResults by remember { mutableStateOf<List<Playlist>>(emptyList()) }
+    var plPage by remember { mutableStateOf(0) }
+    var plHasMore by remember { mutableStateOf(false) }
 
     var wave by remember { mutableStateOf<List<Track>>(emptyList()) }
     var waveCursor by remember { mutableStateOf("") }
@@ -388,6 +403,11 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         val q = query.trim()
         if (q.isEmpty() || searchLoading) return
         suggestions = emptyList()
+        if (nextPage == 0) {
+            searchCat = SearchCat.Tracks
+            artistResults = emptyList()
+            plResults = emptyList()
+        }
         scope.launch {
             searchLoading = true
             error = null
@@ -397,6 +417,44 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                 page = res.page
                 hasMore = res.has_more
                 searched = true
+            } catch (e: Exception) {
+                handleError(e)
+            } finally {
+                searchLoading = false
+            }
+        }
+    }
+
+    fun loadArtists(nextPage: Int) {
+        val q = query.trim()
+        if (q.isEmpty() || searchLoading) return
+        scope.launch {
+            searchLoading = true
+            try {
+                val res = Api.searchUsers(q, nextPage)
+                artistResults = if (nextPage == 0) res.collection
+                    else (artistResults + res.collection).distinctBy { it.urn }
+                artistPage = res.page
+                artistHasMore = res.has_more
+            } catch (e: Exception) {
+                handleError(e)
+            } finally {
+                searchLoading = false
+            }
+        }
+    }
+
+    fun loadSearchPlaylists(nextPage: Int) {
+        val q = query.trim()
+        if (q.isEmpty() || searchLoading) return
+        scope.launch {
+            searchLoading = true
+            try {
+                val res = Api.searchPlaylists(q, nextPage)
+                plResults = if (nextPage == 0) res.collection
+                    else (plResults + res.collection).distinctBy { it.urn }
+                plPage = res.page
+                plHasMore = res.has_more
             } catch (e: Exception) {
                 handleError(e)
             } finally {
@@ -444,7 +502,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             playlistResults = emptyList()
             return@LaunchedEffect
         }
-        delay(300)
+        delay(150)
         runCatching { Api.searchTracks(q, 0, 6) }.onSuccess { suggestions = it.collection.distinctBy { t -> t.urn } }
         runCatching { Api.searchUsers(q, 0, 8) }.onSuccess { userSuggestions = it.collection.distinctBy { u -> u.urn }.take(4) }
         runCatching { Api.searchPlaylists(q, 0, 8) }.onSuccess { playlistResults = it.collection.distinctBy { p -> p.urn }.take(4) }
@@ -578,19 +636,19 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                     )
                 }
             }
-            if (openArtist != null) {
+            if (openPlaylist != null) {
+                PlaylistScreen(
+                    playlist = openPlaylist!!,
+                    onBack = { openPlaylist = null },
+                    onPlay = ::play,
+                )
+            } else if (openArtist != null) {
                 ArtistScreen(
                     urn = openArtist!!,
                     onBack = { openArtist = null },
                     onPlay = ::play,
                     onOpenPlaylist = { openPlaylist = it },
                     offline = Prefs.offline,
-                )
-            } else if (openPlaylist != null) {
-                PlaylistScreen(
-                    playlist = openPlaylist!!,
-                    onBack = { openPlaylist = null },
-                    onPlay = ::play,
                 )
             } else if (Prefs.offline) {
                 LibraryScreen(
@@ -602,17 +660,44 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             } else when (tab) {
                 Tab.Search -> Box(Modifier.fillMaxSize()) {
                     val barPad = 76.dp
+                    val resultsPad = 132.dp
                     when {
-                        searched || searchLoading || error != null -> TrackList(
-                            tracks = results,
-                            loading = searchLoading,
-                            error = error,
-                            emptyText = stringResource(R.string.search_empty),
-                            canLoadMore = hasMore,
-                            onLoadMore = { search(page + 1) },
-                            onPlay = { play(results, it) },
-                            topPadding = barPad,
-                        )
+                        searched || searchLoading || error != null -> when (searchCat) {
+                            SearchCat.Tracks -> TrackList(
+                                tracks = results,
+                                loading = searchLoading,
+                                error = error,
+                                emptyText = stringResource(R.string.search_empty),
+                                canLoadMore = hasMore,
+                                onLoadMore = { search(page + 1) },
+                                onPlay = { play(results, it) },
+                                topPadding = resultsPad,
+                            )
+                            SearchCat.Artists -> ArtistCardList(
+                                artists = artistResults,
+                                loading = searchLoading,
+                                canLoadMore = artistHasMore,
+                                onLoadMore = { loadArtists(artistPage + 1) },
+                                onOpen = { openArtist = it },
+                                topPadding = resultsPad,
+                            )
+                            SearchCat.Playlists -> PlaylistCardList(
+                                playlists = plResults.filter { !it.isAlbum },
+                                loading = searchLoading,
+                                canLoadMore = plHasMore,
+                                onLoadMore = { loadSearchPlaylists(plPage + 1) },
+                                onOpen = { openPlaylist = it },
+                                topPadding = resultsPad,
+                            )
+                            SearchCat.Albums -> PlaylistCardList(
+                                playlists = plResults.filter { it.isAlbum },
+                                loading = searchLoading,
+                                canLoadMore = plHasMore,
+                                onLoadMore = { loadSearchPlaylists(plPage + 1) },
+                                onOpen = { openPlaylist = it },
+                                topPadding = resultsPad,
+                            )
+                        }
                         query.isBlank() -> TileGrid(tiles, topPadding = barPad) { play(tiles, it) }
                     }
 
@@ -655,6 +740,38 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                                 }
                             },
                         )
+
+                        if (searched) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(androidx.compose.foundation.rememberScrollState())
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                val cats = listOf(
+                                    SearchCat.Tracks to R.string.search_tracks,
+                                    SearchCat.Artists to R.string.search_artists,
+                                    SearchCat.Playlists to R.string.search_playlists,
+                                    SearchCat.Albums to R.string.search_albums,
+                                )
+                                cats.forEach { (cat, labelRes) ->
+                                    androidx.compose.material3.FilterChip(
+                                        selected = searchCat == cat,
+                                        onClick = {
+                                            searchCat = cat
+                                            when (cat) {
+                                                SearchCat.Artists -> if (artistResults.isEmpty()) loadArtists(0)
+                                                SearchCat.Playlists, SearchCat.Albums ->
+                                                    if (plResults.isEmpty()) loadSearchPlaylists(0)
+                                                else -> {}
+                                            }
+                                        },
+                                        label = { Text(stringResource(labelRes)) },
+                                    )
+                                }
+                            }
+                        }
 
                         if (vibePreparing) {
                             Row(
@@ -749,7 +866,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                                                 color = MaterialTheme.colorScheme.onSurface,
                                             )
                                             Text(
-                                                stringResource(R.string.playlist_label),
+                                                stringResource(p.kindLabelRes()),
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 style = MaterialTheme.typography.bodySmall,
                                             )
@@ -900,8 +1017,12 @@ fun TrackList(
         )
     }
 
+    val listState = rememberLazyListState()
+    InfiniteScroll(listState, canLoadMore, loading, tracks.size, onLoadMore)
+
     LazyColumn(
         Modifier.fillMaxSize(),
+        state = listState,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = topPadding),
     ) {
         items(tracks) { track ->
@@ -910,11 +1031,162 @@ fun TrackList(
         }
         if (canLoadMore && tracks.isNotEmpty()) {
             item {
-                Button(
-                    onClick = onLoadMore,
-                    enabled = !loading,
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                ) { Text(stringResource(R.string.load_more)) }
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.Center,
+                ) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfiniteScroll(
+    listState: LazyListState,
+    canLoadMore: Boolean,
+    loading: Boolean,
+    itemCount: Int,
+    onLoadMore: () -> Unit,
+) {
+    val curCanLoadMore by rememberUpdatedState(canLoadMore)
+    val curLoading by rememberUpdatedState(loading)
+    val curCount by rememberUpdatedState(itemCount)
+    val curOnLoadMore by rememberUpdatedState(onLoadMore)
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collect { last ->
+                if (curCanLoadMore && !curLoading && curCount > 0 && last >= curCount - 4) curOnLoadMore()
+            }
+    }
+}
+
+@Composable
+fun ArtistCardList(
+    artists: List<Artist>,
+    loading: Boolean,
+    canLoadMore: Boolean,
+    onLoadMore: () -> Unit,
+    onOpen: (String) -> Unit,
+    topPadding: Dp = 0.dp,
+) {
+    if (artists.isEmpty()) {
+        if (loading) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = topPadding).padding(32.dp),
+                horizontalArrangement = Arrangement.Center,
+            ) { CircularProgressIndicator() }
+        } else {
+            Text(
+                stringResource(R.string.search_empty),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = topPadding).padding(16.dp),
+            )
+        }
+        return
+    }
+    val listState = rememberLazyListState()
+    InfiniteScroll(listState, canLoadMore, loading, artists.size, onLoadMore)
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = topPadding),
+    ) {
+        items(artists) { a ->
+            Row(
+                Modifier.fillMaxWidth().clickable { onOpen(a.urn) }.padding(vertical = 8.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AsyncImage(
+                    model = Api.artworkUrl(a.avatar_url, "t120x120"),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(a.username, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Text(
+                        stringResource(R.string.artist_label) +
+                            (a.followers_count?.let { " · " + stringResource(R.string.followers, formatCount(it)) } ?: ""),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        if (canLoadMore) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlaylistCardList(
+    playlists: List<Playlist>,
+    loading: Boolean,
+    canLoadMore: Boolean,
+    onLoadMore: () -> Unit,
+    onOpen: (Playlist) -> Unit,
+    topPadding: Dp = 0.dp,
+) {
+    if (playlists.isEmpty()) {
+        if (loading) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = topPadding).padding(32.dp),
+                horizontalArrangement = Arrangement.Center,
+            ) { CircularProgressIndicator() }
+        } else {
+            Text(
+                stringResource(R.string.search_empty),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = topPadding).padding(16.dp),
+            )
+        }
+        return
+    }
+    val listState = rememberLazyListState()
+    InfiniteScroll(listState, canLoadMore, loading, playlists.size, onLoadMore)
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = topPadding),
+    ) {
+        items(playlists) { p ->
+            Row(
+                Modifier.fillMaxWidth().clickable { onOpen(p) }.padding(vertical = 6.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AsyncImage(
+                    model = Api.artworkUrl(p.artwork_url, "t120x120"),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(p.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Text(
+                        stringResource(p.kindLabelRes()) +
+                            (p.user?.username?.let { " · $it" } ?: ""),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        if (canLoadMore) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                }
             }
         }
     }

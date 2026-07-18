@@ -44,6 +44,10 @@
     <string name="add_to_playlist">Añadir a la lista</string>
     <string name="added">Añadido</string>
     <string name="liked_playlists">Playlists que te gustan</string>
+    <string name="kind_album">Álbum</string>
+    <string name="kind_ep">EP</string>
+    <string name="kind_single">Sencillo</string>
+    <string name="kind_compilation">Recopilación</string>
     <string name="greeting_morning">Buenos días</string>
     <string name="greeting_day">Buenas tardes</string>
     <string name="greeting_evening">Buenas noches</string>

@@ -1,4 +1,16 @@
 <p align="center">
+<a href="README.md"><img src="https://img.shields.io/badge/RU-0048FF?style=flat-square" alt="Русский"/></a>
+<a href="docs/README.en.md"><img src="https://img.shields.io/badge/EN-777777?style=flat-square" alt="English"/></a>
+<a href="docs/README.be.md"><img src="https://img.shields.io/badge/BE-777777?style=flat-square" alt="Беларуская"/></a>
+<a href="docs/README.zh.md"><img src="https://img.shields.io/badge/ZH-777777?style=flat-square" alt="中文"/></a>
+<a href="docs/README.de.md"><img src="https://img.shields.io/badge/DE-777777?style=flat-square" alt="Deutsch"/></a>
+<a href="docs/README.fr.md"><img src="https://img.shields.io/badge/FR-777777?style=flat-square" alt="Français"/></a>
+<a href="docs/README.es.md"><img src="https://img.shields.io/badge/ES-777777?style=flat-square" alt="Español"/></a>
+<a href="docs/README.tr.md"><img src="https://img.shields.io/badge/TR-777777?style=flat-square" alt="Türkçe"/></a>
+<a href="docs/README.ko.md"><img src="https://img.shields.io/badge/KO-777777?style=flat-square" alt="한국어"/></a>
+</p>
+
+<p align="center">
 <a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
 <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="160px" style="border-radius: 50%;" />
 </a>

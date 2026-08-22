@@ -19,6 +19,12 @@ object Prefs {
         private set
     var username by mutableStateOf<String?>(null)
         private set
+    var crossfade by mutableStateOf(false)
+        private set
+    var playBlocked by mutableStateOf(false)
+        private set
+    var star by mutableStateOf(false)
+        private set
 
     fun init(context: Context) {
         if (::sp.isInitialized) return
@@ -28,6 +34,24 @@ object Prefs {
         language = sp.getString("language", "system") ?: "system"
         immersiveArtwork = sp.getBoolean("immersive_artwork", false)
         username = sp.getString("username", null)
+        crossfade = sp.getBoolean("crossfade", false)
+        playBlocked = sp.getBoolean("play_blocked", false)
+        star = sp.getBoolean("star", false)
+    }
+
+    fun saveStar(value: Boolean) {
+        star = value
+        sp.edit().putBoolean("star", value).apply()
+    }
+
+    fun changePlayBlocked(value: Boolean) {
+        playBlocked = value
+        sp.edit().putBoolean("play_blocked", value).apply()
+    }
+
+    fun changeCrossfade(value: Boolean) {
+        crossfade = value
+        sp.edit().putBoolean("crossfade", value).apply()
     }
 
     fun saveUsername(value: String?) {

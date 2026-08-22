@@ -1,20 +1,26 @@
 package com.scd.android
 
 import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import okhttp3.Request
 import java.io.File
+import java.util.concurrent.ConcurrentLinkedQueue
 
 object Downloads {
     private lateinit var dir: File
@@ -24,7 +30,16 @@ object Downloads {
     private val index = LinkedHashMap<String, Track>()
 
     private const val CHANNEL_ID = "downloads"
-    private const val NOTIF_ID = 1001
+    const val NOTIF_ID = 1001
+
+    private class DownloadJob(
+        val tracks: List<Track>,
+        val playlistUrn: String?,
+        val playlistTitle: String?,
+    )
+
+    private val jobQueue = ConcurrentLinkedQueue<DownloadJob>()
+    private val drainMutex = Mutex()
 
     var downloaded by mutableStateOf(setOf<String>())
         private set
@@ -85,28 +100,61 @@ object Downloads {
         }
     }
 
-    suspend fun downloadBatch(
+    fun enqueue(
+        context: Context,
         tracks: List<Track>,
         playlistUrn: String? = null,
         playlistTitle: String? = null,
     ) {
         val pending = tracks.filter { !isDownloaded(it.urn) }
+        if (pending.isEmpty()) return
+        jobQueue.add(DownloadJob(pending, playlistUrn, playlistTitle))
+        ContextCompat.startForegroundService(
+            context.applicationContext,
+            Intent(context.applicationContext, DownloadService::class.java),
+        )
+    }
+
+    suspend fun drain() = drainMutex.withLock {
+        while (true) {
+            val job = jobQueue.poll() ?: break
+            runJob(job)
+        }
+    }
+
+    private suspend fun runJob(job: DownloadJob) {
+        val pending = job.tracks.filter { !isDownloaded(it.urn) }
         val total = pending.size
         if (total == 0) return
-        val single = tracks.size == 1
+        val single = total == 1
         var done = 0
         try {
-            notifyProgress(done, total, playlistUrn, playlistTitle, single)
+            notifyProgress(done, total, job.playlistUrn, job.playlistTitle, single)
             for (t in pending) {
                 download(t)
                 done++
-                notifyProgress(done, total, playlistUrn, playlistTitle, single)
+                notifyProgress(done, total, job.playlistUrn, job.playlistTitle, single)
             }
-            notifyComplete(done, total, playlistUrn, playlistTitle, single)
+            notifyComplete(done, total, job.playlistUrn, job.playlistTitle, single)
         } catch (e: kotlinx.coroutines.CancellationException) {
             dismissNotification()
             throw e
         }
+    }
+
+    fun startingNotification(context: Context): Notification =
+        NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_download)
+            .setContentTitle(context.getString(R.string.downloading))
+            .setProgress(0, 0, true)
+            .setOngoing(true)
+            .setSilent(true)
+            .build()
+
+    fun cancelAll(context: Context) {
+        jobQueue.clear()
+        runCatching { context.applicationContext.stopService(Intent(context.applicationContext, DownloadService::class.java)) }
+        dismissNotification()
     }
 
     fun dismissNotification() {
@@ -121,8 +169,6 @@ object Downloads {
         single: Boolean,
     ): android.app.PendingIntent {
         val intent = android.content.Intent(appContext, MainActivity::class.java).apply {
-            action = android.content.Intent.ACTION_MAIN
-            addCategory(android.content.Intent.CATEGORY_LAUNCHER)
             flags = android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
                 android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
             when {

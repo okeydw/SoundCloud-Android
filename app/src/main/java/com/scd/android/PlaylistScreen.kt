@@ -39,8 +39,7 @@ fun PlaylistScreen(
     var page by remember { mutableStateOf(0) }
     var hasMore by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
-    var downloading by remember { mutableStateOf(false) }
-    var downloadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val liked = LikedPlaylists.isLiked(playlist.urn)
 
@@ -88,8 +87,9 @@ fun PlaylistScreen(
             }
             val allDownloaded = tracks.isNotEmpty() && !hasMore &&
                 tracks.all { Downloads.isDownloaded(it.urn) }
+            val downloading = tracks.any { it.urn in Downloads.inProgress }
             when {
-                downloading -> IconButton(onClick = { downloadJob?.cancel() }) {
+                downloading -> IconButton(onClick = { Downloads.cancelAll(context) }) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
                 allDownloaded -> Icon(
@@ -99,14 +99,7 @@ fun PlaylistScreen(
                     modifier = Modifier.padding(12.dp).size(20.dp),
                 )
                 else -> IconButton(onClick = {
-                    downloadJob = scope.launch {
-                        downloading = true
-                        try {
-                            Downloads.downloadBatch(tracks, playlist.urn, playlist.title)
-                        } finally {
-                            downloading = false
-                        }
-                    }
+                    Downloads.enqueue(context, tracks, playlist.urn, playlist.title)
                 }) {
                     Icon(painterResource(R.drawable.ic_download), null, modifier = Modifier.size(20.dp))
                 }

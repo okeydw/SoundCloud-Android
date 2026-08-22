@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -301,6 +302,7 @@ fun NowPlayingScreen(
     onOpenArtist: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     val title = NowPlaying.title
     val artist = NowPlaying.artist
     val artistUrn = NowPlaying.artistUrn
@@ -331,7 +333,7 @@ fun NowPlayingScreen(
 
     Dialog(
         onDismissRequest = onClose,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         val immersive = Prefs.immersiveArtwork
         Surface(
@@ -364,21 +366,24 @@ fun NowPlayingScreen(
                                 )
                             )
                     )
-                }
-
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .then(
-                            if (immersive) Modifier
-                            else Modifier.background(
+                } else if (!immersive) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
                                 Brush.verticalGradient(
                                     0f to topColor,
                                     0.75f to background,
                                     1f to background,
                                 )
                             )
-                        )
+                    )
+                }
+
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .systemBarsPadding()
                         .pointerInput(Unit) {
                             detectVerticalDragGestures(
                                 onVerticalDrag = { _, dy ->
@@ -413,6 +418,42 @@ fun NowPlayingScreen(
                         }
                         Spacer(Modifier.weight(1f))
                         if (hasTrack) {
+                            IconButton(onClick = {
+                                val url = controller.currentMediaItem?.toTrackOrNull()?.permalink_url
+                                if (url != null) {
+                                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_TEXT, url)
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(send, null))
+                                } else {
+                                    android.widget.Toast.makeText(
+                                        context, context.getString(R.string.error_network),
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }) {
+                                Icon(painterResource(R.drawable.ic_share), null, tint = titleColor, modifier = Modifier.size(20.dp))
+                            }
+                            IconButton(onClick = {
+                                currentUrn?.let { urn ->
+                                    scope.launch {
+                                        val related = runCatching { Api.relatedTracks(urn) }.getOrNull() ?: return@launch
+                                        val cur = controller.currentMediaItem?.toTrackOrNull()
+                                        val list = (listOfNotNull(cur) + related.collection)
+                                            .distinctBy { it.urn }
+                                            .filter { !it.unavailable }
+                                        if (list.isNotEmpty()) {
+                                            NowPlaying.autoContinue = true
+                                            controller.setMediaItems(list.map { it.toMediaItem() }, 0, controller.currentPosition)
+                                            controller.prepare()
+                                            controller.play()
+                                        }
+                                    }
+                                }
+                            }) {
+                                Icon(painterResource(R.drawable.ic_mix), null, tint = titleColor, modifier = Modifier.size(22.dp))
+                            }
                             Box {
                                 var menuOpen by remember { mutableStateOf(false) }
                                 IconButton(onClick = { menuOpen = true }) {
@@ -545,7 +586,7 @@ fun NowPlayingScreen(
                                 else ->
                                     IconButton(onClick = {
                                         controller.currentMediaItem?.toTrackOrNull()?.let {
-                                            scope.launch { Downloads.download(it) }
+                                            Downloads.enqueue(context, listOf(it))
                                         }
                                     }) {
                                         Icon(

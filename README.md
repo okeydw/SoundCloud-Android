@@ -85,7 +85,6 @@
 ---
 
 ## Скриншоты
-`старые, но в 4.0.0 обновлю, а пока тут скрины 0.3.5`
 
 <p align="center">
 <img src="docs/screenshots/wave.png" width="24%" />

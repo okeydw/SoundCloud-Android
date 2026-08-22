@@ -20,7 +20,7 @@
 
 <p align="center">
 <b>Unofficial SoundCloud client for Android</b><br>
-No ads · No captcha · No censorship · Works in Russia
+No ads · No captcha · No censorship
 </p>
 
 <p align="center">
@@ -83,7 +83,6 @@ Go to the [releases page](https://github.com/okeydw/SoundCloud-Android/releases/
 ---
 
 ## Screenshots
-`old ones, but I'll update in 4.0.0 — for now these are from 0.3.5`
 
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />

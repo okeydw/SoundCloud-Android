@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -96,6 +97,9 @@ import coil.request.SuccessResult
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -325,7 +329,6 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     var suggestions by remember { mutableStateOf<List<Track>>(emptyList()) }
     var userSuggestions by remember { mutableStateOf<List<Artist>>(emptyList()) }
     var playlistResults by remember { mutableStateOf<List<Playlist>>(emptyList()) }
-    var vibePreparing by remember { mutableStateOf(false) }
     var tiles by remember { mutableStateOf<List<Track>>(emptyList()) }
 
     var searchCat by remember { mutableStateOf(SearchCat.Tracks) }
@@ -344,6 +347,9 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     var openPlaylist by remember { mutableStateOf<Playlist?>(null) }
 
     LaunchedEffect(Unit) { Dislikes.seed() }
+    LaunchedEffect(Unit) {
+        if (!Prefs.offline) runCatching { Likes.seed(Api.likedTracks(0, 200).collection) }
+    }
 
     DisposableEffect(controller) {
         if (controller == null) return@DisposableEffect onDispose {}
@@ -367,11 +373,53 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         }
     }
 
+    LaunchedEffect(NowPlaying.urn) {
+        val c = controller ?: return@LaunchedEffect
+        if (!NowPlaying.autoContinue) return@LaunchedEffect
+        if (c.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) return@LaunchedEffect
+        val count = c.mediaItemCount
+        if (count == 0 || c.currentMediaItemIndex < count - 2) return@LaunchedEffect
+        val urn = c.currentMediaItem?.mediaId ?: return@LaunchedEffect
+        val related = runCatching { Api.relatedTracks(urn, 20) }.getOrNull() ?: return@LaunchedEffect
+        val existing = (0 until c.mediaItemCount).mapNotNull { c.getMediaItemAt(it).mediaId }.toSet()
+        val add = related.collection.filter { it.urn !in existing && !it.unavailable }
+        if (add.isNotEmpty()) c.addMediaItems(add.map { it.toMediaItem() })
+    }
+
+    LaunchedEffect(controller, Prefs.crossfade) {
+        val c = controller ?: return@LaunchedEffect
+        if (!Prefs.crossfade) {
+            c.volume = 1f
+            return@LaunchedEffect
+        }
+        val fade = 3000f
+        while (true) {
+            val dur = c.duration
+            val pos = c.currentPosition
+            val vol = if (dur <= 0) {
+                1f
+            } else {
+                val fadeIn = (pos / fade).coerceIn(0f, 1f)
+                val fadeOut = if (c.hasNextMediaItem()) {
+                    ((dur - pos) / fade).coerceIn(0f, 1f)
+                } else {
+                    1f
+                }
+                minOf(fadeIn, fadeOut)
+            }
+            c.volume = vol
+            delay(60)
+        }
+    }
+
     var noInternet by remember { mutableStateOf(false) }
+    var serverDown by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         while (true) {
-            noInternet = !hasNetwork(context)
-            delay(4000)
+            val net = hasNetwork(context)
+            noInternet = !net
+            serverDown = if (net && !Prefs.offline) !Api.healthOk() else false
+            delay(12000)
         }
     }
 
@@ -463,37 +511,6 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         }
     }
 
-    fun vibeSearch() {
-        val q = query.trim()
-        if (q.isEmpty() || searchLoading) return
-        suggestions = emptyList()
-        scope.launch {
-            searchLoading = true
-            error = null
-            try {
-                repeat(12) {
-                    val res = Api.vibeSearch(q)
-                    if (res.status == "preparing") {
-                        vibePreparing = true
-                        delay(2500)
-                    } else {
-                        results = res.items
-                        hasMore = false
-                        searched = true
-                        vibePreparing = false
-                        return@launch
-                    }
-                }
-                vibePreparing = false
-            } catch (e: Exception) {
-                vibePreparing = false
-                handleError(e)
-            } finally {
-                searchLoading = false
-            }
-        }
-    }
-
     LaunchedEffect(query, searched) {
         val q = query.trim()
         if (q.length < 2 || searched) {
@@ -517,8 +534,9 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                 val (batch, cursor) = Api.waveTracks(if (more) waveCursor.ifEmpty { null } else null)
                 wave = (if (more) wave + batch else batch)
                     .distinctBy { it.urn }
-                    .filter { !it.unavailable }
+                    .filter { !it.unavailable || Prefs.playBlocked }
                 waveCursor = cursor
+                if (!more) FeedCache.save("wave", wave)
             } catch (e: Exception) {
                 handleError(e)
             } finally {
@@ -534,9 +552,10 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             error = null
             try {
                 val (batch, cursor) = Api.waveTracks(null)
-                val fresh = batch.distinctBy { it.urn }.filter { !it.unavailable }
+                val fresh = batch.distinctBy { it.urn }.filter { !it.unavailable || Prefs.playBlocked }
                 wave = fresh
                 waveCursor = cursor
+                FeedCache.save("wave", fresh)
                 controller?.let { c ->
                     if (c.mediaItemCount > 0) {
                         val curUrn = c.currentMediaItem?.mediaId
@@ -555,26 +574,55 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         }
     }
 
-    LaunchedEffect(tab, Prefs.offline) {
-        error = null
-        if (tab == Tab.Wave && wave.isEmpty()) loadWave(false)
-        if (tab == Tab.Search && tiles.isEmpty() && !Prefs.offline) {
+    var tilePage by remember { mutableStateOf(0) }
+    var tilesLoading by remember { mutableStateOf(false) }
+
+    fun loadTiles(nextPage: Int) {
+        if (tilesLoading || Prefs.offline) return
+        scope.launch {
+            tilesLoading = true
             val picked = GENRES.shuffled().take(3)
-            val all = mutableListOf<Track>()
-            for (g in picked) {
-                runCatching { Api.searchTracks(g, 0, 12) }.onSuccess {
-                    all += it.collection.filter { t -> t.artwork_url != null && !t.unavailable }
-                }
+            val fetched = coroutineScope {
+                picked.map { g -> async { runCatching { Api.searchTracks(g, nextPage, 12) }.getOrNull() } }.awaitAll()
             }
-            tiles = all.distinctBy { it.urn }.shuffled()
+            val all = tiles.toMutableList()
+            fetched.filterNotNull().forEach { p ->
+                all += p.collection.filter { t -> t.artwork_url != null && (!t.unavailable || Prefs.playBlocked) }
+            }
+            tiles = all.distinctBy { it.urn }.let { if (nextPage == 0) it.shuffled() else it }
+            tilePage = nextPage
+            if (nextPage == 0) FeedCache.save("tiles", tiles)
+            tilesLoading = false
         }
     }
 
-    fun play(list: List<Track>, track: Track) {
-        if (track.unavailable) return
+    LaunchedEffect(Unit) {
+        if (wave.isEmpty()) FeedCache.load("wave").let { if (it.isNotEmpty()) wave = it }
+        if (tiles.isEmpty()) FeedCache.load("tiles").let { if (it.isNotEmpty()) tiles = it }
+    }
+
+    LaunchedEffect(Prefs.offline, serverDown) {
+        if (Prefs.offline || serverDown) return@LaunchedEffect
+        loadWave(false)
+        loadTiles(0)
+    }
+
+    LaunchedEffect(Unit) {
+        if (Prefs.offline) return@LaunchedEffect
+        launch { runCatching { Api.myPlaylists() } }
+        launch { runCatching { Api.likedPlaylists() } }
+        launch { runCatching { Api.likedTracks() } }
+        launch { runCatching { Api.history() } }
+        launch { runCatching { Api.subscription() } }
+    }
+    LaunchedEffect(tab) { error = null }
+
+    fun play(list: List<Track>, track: Track, autoContinue: Boolean = false) {
+        if (track.unavailable && !Prefs.playBlocked) return
         controller?.let { c ->
-            val playable = list.filter { !it.unavailable }
+            val playable = list.filter { !it.unavailable || Prefs.playBlocked }
             val index = playable.indexOfFirst { it.urn == track.urn }.coerceAtLeast(0)
+            NowPlaying.autoContinue = autoContinue
             c.setMediaItems(playable.map { it.toMediaItem() }, index, 0)
             c.prepare()
             c.play()
@@ -612,7 +660,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp)) {
-            if (noInternet && !Prefs.offline) {
+            if ((noInternet || serverDown) && !Prefs.offline) {
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -630,7 +678,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        stringResource(R.string.no_internet),
+                        stringResource(if (noInternet) R.string.no_internet else R.string.server_down),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -650,7 +698,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                     onOpenPlaylist = { openPlaylist = it },
                     offline = Prefs.offline,
                 )
-            } else if (Prefs.offline) {
+            } else if (Prefs.offline || serverDown) {
                 LibraryScreen(
                     play = ::play,
                     onSessionExpired = onSessionExpired,
@@ -698,7 +746,11 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                                 topPadding = resultsPad,
                             )
                         }
-                        query.isBlank() -> TileGrid(tiles, topPadding = barPad) { play(tiles, it) }
+                        query.isBlank() -> TileGrid(
+                            tiles,
+                            topPadding = barPad,
+                            onLoadMore = { loadTiles(tilePage + 1) },
+                        ) { play(tiles, it, autoContinue = true) }
                     }
 
                     Column(Modifier.fillMaxWidth()) {
@@ -773,45 +825,10 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                             }
                         }
 
-                        if (vibePreparing) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(12.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    stringResource(R.string.vibe_preparing),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-
                         if (!searched && query.trim().length >= 2 &&
                             (suggestions.isNotEmpty() || userSuggestions.isNotEmpty() || playlistResults.isNotEmpty())
                         ) {
                             Column(Modifier.fillMaxWidth()) {
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable { vibeSearch() }
-                                        .padding(vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Icon(
-                                        painterResource(R.drawable.ic_wave),
-                                        null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp),
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        stringResource(R.string.vibe_search) + ": «${query.trim()}»",
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Medium,
-                                    )
-                                }
                                 userSuggestions.forEach { u ->
                                     Row(
                                         Modifier
@@ -908,10 +925,10 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                     tracks = wave,
                     loading = waveLoading,
                     error = error,
-                    canLoadMore = waveCursor.isNotEmpty(),
+                    canLoadMore = !Prefs.offline && wave.isNotEmpty(),
                     onLoadMore = { loadWave(true) },
                     onRefresh = { refreshWave() },
-                    onPlay = { play(wave, it) },
+                    onPlay = { play(wave, it, autoContinue = true) },
                 )
                 Tab.Me -> LibraryScreen(
                     play = ::play,
@@ -935,7 +952,12 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
 }
 
 @Composable
-fun TileGrid(tiles: List<Track>, topPadding: Dp = 0.dp, onPlay: (Track) -> Unit) {
+fun TileGrid(
+    tiles: List<Track>,
+    topPadding: Dp = 0.dp,
+    onLoadMore: (() -> Unit)? = null,
+    onPlay: (Track) -> Unit,
+) {
     if (tiles.isEmpty()) {
         Row(
             Modifier.fillMaxWidth().padding(32.dp),
@@ -943,7 +965,19 @@ fun TileGrid(tiles: List<Track>, topPadding: Dp = 0.dp, onPlay: (Track) -> Unit)
         ) { CircularProgressIndicator() }
         return
     }
+    val gridState = rememberLazyStaggeredGridState()
+    if (onLoadMore != null) {
+        val curOnLoadMore by rememberUpdatedState(onLoadMore)
+        val curCount by rememberUpdatedState(tiles.size)
+        LaunchedEffect(gridState) {
+            snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+                .collect { last ->
+                    if (curCount > 0 && last >= curCount - 6) curOnLoadMore()
+                }
+        }
+    }
     LazyVerticalStaggeredGrid(
+        state = gridState,
         columns = StaggeredGridCells.Fixed(3),
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = topPadding, bottom = 8.dp),
@@ -1193,12 +1227,29 @@ fun PlaylistCardList(
 }
 
 @Composable
+fun StarTag() {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFFFF5500))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    ) {
+        Text(
+            "★ " + stringResource(R.string.star_badge),
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
 fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
     val scope = rememberCoroutineScope()
     val liked = Likes.isLiked(track.urn)
     val isCurrent = NowPlaying.urn == track.urn
     val accent = MaterialTheme.colorScheme.primary
-    val dim = dimmed || track.unavailable
+    val dim = dimmed || (track.unavailable && !Prefs.playBlocked)
     val rowAlpha = if (dim) 0.4f else 1f
 
     Row(
@@ -1250,13 +1301,20 @@ fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                track.title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Medium,
-                color = if (isCurrent) accent else MaterialTheme.colorScheme.onSurface,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    track.title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isCurrent) accent else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (track.isPreview) {
+                    Spacer(Modifier.width(6.dp))
+                    StarTag()
+                }
+            }
             Text(
                 track.user?.username ?: "",
                 maxLines = 1,
@@ -1336,6 +1394,7 @@ fun Track.toMediaItem(): MediaItem {
                         putString("artist_urn", user?.urn)
                         putString("artwork_url", artwork_url)
                         putString("waveform_url", waveform_url)
+                        putString("permalink_url", permalink_url)
                         putLong("duration", duration)
                     }
                 )
@@ -1354,6 +1413,7 @@ fun MediaItem.toTrackOrNull(): Track? {
         duration = md.extras?.getLong("duration") ?: 0L,
         artwork_url = md.extras?.getString("artwork_url"),
         waveform_url = md.extras?.getString("waveform_url"),
+        permalink_url = md.extras?.getString("permalink_url"),
         user = TrackUser(
             urn = md.extras?.getString("artist_urn"),
             username = md.artist?.toString() ?: "",

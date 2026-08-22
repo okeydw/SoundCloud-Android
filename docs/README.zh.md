@@ -20,7 +20,7 @@
 
 <p align="center">
 <b>非官方 SoundCloud Android 客户端</b><br>
-无广告 · 无验证码 · 无审查 · 在俄罗斯可用
+无广告 · 无验证码 · 无审查
 </p>
 
 <p align="center">
@@ -83,7 +83,6 @@
 ---
 
 ## 截图
-`旧的，会在 4.0.0 更新——目前这些来自 0.3.5`
 
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />

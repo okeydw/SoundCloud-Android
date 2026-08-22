@@ -20,7 +20,7 @@
 
 <p align="center">
 <b>비공식 SoundCloud Android 클라이언트</b><br>
-광고 없음 · 캡차 없음 · 검열 없음 · 러시아에서 사용 가능
+광고 없음 · 캡차 없음 · 검열 없음
 </p>
 
 <p align="center">
@@ -83,7 +83,6 @@
 ---
 
 ## 스크린샷
-`예전 것이지만 4.0.0에서 갱신 예정 — 지금은 0.3.5 기준입니다`
 
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />

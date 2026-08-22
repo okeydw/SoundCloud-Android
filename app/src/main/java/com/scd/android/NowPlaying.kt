@@ -19,6 +19,7 @@ object NowPlaying {
     var position by mutableStateOf(0L)
     var duration by mutableStateOf(0L)
     var openPlayerRequest by mutableStateOf(false)
+    var autoContinue by mutableStateOf(false)
 
     fun sync(c: MediaController) {
         val md = c.currentMediaItem?.mediaMetadata

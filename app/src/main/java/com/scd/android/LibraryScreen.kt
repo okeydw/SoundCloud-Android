@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.ContentScale
 import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.platform.LocalContext
@@ -78,6 +79,24 @@ private fun greeting(): String {
 }
 
 @Composable
+private fun StarBadge() {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(androidx.compose.ui.graphics.Color(0xFFFF5500))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "★ " + stringResource(R.string.star_badge),
+            color = androidx.compose.ui.graphics.Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
 fun LibraryScreen(
     play: (List<Track>, Track) -> Unit,
     onSessionExpired: () -> Unit,
@@ -97,6 +116,9 @@ fun LibraryScreen(
         runCatching { Api.authStatus() }.onSuccess {
             username = it.username
             Prefs.saveUsername(it.username)
+        }
+        if (!offline) {
+            runCatching { Api.subscription() }.onSuccess { Prefs.saveStar(it.premium) }
         }
     }
 
@@ -141,13 +163,20 @@ fun LibraryScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Text(
-                        username ?: "SoundCloud",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            username ?: "SoundCloud",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (Prefs.star) {
+                            Spacer(Modifier.width(8.dp))
+                            StarBadge()
+                        }
+                    }
                 }
                 IconButton(onClick = { showCreate = true }) {
                     Icon(painterResource(R.drawable.ic_plus), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -413,9 +442,10 @@ private fun LibTracks(
     var error by remember { mutableStateOf<String?>(null) }
     var showRename by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
-    var downloading by remember { mutableStateOf(false) }
+    var paginating by remember { mutableStateOf(false) }
     var downloadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     fun load(p: Int) {
         if (loading) return
@@ -518,9 +548,13 @@ private fun LibTracks(
             }
             val allDownloaded = items.isNotEmpty() && !hasMore &&
                 items.all { Downloads.isDownloaded(it.urn) }
+            val downloading = paginating || items.any { it.urn in Downloads.inProgress }
             if (downloadAll) {
                 if (downloading) {
-                    IconButton(onClick = { downloadJob?.cancel() }) {
+                    IconButton(onClick = {
+                        downloadJob?.cancel()
+                        Downloads.cancelAll(context)
+                    }) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     }
                 } else if (allDownloaded) {
@@ -533,7 +567,7 @@ private fun LibTracks(
                 } else {
                     IconButton(onClick = {
                         downloadJob = scope.launch {
-                            downloading = true
+                            paginating = true
                             try {
                                 val all = items.toMutableList()
                                 var p = page
@@ -548,9 +582,9 @@ private fun LibTracks(
                                 items = full
                                 page = p
                                 hasMore = false
-                                Downloads.downloadBatch(full)
+                                Downloads.enqueue(context, full)
                             } finally {
-                                downloading = false
+                                paginating = false
                             }
                         }
                     }) {
@@ -647,141 +681,355 @@ fun SettingsScreen(
 ) {
     val activity = LocalActivity.current
     val ctx = LocalContext.current
-    BackHandler(onBack = onBack)
+    var section by remember { mutableStateOf(-1) }
+    val scope = rememberCoroutineScope()
+    BackHandler { if (section >= 0) section = -1 else onBack() }
 
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = { if (section >= 0) section = -1 else onBack() }) {
                 Icon(painterResource(R.drawable.ic_arrow_back), null)
             }
             Text(
-                stringResource(R.string.settings),
+                stringResource(
+                    when (section) {
+                        0 -> R.string.tab_account
+                        1 -> R.string.tab_visual
+                        2 -> R.string.tab_storage
+                        3 -> R.string.tab_star
+                        4 -> R.string.tab_about
+                        else -> R.string.settings
+                    },
+                ),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
+        }
+
+        if (section == -1) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 8.dp),
+            ) {
+                SettingsRow(R.drawable.ic_user, stringResource(R.string.tab_account), username ?: stringResource(R.string.account_signed_in)) { section = 0 }
+                SettingsRow(R.drawable.ic_music, stringResource(R.string.tab_visual), stringResource(R.string.settings_visual_sub)) { section = 1 }
+                SettingsRow(R.drawable.ic_download, stringResource(R.string.tab_storage), stringResource(R.string.settings_storage_sub)) { section = 2 }
+                SettingsRow(R.drawable.ic_share, stringResource(R.string.tab_star), stringResource(R.string.settings_links_sub)) { section = 3 }
+                SettingsRow(R.drawable.ic_settings, stringResource(R.string.tab_about), stringResource(R.string.settings_system_sub)) { section = 4 }
+            }
+            return@Column
         }
 
         Column(
             Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 4.dp),
+                .padding(horizontal = 8.dp, vertical = 8.dp),
         ) {
-            if (username != null) {
-                Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        painterResource(R.drawable.ic_user),
-                        null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            when (section) {
+                3 -> {
+                    val links = listOf(
+                        Triple(R.drawable.ic_user, "Discord", "https://discord.gg/Au3ebtfYu3"),
+                        Triple(R.drawable.ic_music, "Android · GitHub", "https://github.com/okeydw/SoundCloud-Android"),
+                        Triple(R.drawable.ic_music, "Desktop · GitHub", "https://github.com/zxcloli666/SoundCloud-Desktop"),
+                        Triple(R.drawable.ic_wave, "soundcloud-desktop.fun", "https://soundcloud-desktop.fun/"),
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text(username, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            Text(stringResource(R.string.theme), fontWeight = FontWeight.Medium)
-            listOf(
-                "system" to stringResource(R.string.theme_system),
-                "dark" to stringResource(R.string.theme_dark),
-                "light" to stringResource(R.string.theme_light),
-            ).forEach { (value, label) ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { Prefs.setThemeMode(value) },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = Prefs.theme == value, onClick = { Prefs.setThemeMode(value) })
-                    Text(label)
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            val langLabels = mapOf(
-                "system" to stringResource(R.string.theme_system),
-                "en" to "English",
-                "ru" to "Русский",
-                "be" to "Беларуская",
-                "zh" to "中文",
-                "de" to "Deutsch",
-                "fr" to "Français",
-                "es" to "Español",
-                "tr" to "Türkçe",
-                "ko" to "한국어",
-            )
-            var langOpen by remember { mutableStateOf(false) }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.language), Modifier.weight(1f), fontWeight = FontWeight.Medium)
-                Box {
-                    TextButton(onClick = { langOpen = true }) {
-                        Text(langLabels[Prefs.language] ?: Prefs.language)
-                        Icon(painterResource(R.drawable.ic_chevron_down), null, modifier = Modifier.size(18.dp))
-                    }
-                    DropdownMenu(expanded = langOpen, onDismissRequest = { langOpen = false }) {
-                        LocaleHelper.languages.forEach { code ->
-                            DropdownMenuItem(
-                                text = { Text(langLabels[code] ?: code) },
-                                onClick = {
-                                    langOpen = false
-                                    if (Prefs.language != code) {
-                                        Prefs.changeLanguage(code)
-                                        activity?.recreate()
+                    links.forEach { (icon, label, url) ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    runCatching {
+                                        ctx.startActivity(
+                                            android.content.Intent(
+                                                android.content.Intent.ACTION_VIEW,
+                                                android.net.Uri.parse(url),
+                                            ),
+                                        )
                                     }
-                                },
+                                }
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(painterResource(icon), null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface)
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text(
+                                    url.removePrefix("https://").removeSuffix("/"),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Icon(
+                                painterResource(R.drawable.ic_share),
+                                null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.immersive_artwork), fontWeight = FontWeight.Medium)
-                    Text(
-                        stringResource(R.string.immersive_artwork_hint),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                0 -> {
+                    Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(painterResource(R.drawable.ic_user), null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(username ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                stringResource(R.string.account_signed_in),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
+                    Button(
+                        onClick = onLogout,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                        ),
+                    ) { Text(stringResource(R.string.logout)) }
                 }
-                Switch(checked = Prefs.immersiveArtwork, onCheckedChange = { Prefs.changeImmersiveArtwork(it) })
-            }
 
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.offline_mode), Modifier.weight(1f), fontWeight = FontWeight.Medium)
-                Switch(checked = Prefs.offline, onCheckedChange = { Prefs.setOfflineMode(it) })
-            }
+                1 -> {
+                    Text(stringResource(R.string.theme), fontWeight = FontWeight.Medium)
+                    listOf(
+                        "system" to stringResource(R.string.theme_system),
+                        "dark" to stringResource(R.string.theme_dark),
+                        "light" to stringResource(R.string.theme_light),
+                    ).forEach { (value, label) ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { Prefs.setThemeMode(value) },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = Prefs.theme == value, onClick = { Prefs.setThemeMode(value) })
+                            Text(label)
+                        }
+                    }
 
-            Spacer(Modifier.height(24.dp))
-            Button(
-                onClick = onLogout,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError,
-                ),
-            ) {
-                Text(stringResource(R.string.logout))
-            }
+                    Spacer(Modifier.height(16.dp))
+                    val langLabels = mapOf(
+                        "system" to stringResource(R.string.theme_system),
+                        "en" to "English", "ru" to "Русский", "be" to "Беларуская",
+                        "zh" to "中文", "de" to "Deutsch", "fr" to "Français",
+                        "es" to "Español", "tr" to "Türkçe", "ko" to "한국어",
+                    )
+                    var langOpen by remember { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.language), Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                        Box {
+                            TextButton(onClick = { langOpen = true }) {
+                                Text(langLabels[Prefs.language] ?: Prefs.language)
+                                Icon(painterResource(R.drawable.ic_chevron_down), null, modifier = Modifier.size(18.dp))
+                            }
+                            DropdownMenu(expanded = langOpen, onDismissRequest = { langOpen = false }) {
+                                LocaleHelper.languages.forEach { code ->
+                                    DropdownMenuItem(
+                                        text = { Text(langLabels[code] ?: code) },
+                                        onClick = {
+                                            langOpen = false
+                                            if (Prefs.language != code) {
+                                                Prefs.changeLanguage(code)
+                                                activity?.recreate()
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
 
-            Spacer(Modifier.height(16.dp))
-            val version = remember {
-                runCatching {
-                    ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
-                }.getOrNull() ?: "—"
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitch(
+                        stringResource(R.string.immersive_artwork),
+                        stringResource(R.string.immersive_artwork_hint),
+                        Prefs.immersiveArtwork,
+                    ) { Prefs.changeImmersiveArtwork(it) }
+
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitch(
+                        stringResource(R.string.crossfade),
+                        stringResource(R.string.crossfade_hint),
+                        Prefs.crossfade,
+                    ) { Prefs.changeCrossfade(it) }
+                }
+
+                2 -> {
+                    val downloadedSet = Downloads.downloaded
+                    val tracks = Downloads.tracks()
+                    val usedTracks = remember(downloadedSet) { tracks.sumOf { Downloads.fileFor(it.urn).length() } }
+                    val stat = remember { runCatching { android.os.StatFs(ctx.filesDir.path) }.getOrNull() }
+                    val total = stat?.totalBytes ?: 0L
+                    val free = stat?.availableBytes ?: 0L
+                    val usedOther = (total - free - usedTracks).coerceAtLeast(0L)
+
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.storage_downloaded), Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                        Text("${tracks.size}  ·  ${fmtBytes(usedTracks)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))) {
+                        if (usedTracks > 0) Box(Modifier.weight(usedTracks.toFloat()).height(12.dp).background(MaterialTheme.colorScheme.primary))
+                        if (usedOther > 0) Box(Modifier.weight(usedOther.toFloat()).height(12.dp).background(MaterialTheme.colorScheme.onSurfaceVariant))
+                        if (free > 0) Box(Modifier.weight(free.toFloat()).height(12.dp).background(MaterialTheme.colorScheme.surfaceVariant))
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    StorageLegend(MaterialTheme.colorScheme.primary, stringResource(R.string.storage_used_tracks), fmtBytes(usedTracks))
+                    StorageLegend(MaterialTheme.colorScheme.onSurfaceVariant, stringResource(R.string.storage_other), fmtBytes(usedOther))
+                    StorageLegend(MaterialTheme.colorScheme.surfaceVariant, stringResource(R.string.storage_free), fmtBytes(free))
+
+                    Spacer(Modifier.height(16.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.offline_mode), Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                        Switch(checked = Prefs.offline, onCheckedChange = { Prefs.setOfflineMode(it) })
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitch(
+                        stringResource(R.string.play_blocked),
+                        stringResource(R.string.play_blocked_hint),
+                        Prefs.playBlocked,
+                    ) { Prefs.changePlayBlocked(it) }
+
+                    if (tracks.isNotEmpty()) {
+                        Spacer(Modifier.height(16.dp))
+                        Button(
+                            onClick = { scope.launch { tracks.forEach { runCatching { Downloads.remove(it.urn) } } } },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError,
+                            ),
+                        ) { Text(stringResource(R.string.clear_downloads)) }
+                    }
+                }
+
+                else -> {
+                    val pInfo = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0) }.getOrNull() }
+                    val vName = pInfo?.versionName ?: "—"
+                    @Suppress("DEPRECATION")
+                    val vCode = pInfo?.versionCode ?: 0
+                    InfoRow("App", ctx.packageName)
+                    InfoRow(stringResource(R.string.version, "").trim(), "$vName ($vCode)")
+                    InfoRow(stringResource(R.string.about_device), "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                    InfoRow("Android", "${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
+                    InfoRow("ABI", android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "-")
+                    Spacer(Modifier.height(20.dp))
+                    Button(
+                        onClick = {
+                            val json = """
+                                {
+                                  "app": "${ctx.packageName}",
+                                  "versionName": "$vName",
+                                  "versionCode": $vCode,
+                                  "device": "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                                  "android": "${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})",
+                                  "abi": "${android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: ""}",
+                                  "language": "${Prefs.language}",
+                                  "offline": ${Prefs.offline},
+                                  "downloads": ${Downloads.downloaded.size}
+                                }
+                            """.trimIndent()
+                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "application/json"
+                                putExtra(android.content.Intent.EXTRA_TEXT, json)
+                            }
+                            ctx.startActivity(android.content.Intent.createChooser(send, null))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(R.string.about_export)) }
+                }
             }
-            Text(
-                stringResource(R.string.version, version),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            )
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+@Composable
+private fun SettingsRow(icon: Int, title: String, subtitle: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painterResource(icon),
+            null,
+            modifier = Modifier.size(26.dp),
+            tint = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                subtitle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            painterResource(R.drawable.ic_chevron_down),
+            null,
+            modifier = Modifier.size(20.dp).rotate(-90f),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun SettingSwitch(title: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Medium)
+            Text(hint, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun StorageLegend(color: androidx.compose.ui.graphics.Color, label: String, value: String) {
+    Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(8.dp))
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+        Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), fontWeight = FontWeight.Medium)
+        Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun fmtBytes(b: Long): String {
+    if (b < 1024) return "$b B"
+    val kb = b / 1024.0
+    if (kb < 1024) return "%.0f KB".format(kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return "%.1f MB".format(mb)
+    return "%.2f GB".format(mb / 1024.0)
 }

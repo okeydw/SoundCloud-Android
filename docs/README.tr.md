@@ -20,7 +20,7 @@
 
 <p align="center">
 <b>Android için resmi olmayan SoundCloud istemcisi</b><br>
-Reklamsız · Captcha yok · Sansürsüz · Rusya'da çalışır
+Reklamsız · Captcha yok · Sansürsüz
 </p>
 
 <p align="center">
@@ -83,7 +83,6 @@ Reklamsız · Captcha yok · Sansürsüz · Rusya'da çalışır
 ---
 
 ## Ekran görüntüleri
-`eski, ama 4.0.0'da güncelleyeceğim — şimdilik bunlar 0.3.5'ten`
 
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />

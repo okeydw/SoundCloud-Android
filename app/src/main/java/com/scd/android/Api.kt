@@ -117,6 +117,9 @@ object Api {
     suspend fun trackByUrn(urn: String): Track =
         getJson("$API_BASE/tracks/${enc(urn)}", Track.serializer())
 
+    suspend fun relatedTracks(urn: String, limit: Int = 40): PagedTracks =
+        getJson("$API_BASE/tracks/${enc(urn)}/related?limit=$limit&page=0", PagedTracks.serializer())
+
     suspend fun waveTracks(cursor: String? = null, limit: Int = 20): Pair<List<Track>, String> {
         val url = buildString {
             append("$API_BASE/recommendations/wave?limit=$limit")
@@ -189,6 +192,19 @@ object Api {
     suspend fun authStatus(): AuthStatus =
         getJson("$API_BASE/auth/status", AuthStatus.serializer())
 
+    suspend fun subscription(): Subscription =
+        getJson("$API_BASE/me/subscription", Subscription.serializer())
+
+    suspend fun healthOk(): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder()
+                .url("$API_BASE/health")
+                .cacheControl(CacheControl.FORCE_NETWORK)
+                .build()
+            http.newCall(req).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
+    }
+
     suspend fun dislikedIds(): List<String> =
         getJson("$API_BASE/dislikes/ids", DislikeIds.serializer()).ids
 
@@ -211,9 +227,6 @@ object Api {
             .build()
         http.newCall(req).execute().use { it.checkOk() }
     }
-
-    suspend fun vibeSearch(q: String, limit: Int = 20): VibeSearchResponse =
-        getJson("$API_BASE/search/vibe?q=${enc(q)}&limit=$limit", VibeSearchResponse.serializer())
 
     suspend fun createPlaylist(title: String): String? = withContext(Dispatchers.IO) {
         val payload = buildJsonObject {
@@ -372,6 +385,7 @@ data class Track(
     val artwork_url: String? = null,
     val waveform_url: String? = null,
     val genre: String? = null,
+    val permalink_url: String? = null,
     val user: TrackUser? = null,
     val access: String? = null,
     @SerialName("_scd_meta") val scdMeta: ScdMeta? = null,
@@ -453,14 +467,13 @@ data class AuthStatus(
 )
 
 @Serializable
-data class DislikeIds(
-    val ids: List<String> = emptyList(),
+data class Subscription(
+    val premium: Boolean = false,
 )
 
 @Serializable
-data class VibeSearchResponse(
-    val items: List<Track> = emptyList(),
-    val status: String? = null,
+data class DislikeIds(
+    val ids: List<String> = emptyList(),
 )
 
 @Serializable

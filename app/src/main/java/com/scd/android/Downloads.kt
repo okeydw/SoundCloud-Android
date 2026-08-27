@@ -79,12 +79,22 @@ object Downloads {
         val target = fileFor(track.urn)
         val tmp = File(target.path + ".part")
         try {
-            val req = Request.Builder().url(Api.streamUrl(track.urn)).build()
-            Api.http.newCall(req).execute().use { res ->
-                if (!res.isSuccessful) return@withContext false
-                val body = res.body ?: return@withContext false
-                tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
+            var fetched = false
+            for (attempt in Endpoints.streamHosts.indices) {
+                val ok = runCatching {
+                    val req = Request.Builder().url(Api.streamUrl(track.urn)).build()
+                    Api.http.newCall(req).execute().use { res ->
+                        if (!res.isSuccessful || res.header("content-length") == "0") return@use false
+                        val body = res.body ?: return@use false
+                        tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
+                        tmp.length() > 0L
+                    }
+                }.getOrDefault(false)
+                if (ok) { fetched = true; break }
+                tmp.delete()
+                Endpoints.rotateStream()
             }
+            if (!fetched) return@withContext false
             if (!tmp.renameTo(target)) return@withContext false
             synchronized(index) {
                 index[track.urn] = track

@@ -54,6 +54,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.darkColorScheme
@@ -70,7 +71,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
@@ -146,6 +150,27 @@ class MainActivity : ComponentActivity() {
         intent.getStringExtra("open_playlist_urn")?.let { urn ->
             NavEvents.openPlaylist(urn, intent.getStringExtra("open_playlist_title") ?: "")
         }
+        if (intent.action == Intent.ACTION_VIEW) {
+            val data = intent.data
+            if (data?.scheme == "scd") {
+                val token = data.getQueryParameter("token") ?: data.getQueryParameter("claim")
+                if (token != null) {
+                    val app = applicationContext
+                    App.scope.launch {
+                        val res = runCatching { Api.linkClaim(token) }
+                        val sid = res.getOrNull()?.sessionId
+                        if (sid != null) {
+                            Api.storeSession(app, sid)
+                            NavEvents.sessionReady = true
+                        } else {
+                            Logs.add("qr", "deeplink claim failed: ${res.exceptionOrNull()?.message ?: "no session"}")
+                        }
+                    }
+                }
+            } else {
+                data?.toString()?.takeIf { "soundcloud.com" in it }?.let { NavEvents.openUrl(it) }
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -171,8 +196,10 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            val base = if (isAppDark()) DarkColors else LightColors
+            val accent = Color(Prefs.accent)
             MaterialTheme(
-                colorScheme = if (isAppDark()) DarkColors else LightColors,
+                colorScheme = base.copy(primary = accent, secondary = accent),
             ) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Root(controllerState.value)
@@ -227,6 +254,13 @@ fun rememberArtworkColor(artworkUri: String?): Color {
 fun Root(controller: MediaController?) {
     var hasSession by remember { mutableStateOf(Api.sessionId != null) }
 
+    LaunchedEffect(NavEvents.sessionReady) {
+        if (NavEvents.sessionReady) {
+            NavEvents.sessionReady = false
+            hasSession = true
+        }
+    }
+
     if (hasSession) {
         MainScreen(controller, onSessionExpired = { hasSession = false })
     } else {
@@ -238,33 +272,40 @@ fun Root(controller: MediaController?) {
 fun LoginScreen(onDone: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
+    var browserBusy by remember { mutableStateOf(false) }
+    var browserStatus by remember { mutableStateOf<String?>(null) }
 
     Column(
-        Modifier.fillMaxSize().padding(32.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("SoundCloud", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
-            stringResource(R.string.login_explain),
+            stringResource(R.string.qr_scan_hint),
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(24.dp))
         Button(
-            enabled = !busy,
+            onClick = { openCamera(context) },
+        ) { Text(stringResource(R.string.qr_scan_button)) }
+
+        Spacer(Modifier.height(28.dp))
+        androidx.compose.material3.HorizontalDivider(Modifier.fillMaxWidth(0.6f))
+        Spacer(Modifier.height(16.dp))
+
+        TextButton(
+            enabled = !browserBusy,
             onClick = {
-                busy = true
-                status = null
+                browserBusy = true
+                browserStatus = null
                 scope.launch {
                     try {
                         val login = Api.authLogin()
-                        context.startActivity(Intent(Intent.ACTION_VIEW, login.url.toUri()))
-                        status = context.getString(R.string.login_waiting)
-
+                        openInBrowser(context, login.url)
+                        browserStatus = context.getString(R.string.login_waiting)
                         val deadline = System.currentTimeMillis() + 5 * 60_000
                         while (System.currentTimeMillis() < deadline) {
                             delay(700)
@@ -283,26 +324,33 @@ fun LoginScreen(onDone: () -> Unit) {
                                     }
                                 }
                                 "failed", "expired" -> {
-                                    status = context.getString(R.string.login_failed) +
+                                    browserStatus = context.getString(R.string.login_failed) +
                                         (st.error?.let { ": $it" } ?: "")
-                                    busy = false
+                                    browserBusy = false
                                     return@launch
                                 }
                             }
                         }
-                        status = context.getString(R.string.login_timeout)
+                        browserStatus = context.getString(R.string.login_timeout)
                     } catch (e: Exception) {
-                        status = context.getString(R.string.error_network) + "\n" + (e.message ?: "")
+                        browserStatus = context.getString(R.string.error_network) + "\n" + (e.message ?: "")
                     }
-                    busy = false
+                    browserBusy = false
                 }
             },
         ) { Text(stringResource(R.string.login_button)) }
-
-        Spacer(Modifier.height(16.dp))
-        if (busy) CircularProgressIndicator(Modifier.size(24.dp))
-        status?.let {
-            Spacer(Modifier.height(12.dp))
+        Text(
+            stringResource(R.string.login_browser_warn),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (browserBusy) {
+            Spacer(Modifier.height(8.dp))
+            CircularProgressIndicator(Modifier.size(20.dp))
+        }
+        browserStatus?.let {
+            Spacer(Modifier.height(8.dp))
             Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
     }
@@ -354,11 +402,48 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     DisposableEffect(controller) {
         if (controller == null) return@DisposableEffect onDispose {}
         NowPlaying.sync(controller)
+        var streamRetries = 0
         val listener = object : androidx.media3.common.Player.Listener {
             override fun onEvents(
                 player: androidx.media3.common.Player,
                 events: androidx.media3.common.Player.Events,
-            ) = NowPlaying.sync(controller)
+            ) {
+                if (player.isPlaying) streamRetries = 0
+                NowPlaying.sync(controller)
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                val cause = error.cause
+                val httpCode = (cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+
+                if (controller.mediaItemCount > 0 && streamRetries < Endpoints.streamHosts.size) {
+                    streamRetries++
+                    Logs.add("player", "${error.errorCodeName}${httpCode?.let { " [HTTP $it]" } ?: ""} → rotate stream")
+                    Endpoints.rotateStream()
+                    Logs.add("host", "stream → ${Endpoints.streamBase.removePrefix("https://")}")
+                    val idx = controller.currentMediaItemIndex
+                    val pos = controller.currentPosition
+                    val rebuilt = (0 until controller.mediaItemCount).map { i ->
+                        val mi = controller.getMediaItemAt(i)
+                        if (Downloads.isDownloaded(mi.mediaId)) mi
+                        else mi.buildUpon().setUri(Api.streamUrl(mi.mediaId)).build()
+                    }
+                    controller.setMediaItems(rebuilt, idx, pos)
+                    controller.prepare()
+                    controller.play()
+                    return
+                }
+
+                val detail = buildString {
+                    append(error.errorCodeName)
+                    error.message?.let { append(": ").append(it) }
+                    if (httpCode != null) append(" [HTTP ").append(httpCode).append("]")
+                    else if (cause != null) append(" (").append(cause.javaClass.simpleName).append(")")
+                }
+                Logs.add("player", detail)
+                android.util.Log.e("SCDPlayer", "playback error: $detail", error)
+                if (Prefs.streamDebug) android.widget.Toast.makeText(context, detail, android.widget.Toast.LENGTH_LONG).show()
+            }
         }
         controller.addListener(listener)
         onDispose { controller.removeListener(listener) }
@@ -382,7 +467,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         val urn = c.currentMediaItem?.mediaId ?: return@LaunchedEffect
         val related = runCatching { Api.relatedTracks(urn, 20) }.getOrNull() ?: return@LaunchedEffect
         val existing = (0 until c.mediaItemCount).mapNotNull { c.getMediaItemAt(it).mediaId }.toSet()
-        val add = related.collection.filter { it.urn !in existing && !it.unavailable }
+        val add = related.collection.filter { it.urn !in existing && !it.unavailable && !it.starLocked }
         if (add.isNotEmpty()) c.addMediaItems(add.map { it.toMediaItem() })
     }
 
@@ -421,6 +506,16 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             serverDown = if (net && !Prefs.offline) !Api.healthOk() else false
             delay(12000)
         }
+    }
+
+    var newVersion by remember { mutableStateOf<Pair<String, String>?>(null) }
+    LaunchedEffect(Unit) {
+        if (Prefs.offline) return@LaunchedEffect
+        val current = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: return@LaunchedEffect
+        val latest = Api.latestRelease() ?: return@LaunchedEffect
+        if (isNewerVersion(latest.first, current)) newVersion = latest
     }
 
     LaunchedEffect(NowPlaying.openPlayerRequest) {
@@ -618,14 +713,38 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     LaunchedEffect(tab) { error = null }
 
     fun play(list: List<Track>, track: Track, autoContinue: Boolean = false) {
+        if (track.starLocked) return
         if (track.unavailable && !Prefs.playBlocked) return
         controller?.let { c ->
-            val playable = list.filter { !it.unavailable || Prefs.playBlocked }
+            val playable = list.filter { (!it.unavailable || Prefs.playBlocked) && !it.starLocked }
             val index = playable.indexOfFirst { it.urn == track.urn }.coerceAtLeast(0)
             NowPlaying.autoContinue = autoContinue
             c.setMediaItems(playable.map { it.toMediaItem() }, index, 0)
             c.prepare()
             c.play()
+        }
+    }
+
+    LaunchedEffect(NavEvents.pendingUrl) {
+        val url = NavEvents.pendingUrl ?: return@LaunchedEffect
+        NavEvents.consumeUrl()
+        val r = runCatching { Api.resolve(url) }.getOrNull() ?: return@LaunchedEffect
+        when (r.kind) {
+            "track" -> {
+                val t = runCatching { Api.trackByUrn(r.urn) }.getOrNull() ?: return@LaunchedEffect
+                openArtist = null
+                openPlaylist = null
+                play(listOf(t), t)
+                showPlayer = true
+            }
+            "user" -> {
+                openPlaylist = null
+                openArtist = r.urn
+            }
+            "playlist" -> {
+                openArtist = null
+                openPlaylist = Playlist(urn = r.urn, title = r.title ?: "")
+            }
         }
     }
 
@@ -681,6 +800,44 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                         stringResource(if (noInternet) R.string.no_internet else R.string.server_down),
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            newVersion?.let { (tag, url) ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .clickable {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)),
+                                )
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_download),
+                        null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.new_version, tag),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(
+                        painterResource(R.drawable.ic_chevron_down),
+                        null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(18.dp).rotate(-90f),
                     )
                 }
             }
@@ -1249,7 +1406,7 @@ fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
     val liked = Likes.isLiked(track.urn)
     val isCurrent = NowPlaying.urn == track.urn
     val accent = MaterialTheme.colorScheme.primary
-    val dim = dimmed || (track.unavailable && !Prefs.playBlocked)
+    val dim = dimmed || track.starLocked || (track.unavailable && !Prefs.playBlocked)
     val rowAlpha = if (dim) 0.4f else 1f
 
     Row(
@@ -1310,7 +1467,7 @@ fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
                     color = if (isCurrent) accent else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                if (track.isPreview) {
+                if (track.goPlus) {
                     Spacer(Modifier.width(6.dp))
                     StarTag()
                 }
@@ -1429,3 +1586,50 @@ fun formatDuration(ms: Long): String {
 }
 
 fun hasNetwork(context: android.content.Context): Boolean = NetMonitor.hasTransport(context)
+
+fun openInBrowser(context: android.content.Context, url: String) {
+    val pm = context.packageManager
+    val probe = Intent(Intent.ACTION_VIEW, "https://example.com".toUri())
+        .addCategory(Intent.CATEGORY_BROWSABLE)
+    val browsers = pm.queryIntentActivities(probe, 0)
+        .map { it.activityInfo.packageName }
+        .filter { it != context.packageName }
+        .distinct()
+    val view = Intent(Intent.ACTION_VIEW, url.toUri()).apply {
+        addCategory(Intent.CATEGORY_BROWSABLE)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+    }
+    val pkg = browsers.firstOrNull { it.contains("chrome") }
+        ?: browsers.firstOrNull { it.contains("browser") || it.contains("firefox") || it.contains("opera") }
+        ?: browsers.firstOrNull()
+    if (pkg != null) view.setPackage(pkg)
+    runCatching { context.startActivity(view) }.onFailure {
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, url.toUri()).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK },
+            )
+        }
+    }
+}
+
+fun openCamera(context: android.content.Context) {
+    val camera = Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+    val chooser = Intent.createChooser(camera, null).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+    runCatching { context.startActivity(chooser) }.onFailure {
+        runCatching {
+            context.startActivity(camera.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+        }
+    }
+}
+
+fun isNewerVersion(latest: String, current: String): Boolean {
+    fun parts(s: String) = s.trimStart('v', 'V').split('.', '-', '+').mapNotNull { it.toIntOrNull() }
+    val a = parts(latest)
+    val b = parts(current)
+    for (i in 0 until maxOf(a.size, b.size)) {
+        val x = a.getOrElse(i) { 0 }
+        val y = b.getOrElse(i) { 0 }
+        if (x != y) return x > y
+    }
+    return false
+}

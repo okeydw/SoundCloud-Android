@@ -6,14 +6,14 @@
     <string name="search_hint">Пошук трэкаў…</string>
     <string name="search_empty">Нічога не знойдзена</string>
     <string name="search_idle">Увядзі запыт і націсні пошук</string>
-    <string name="wave_empty">Хваля пакуль пустая — паслухай што-небудзь</string>
+    <string name="wave_empty">Хваля пакуль пустая - паслухай што-небудзь</string>
     <string name="load_more">Паказаць яшчэ</string>
     <string name="error_network">Памылка сеткі. Праверце злучэнне.</string>
-    <string name="login_explain">Увайдзі праз акаўнт SoundCloud — адкрыецца браўзер. Пасля ўваходу вярніся ў праграму.</string>
+    <string name="login_explain">Увайдзі праз акаўнт SoundCloud - адкрыецца браўзер. Пасля ўваходу вярніся ў праграму.</string>
     <string name="login_button">Увайсці праз SoundCloud</string>
     <string name="login_waiting">Чакаю завяршэння ўваходу ў браўзеры…</string>
     <string name="login_failed">Не атрымалася ўвайсці</string>
-    <string name="login_timeout">Час выйшаў — паспрабуй яшчэ раз</string>
+    <string name="login_timeout">Час выйшаў - паспрабуй яшчэ раз</string>
     <string name="liked">Упадабаныя</string>
     <string name="downloads">Спампаваныя</string>
     <string name="history">Гісторыя</string>

@@ -13,6 +13,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Cache
 import okhttp3.CacheControl
@@ -26,9 +29,9 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 object Api {
-    const val API_BASE = "https://api.scdinternal.site"
-    const val STREAM_BASE = "https://stream.scdinternal.site"
-    const val IMAGES_BASE = "https://images.scdinternal.site"
+    val API_BASE get() = Endpoints.apiBase
+    val STREAM_BASE get() = Endpoints.streamBase
+    val IMAGES_BASE get() = Endpoints.imageBase
 
     private const val PREFS = "scd"
     private const val KEY_SESSION = "session_id"
@@ -67,15 +70,16 @@ object Api {
                 val res = chain.proceed(req)
                 val host = req.url.host
                 val path = req.url.encodedPath
+                val isApi = host in Endpoints.apiHostnames
                 val maxAge = when {
-                    host == "images.scdinternal.site" || host.endsWith("sndcdn.com") -> 604800
-                    host == "api.scdinternal.site" && (
+                    host in Endpoints.imageHostnames || host.endsWith("sndcdn.com") -> 604800
+                    isApi && (
                         path.contains("/playlists") ||
                             path.startsWith("/users/") ||
                             path.startsWith("/me/likes") ||
                             path.startsWith("/me/playlists")
                         ) -> 86400
-                    host == "api.scdinternal.site" -> 60
+                    isApi -> 60
                     else -> null
                 }
                 if (req.method == "GET" && maxAge != null) {
@@ -116,6 +120,12 @@ object Api {
 
     suspend fun trackByUrn(urn: String): Track =
         getJson("$API_BASE/tracks/${enc(urn)}", Track.serializer())
+
+    suspend fun resolve(url: String): ResolveResult? = withContext(Dispatchers.IO) {
+        runCatching { getJson("$API_BASE/resolve?url=${enc(url)}", ResolveResult.serializer()) }
+            .getOrNull()
+            ?.takeIf { it.urn.isNotEmpty() }
+    }
 
     suspend fun relatedTracks(urn: String, limit: Int = 40): PagedTracks =
         getJson("$API_BASE/tracks/${enc(urn)}/related?limit=$limit&page=0", PagedTracks.serializer())
@@ -191,6 +201,74 @@ object Api {
 
     suspend fun authStatus(): AuthStatus =
         getJson("$API_BASE/auth/status", AuthStatus.serializer())
+
+    suspend fun me(fresh: Boolean = false): MeProfile =
+        getJson("$API_BASE/me", MeProfile.serializer(), fresh)
+
+    suspend fun updateProfile(username: String?, avatarDataUrl: String?): Boolean = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject {
+            put("user", buildJsonObject {
+                username?.let { put("username", it) }
+                avatarDataUrl?.let { put("avatar_data", it) }
+            })
+        }.toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("$API_BASE/me")
+            .put(payload)
+            .apply { sessionId?.let { header("x-session-id", it) } }
+            .build()
+        runCatching { http.newCall(req).execute().use { it.isSuccessful } }.getOrDefault(false)
+    }
+
+    suspend fun latestRelease(): Pair<String, String>? = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder()
+                .url("https://api.github.com/repos/okeydw/SoundCloud-Android/releases/latest")
+                .header("Accept", "application/vnd.github+json")
+                .cacheControl(CacheControl.FORCE_NETWORK)
+                .build()
+            http.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return@use null
+                val obj = json.parseToJsonElement(res.body?.string() ?: "").jsonObject
+                val tag = obj["tag_name"]?.jsonPrimitive?.contentOrNull ?: return@use null
+                val url = obj["html_url"]?.jsonPrimitive?.contentOrNull ?: "https://github.com/okeydw/SoundCloud-Android/releases"
+                tag to url
+            }
+        }.getOrNull()
+    }
+
+    suspend fun linkCreate(mode: String = "pull"): LinkCreate = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject { put("mode", mode) }
+            .toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("$API_BASE/auth/link/create")
+            .post(payload)
+            .apply { sessionId?.let { header("x-session-id", it) } }
+            .build()
+        http.newCall(req).execute().use { res ->
+            val body = res.body?.string() ?: ""
+            if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
+            json.decodeFromString(LinkCreate.serializer(), body)
+        }
+    }
+
+    suspend fun linkStatus(id: String): LinkStatus =
+        getJson("$API_BASE/auth/link/status?id=${enc(id)}", LinkStatus.serializer(), fresh = true)
+
+    suspend fun linkClaim(claimToken: String): LinkClaim = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject { put("claimToken", claimToken) }
+            .toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("$API_BASE/auth/link/claim")
+            .post(payload)
+            .apply { sessionId?.let { header("x-session-id", it) } }
+            .build()
+        http.newCall(req).execute().use { res ->
+            val body = res.body?.string() ?: ""
+            if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
+            json.decodeFromString(LinkClaim.serializer(), body)
+        }
+    }
 
     suspend fun subscription(): Subscription =
         getJson("$API_BASE/me/subscription", Subscription.serializer())
@@ -340,6 +418,24 @@ object Api {
         return "$STREAM_BASE/stream/${enc(urn)}$qs"
     }
 
+    suspend fun streamProbe(urn: String): String = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder()
+                .url(streamUrl(urn))
+                .header("Range", "bytes=0-15")
+                .cacheControl(CacheControl.FORCE_NETWORK)
+                .build()
+            http.newCall(req).execute().use { res ->
+                val ct = res.header("content-type") ?: "?"
+                val cl = res.header("content-length") ?: "?"
+                val bytes = runCatching { res.peekBody(16L).bytes() }.getOrNull()
+                val hex = bytes?.joinToString("") { b -> "%02x".format(b) } ?: ""
+                val ascii = bytes?.map { b -> if (b in 32..126) b.toInt().toChar() else '.' }?.joinToString("") ?: ""
+                "HTTP ${res.code} @${res.request.url.host} ct=$ct len=$cl\n$hex\n$ascii"
+            }
+        }.getOrElse { "probe fail: ${it.javaClass.simpleName}: ${it.message}" }
+    }
+
     fun artworkUrl(raw: String?, size: String = "t500x500"): String? =
         raw?.replace("-large", "-$size")
 
@@ -350,17 +446,43 @@ object Api {
         if (!isSuccessful) throw ApiHttpException(code, body?.string()?.take(300) ?: "")
     }
 
+    private fun pathOf(url: String): String {
+        val afterScheme = url.removePrefix("https://").removePrefix("http://")
+        val slash = afterScheme.indexOf('/')
+        return if (slash >= 0) afterScheme.substring(slash) else "/"
+    }
+
     private suspend fun <T> getJson(url: String, strategy: DeserializationStrategy<T>, fresh: Boolean = false): T =
         withContext(Dispatchers.IO) {
-            val req = Request.Builder().url(url).apply {
-                sessionId?.let { header("x-session-id", it) }
-                if (fresh) cacheControl(CacheControl.FORCE_NETWORK)
-            }.build()
-            http.newCall(req).execute().use { res ->
-                val body = res.body?.string() ?: ""
-                if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(300))
-                json.decodeFromString(strategy, body)
+            val path = pathOf(url)
+            val n = Endpoints.apiHosts.size
+            var lastError: Exception? = null
+            for (attempt in 0 until n) {
+                val idx = (Endpoints.apiIndex + attempt) % n
+                val full = Endpoints.apiHostAt(idx) + path
+                try {
+                    val req = Request.Builder().url(full).apply {
+                        sessionId?.let { header("x-session-id", it) }
+                        if (fresh) cacheControl(CacheControl.FORCE_NETWORK)
+                    }.build()
+                    return@withContext http.newCall(req).execute().use { res ->
+                        val body = res.body?.string() ?: ""
+                        if (!res.isSuccessful) {
+                            if (res.code in intArrayOf(400, 401, 403, 404)) {
+                                throw ApiHttpException(res.code, body.take(300))
+                            }
+                            throw IOException("API host ${res.code}")
+                        }
+                        if (attempt > 0) Endpoints.commitApi(idx)
+                        json.decodeFromString(strategy, body)
+                    }
+                } catch (e: ApiHttpException) {
+                    throw e
+                } catch (e: Exception) {
+                    lastError = e
+                }
             }
+            throw lastError ?: IOException("all API hosts unavailable")
         }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
@@ -388,9 +510,18 @@ data class Track(
     val permalink_url: String? = null,
     val user: TrackUser? = null,
     val access: String? = null,
+    val policy: String? = null,
+    val monetization_model: String? = null,
     @SerialName("_scd_meta") val scdMeta: ScdMeta? = null,
 ) {
     val isPreview: Boolean get() = access == "preview"
+
+    val goPlus: Boolean
+        get() = access == "preview" ||
+            policy == "SNIP" ||
+            monetization_model == "SUB_HIGH_TIER"
+
+    val starLocked: Boolean get() = access == "preview" && !Prefs.star
 
     val unavailable: Boolean
         get() = access == "blocked" ||
@@ -467,8 +598,45 @@ data class AuthStatus(
 )
 
 @Serializable
+data class LinkCreate(
+    @SerialName("linkRequestId") val linkRequestId: String = "",
+    @SerialName("claimToken") val claimToken: String = "",
+)
+
+@Serializable
+data class LinkStatus(
+    val status: String = "",
+    val mode: String = "",
+    @SerialName("sessionId") val sessionId: String? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class LinkClaim(
+    @SerialName("sessionId") val sessionId: String? = null,
+    val mode: String = "",
+)
+
+@Serializable
+data class MeProfile(
+    val username: String = "",
+    val avatar_url: String? = null,
+    val urn: String? = null,
+    val followers_count: Int? = null,
+    val followings_count: Int? = null,
+    val track_count: Int? = null,
+)
+
+@Serializable
 data class Subscription(
     val premium: Boolean = false,
+)
+
+@Serializable
+data class ResolveResult(
+    val urn: String = "",
+    val kind: String? = null,
+    val title: String? = null,
 )
 
 @Serializable

@@ -6,14 +6,14 @@
     <string name="search_hint">Parça ara…</string>
     <string name="search_empty">Hiçbir şey bulunamadı</string>
     <string name="search_idle">Bir sorgu yaz ve ara</string>
-    <string name="wave_empty">Dalgan şimdilik boş — önce bir şeyler dinle</string>
+    <string name="wave_empty">Dalgan şimdilik boş - önce bir şeyler dinle</string>
     <string name="load_more">Daha fazla göster</string>
     <string name="error_network">Ağ hatası. Bağlantını kontrol et.</string>
-    <string name="login_explain">SoundCloud hesabınla giriş yap — tarayıcı açılacak. Bitince uygulamaya geri dön.</string>
+    <string name="login_explain">SoundCloud hesabınla giriş yap - tarayıcı açılacak. Bitince uygulamaya geri dön.</string>
     <string name="login_button">SoundCloud ile giriş yap</string>
     <string name="login_waiting">Tarayıcıda girişin tamamlanması bekleniyor…</string>
     <string name="login_failed">Giriş başarısız</string>
-    <string name="login_timeout">Süre doldu — tekrar dene</string>
+    <string name="login_timeout">Süre doldu - tekrar dene</string>
     <string name="liked">Beğenilenler</string>
     <string name="downloads">İndirilenler</string>
     <string name="history">Geçmiş</string>

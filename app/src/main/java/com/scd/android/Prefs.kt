@@ -6,6 +6,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
+object AccentPalette {
+    val DEFAULT = 0xFFFF5500.toInt()
+    val colors = listOf(
+        0xFFFF5500.toInt(),
+        0xFF0048FF.toInt(),
+        0xFF7C4DFF.toInt(),
+        0xFF1DB954.toInt(),
+        0xFFFF2D55.toInt(),
+        0xFFFFB300.toInt(),
+    )
+}
+
 object Prefs {
     private lateinit var sp: SharedPreferences
 
@@ -25,6 +37,12 @@ object Prefs {
         private set
     var star by mutableStateOf(false)
         private set
+    var streamDebug by mutableStateOf(false)
+        private set
+    var streamTags by mutableStateOf(false)
+        private set
+    var accent by mutableStateOf(AccentPalette.DEFAULT)
+        private set
 
     fun init(context: Context) {
         if (::sp.isInitialized) return
@@ -37,6 +55,24 @@ object Prefs {
         crossfade = sp.getBoolean("crossfade", false)
         playBlocked = sp.getBoolean("play_blocked", false)
         star = sp.getBoolean("star", false)
+        streamDebug = sp.getBoolean("stream_debug", false)
+        streamTags = sp.getBoolean("stream_tags", false)
+        accent = sp.getInt("accent", AccentPalette.DEFAULT)
+    }
+
+    fun changeAccent(value: Int) {
+        accent = value
+        sp.edit().putInt("accent", value).apply()
+    }
+
+    fun changeStreamDebug(value: Boolean) {
+        streamDebug = value
+        sp.edit().putBoolean("stream_debug", value).apply()
+    }
+
+    fun changeStreamTags(value: Boolean) {
+        streamTags = value
+        sp.edit().putBoolean("stream_tags", value).apply()
     }
 
     fun saveStar(value: Boolean) {

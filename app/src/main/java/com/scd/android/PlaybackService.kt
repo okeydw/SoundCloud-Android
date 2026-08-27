@@ -33,9 +33,15 @@ class PlaybackService : MediaSessionService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var lastReportedUrn: String? = null
 
+    @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
+        val dataSourceFactory =
+            androidx.media3.datasource.DefaultDataSource.Factory(this, ScDataSource.Factory(Api.http))
         val player = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory),
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)

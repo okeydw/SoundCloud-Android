@@ -7,6 +7,7 @@ import coil.ImageLoaderFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.Request
 
 class App : Application(), ImageLoaderFactory {
@@ -19,12 +20,14 @@ class App : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         Prefs.init(this)
+        Endpoints.init(this)
         Api.initHttp(this)
         Api.loadSession(this)
         Downloads.init(this)
         FeedCache.init(this)
         LikedArtists.init(this)
         Likes.init(this)
+        scope.launch { runCatching { Endpoints.probeAll() } }
     }
 
     companion object {

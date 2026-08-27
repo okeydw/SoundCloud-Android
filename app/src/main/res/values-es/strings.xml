@@ -6,14 +6,14 @@
     <string name="search_hint">Buscar pistas…</string>
     <string name="search_empty">No se encontró nada</string>
     <string name="search_idle">Escribe una consulta y busca</string>
-    <string name="wave_empty">Tu Ola está vacía por ahora — escucha algo primero</string>
+    <string name="wave_empty">Tu Ola está vacía por ahora - escucha algo primero</string>
     <string name="load_more">Mostrar más</string>
     <string name="error_network">Error de red. Comprueba tu conexión.</string>
-    <string name="login_explain">Inicia sesión con tu cuenta de SoundCloud — se abrirá el navegador. Vuelve a la aplicación cuando termines.</string>
+    <string name="login_explain">Inicia sesión con tu cuenta de SoundCloud - se abrirá el navegador. Vuelve a la aplicación cuando termines.</string>
     <string name="login_button">Iniciar sesión con SoundCloud</string>
     <string name="login_waiting">Esperando a que termines de iniciar sesión…</string>
     <string name="login_failed">No se pudo iniciar sesión</string>
-    <string name="login_timeout">Tiempo agotado — inténtalo de nuevo</string>
+    <string name="login_timeout">Tiempo agotado - inténtalo de nuevo</string>
     <string name="liked">Me gusta</string>
     <string name="downloads">Descargas</string>
     <string name="history">Historial</string>

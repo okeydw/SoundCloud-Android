@@ -11,6 +11,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -312,16 +313,41 @@ fun NowPlayingScreen(
     val shuffle = NowPlaying.shuffle
     val repeatMode = NowPlaying.repeatMode
     val position = NowPlaying.position
-    val duration = NowPlaying.duration
 
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableStateOf(0f) }
 
-    var waveform by remember { mutableStateOf<List<Float>?>(null) }
+    var fullTrack by remember(currentUrn) { mutableStateOf<Track?>(null) }
+    var streamHost by remember(currentUrn) { mutableStateOf<String?>(null) }
     LaunchedEffect(currentUrn) {
-        waveform = null
-        val url = NowPlaying.waveformUrl ?: return@LaunchedEffect
-        waveform = runCatching { Api.waveform(url) }.getOrNull()
+        val urn = currentUrn ?: return@LaunchedEffect
+        fullTrack = runCatching { Api.trackByUrn(urn) }.getOrNull()
+        val downloaded = Downloads.isDownloaded(urn)
+        if ((Prefs.streamDebug || Prefs.streamTags) && !downloaded) {
+            val info = Api.streamProbe(urn)
+            Logs.add("stream", info.replace("\n", " "))
+            streamHost = Regex("@([^ \\n]+)").find(info)?.groupValues?.get(1)
+            if (Prefs.streamDebug) {
+                android.util.Log.i("SCDStream", info)
+                android.widget.Toast.makeText(context, info, android.widget.Toast.LENGTH_LONG).show()
+            }
+        } else if (downloaded) {
+            streamHost = "offline"
+        }
+    }
+    val qualityTag = when {
+        Downloads.isDownloaded(currentUrn ?: "") -> "OFFLINE"
+        Prefs.star -> "HQ"
+        else -> "SQ"
+    }
+    val serverTag = streamHost?.split('.')?.take(2)?.joinToString(".")
+    val isGoPlus = fullTrack?.goPlus == true
+    val duration = NowPlaying.duration.takeIf { it > 0 } ?: (fullTrack?.duration ?: 0L)
+
+    var waveform by remember(currentUrn) { mutableStateOf<List<Float>?>(null) }
+    LaunchedEffect(currentUrn, fullTrack) {
+        val url = NowPlaying.waveformUrl ?: fullTrack?.waveform_url ?: return@LaunchedEffect
+        if (waveform == null) waveform = runCatching { Api.waveform(url) }.getOrNull()
     }
 
     val background = MaterialTheme.colorScheme.background
@@ -335,7 +361,7 @@ fun NowPlayingScreen(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        val immersive = Prefs.immersiveArtwork
+        val immersive = Prefs.immersiveArtwork && artworkUri != null
         Surface(
             Modifier.fillMaxSize(),
             color = Color.Transparent,
@@ -366,7 +392,7 @@ fun NowPlayingScreen(
                                 )
                             )
                     )
-                } else if (!immersive) {
+                } else {
                     Box(
                         Modifier
                             .fillMaxSize()
@@ -439,15 +465,17 @@ fun NowPlayingScreen(
                                 currentUrn?.let { urn ->
                                     scope.launch {
                                         val related = runCatching { Api.relatedTracks(urn) }.getOrNull() ?: return@launch
-                                        val cur = controller.currentMediaItem?.toTrackOrNull()
-                                        val list = (listOfNotNull(cur) + related.collection)
+                                        val curId = controller.currentMediaItem?.mediaId
+                                        val add = related.collection
                                             .distinctBy { it.urn }
-                                            .filter { !it.unavailable }
-                                        if (list.isNotEmpty()) {
+                                            .filter { it.urn != curId && !it.unavailable && !it.starLocked }
+                                        if (add.isNotEmpty()) {
                                             NowPlaying.autoContinue = true
-                                            controller.setMediaItems(list.map { it.toMediaItem() }, 0, controller.currentPosition)
-                                            controller.prepare()
-                                            controller.play()
+                                            val curIdx = controller.currentMediaItemIndex
+                                            if (controller.mediaItemCount > curIdx + 1) {
+                                                controller.removeMediaItems(curIdx + 1, controller.mediaItemCount)
+                                            }
+                                            controller.addMediaItems(add.map { it.toMediaItem() })
                                         }
                                     }
                                 }
@@ -531,6 +559,10 @@ fun NowPlayingScreen(
                                         .basicMarquee()
                                 } else Modifier,
                             )
+                            if (isGoPlus) {
+                                Spacer(Modifier.height(6.dp))
+                                StarTag()
+                            }
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 artist,
@@ -541,6 +573,16 @@ fun NowPlayingScreen(
                                     Modifier.clickable { onOpenArtist(artistUrn) }
                                 } else Modifier,
                             )
+                        }
+                        if (Prefs.streamTags) {
+                            Spacer(Modifier.width(8.dp))
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                StreamChip(qualityTag, titleColor)
+                                serverTag?.let { StreamChip(it, titleColor) }
+                            }
                         }
                     }
 
@@ -709,6 +751,20 @@ fun NowPlayingScreen(
             }
         }
     }
+}
+
+@Composable
+private fun StreamChip(text: String, color: Color) {
+    Text(
+        text,
+        color = color.copy(alpha = 0.9f),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        modifier = Modifier
+            .border(1.dp, color.copy(alpha = 0.4f), RoundedCornerShape(5.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }
 
 @Composable

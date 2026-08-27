@@ -6,14 +6,14 @@
     <string name="search_hint">搜索歌曲…</string>
     <string name="search_empty">未找到结果</string>
     <string name="search_idle">输入关键词开始搜索</string>
-    <string name="wave_empty">你的声浪还是空的——先去听点什么吧</string>
+    <string name="wave_empty">你的声浪还是空的 -先去听点什么吧</string>
     <string name="load_more">显示更多</string>
     <string name="error_network">网络错误，请检查连接。</string>
-    <string name="login_explain">使用 SoundCloud 账号登录——将打开浏览器，完成后请回到应用。</string>
+    <string name="login_explain">使用 SoundCloud 账号登录 -将打开浏览器，完成后请回到应用。</string>
     <string name="login_button">使用 SoundCloud 登录</string>
     <string name="login_waiting">等待在浏览器中完成登录…</string>
     <string name="login_failed">登录失败</string>
-    <string name="login_timeout">超时——请重试</string>
+    <string name="login_timeout">超时 -请重试</string>
     <string name="liked">已喜欢</string>
     <string name="downloads">下载</string>
     <string name="history">历史记录</string>

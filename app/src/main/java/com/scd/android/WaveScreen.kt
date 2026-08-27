@@ -2,6 +2,7 @@ package com.scd.android
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -153,15 +154,29 @@ fun WaveFeed(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
-                    AsyncImage(
-                        model = Api.artworkUrl(track.artwork_url, "t500x500"),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .matchParentSize()
-                            .clip(RoundedCornerShape(16.dp)),
-                        contentScale = ContentScale.Crop,
-                    )
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (track.artwork_url != null) {
+                        AsyncImage(
+                            model = Api.artworkUrl(track.artwork_url, "t500x500"),
+                            contentDescription = null,
+                            modifier = Modifier.matchParentSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    } else {
+                        Icon(
+                            painterResource(R.drawable.ic_music),
+                            null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(96.dp),
+                        )
+                    }
                     if (heartBurst > 0) {
                         key(heartBurst) { HeartBurst(liked = burstLiked) }
                     }

@@ -106,6 +106,7 @@ fun LibraryScreen(
     val context = LocalContext.current
     var view by remember { mutableStateOf<LibView>(LibView.Root) }
     var username by remember { mutableStateOf(Prefs.username) }
+    var avatar by remember { mutableStateOf<String?>(null) }
     var playlists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
     var likedPls by remember { mutableStateOf<List<Playlist>>(emptyList()) }
     var showSettings by remember { mutableStateOf(false) }
@@ -119,6 +120,13 @@ fun LibraryScreen(
         }
         if (!offline) {
             runCatching { Api.subscription() }.onSuccess { Prefs.saveStar(it.premium) }
+            runCatching { Api.me() }.onSuccess {
+                if (it.username.isNotEmpty()) {
+                    username = it.username
+                    Prefs.saveUsername(it.username)
+                }
+                avatar = it.avatar_url
+            }
         }
     }
 
@@ -138,6 +146,7 @@ fun LibraryScreen(
     if (showSettings) {
         SettingsScreen(
             username = username,
+            avatar = avatar,
             onBack = { showSettings = false },
             onLogout = {
                 showSettings = false
@@ -157,6 +166,22 @@ fun LibraryScreen(
                 Modifier.fillMaxWidth().padding(vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (avatar != null) {
+                        AsyncImage(
+                            model = Api.artworkUrl(avatar, "t120x120"),
+                            contentDescription = null,
+                            modifier = Modifier.matchParentSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    } else {
+                        Icon(painterResource(R.drawable.ic_user), null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         greeting(),
@@ -676,6 +701,7 @@ private fun LibTracks(
 @Composable
 fun SettingsScreen(
     username: String?,
+    avatar: String? = null,
     onBack: () -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -701,6 +727,7 @@ fun SettingsScreen(
                         2 -> R.string.tab_storage
                         3 -> R.string.tab_star
                         4 -> R.string.tab_about
+                        5 -> R.string.tab_logs
                         else -> R.string.settings
                     },
                 ),
@@ -721,6 +748,7 @@ fun SettingsScreen(
                 SettingsRow(R.drawable.ic_download, stringResource(R.string.tab_storage), stringResource(R.string.settings_storage_sub)) { section = 2 }
                 SettingsRow(R.drawable.ic_share, stringResource(R.string.tab_star), stringResource(R.string.settings_links_sub)) { section = 3 }
                 SettingsRow(R.drawable.ic_settings, stringResource(R.string.tab_about), stringResource(R.string.settings_system_sub)) { section = 4 }
+                SettingsRow(R.drawable.ic_history, stringResource(R.string.tab_logs), stringResource(R.string.settings_logs_sub)) { section = 5 }
             }
             return@Column
         }
@@ -733,6 +761,44 @@ fun SettingsScreen(
         ) {
             when (section) {
                 3 -> {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val intent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                    android.content.Intent(
+                                        android.provider.Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS,
+                                        android.net.Uri.parse("package:${ctx.packageName}"),
+                                    )
+                                } else {
+                                    android.content.Intent(
+                                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        android.net.Uri.parse("package:${ctx.packageName}"),
+                                    )
+                                }
+                                runCatching { ctx.startActivity(intent) }
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(painterResource(R.drawable.ic_wave), null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.open_links_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                stringResource(R.string.open_links_hint),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        Icon(
+                            painterResource(R.drawable.ic_chevron_down),
+                            null,
+                            modifier = Modifier.size(18.dp).rotate(-90f),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     val links = listOf(
                         Triple(R.drawable.ic_user, "Discord", "https://discord.gg/Au3ebtfYu3"),
                         Triple(R.drawable.ic_music, "Android · GitHub", "https://github.com/okeydw/SoundCloud-Android"),
@@ -784,7 +850,16 @@ fun SettingsScreen(
                             Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(painterResource(R.drawable.ic_user), null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (avatar != null) {
+                                AsyncImage(
+                                    model = Api.artworkUrl(avatar, "t120x120"),
+                                    contentDescription = null,
+                                    modifier = Modifier.matchParentSize(),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            } else {
+                                Icon(painterResource(R.drawable.ic_user), null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                         Spacer(Modifier.width(12.dp))
                         Column {
@@ -795,6 +870,15 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Star", Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                        Text(
+                            stringResource(if (Prefs.star) R.string.star_active else R.string.star_inactive),
+                            color = if (Prefs.star) androidx.compose.ui.graphics.Color(0xFFFF5500) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium,
+                        )
                     }
                     Spacer(Modifier.height(24.dp))
                     Button(
@@ -868,6 +952,39 @@ fun SettingsScreen(
                         stringResource(R.string.crossfade_hint),
                         Prefs.crossfade,
                     ) { Prefs.changeCrossfade(it) }
+
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitch(
+                        stringResource(R.string.stream_tags),
+                        stringResource(R.string.stream_tags_hint),
+                        Prefs.streamTags,
+                    ) { Prefs.changeStreamTags(it) }
+
+                    Spacer(Modifier.height(16.dp))
+                    Text(stringResource(R.string.accent_color), fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
+                        AccentPalette.colors.forEach { c ->
+                            val selected = Prefs.accent == c
+                            Box(
+                                Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(androidx.compose.ui.graphics.Color(c))
+                                    .clickable { Prefs.changeAccent(c) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (selected) {
+                                    Icon(
+                                        painterResource(R.drawable.ic_check),
+                                        null,
+                                        tint = androidx.compose.ui.graphics.Color.White,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 2 -> {
@@ -885,8 +1002,10 @@ fun SettingsScreen(
                     }
 
                     Spacer(Modifier.height(12.dp))
+                    val barTotal = (usedTracks + usedOther + free).toFloat().coerceAtLeast(1f)
+                    val trackWeight = if (usedTracks > 0) maxOf(usedTracks.toFloat(), barTotal * 0.03f) else 0f
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))) {
-                        if (usedTracks > 0) Box(Modifier.weight(usedTracks.toFloat()).height(12.dp).background(MaterialTheme.colorScheme.primary))
+                        if (trackWeight > 0f) Box(Modifier.weight(trackWeight).height(12.dp).background(MaterialTheme.colorScheme.primary))
                         if (usedOther > 0) Box(Modifier.weight(usedOther.toFloat()).height(12.dp).background(MaterialTheme.colorScheme.onSurfaceVariant))
                         if (free > 0) Box(Modifier.weight(free.toFloat()).height(12.dp).background(MaterialTheme.colorScheme.surfaceVariant))
                     }
@@ -920,6 +1039,47 @@ fun SettingsScreen(
                     }
                 }
 
+                5 -> {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${Logs.lines.size}",
+                            Modifier.weight(1f),
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        IconButton(onClick = {
+                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(android.content.Intent.EXTRA_TEXT, Logs.dump())
+                            }
+                            ctx.startActivity(android.content.Intent.createChooser(send, null))
+                        }) {
+                            Icon(painterResource(R.drawable.ic_share), null, modifier = Modifier.size(20.dp))
+                        }
+                        IconButton(onClick = { Logs.clear() }) {
+                            Icon(painterResource(R.drawable.ic_trash), null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (Logs.lines.isEmpty()) {
+                        Text(
+                            stringResource(R.string.logs_empty),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 24.dp),
+                        )
+                    } else {
+                        Logs.lines.forEach { line ->
+                            Text(
+                                line,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(vertical = 3.dp),
+                            )
+                        }
+                    }
+                }
+
                 else -> {
                     val pInfo = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0) }.getOrNull() }
                     val vName = pInfo?.versionName ?: "—"
@@ -930,6 +1090,14 @@ fun SettingsScreen(
                     InfoRow(stringResource(R.string.about_device), "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
                     InfoRow("Android", "${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
                     InfoRow("ABI", android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "-")
+                    InfoRow("API", Endpoints.apiBase.removePrefix("https://"))
+                    InfoRow("Stream", Endpoints.streamBase.removePrefix("https://"))
+                    Spacer(Modifier.height(12.dp))
+                    SettingSwitch(
+                        "Stream debug",
+                        "Показывать ответ стрим-сервера при открытии трека",
+                        Prefs.streamDebug,
+                    ) { Prefs.changeStreamDebug(it) }
                     Spacer(Modifier.height(20.dp))
                     Button(
                         onClick = {

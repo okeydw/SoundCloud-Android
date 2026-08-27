@@ -6,14 +6,14 @@
     <string name="search_hint">Titel suchen…</string>
     <string name="search_empty">Nichts gefunden</string>
     <string name="search_idle">Suchbegriff eingeben und suchen</string>
-    <string name="wave_empty">Deine Welle ist noch leer — hör zuerst etwas</string>
+    <string name="wave_empty">Deine Welle ist noch leer - hör zuerst etwas</string>
     <string name="load_more">Mehr anzeigen</string>
     <string name="error_network">Netzwerkfehler. Prüfe deine Verbindung.</string>
-    <string name="login_explain">Melde dich mit deinem SoundCloud-Konto an — der Browser wird geöffnet. Komm danach zurück in die App.</string>
+    <string name="login_explain">Melde dich mit deinem SoundCloud-Konto an - der Browser wird geöffnet. Komm danach zurück in die App.</string>
     <string name="login_button">Mit SoundCloud anmelden</string>
     <string name="login_waiting">Warte auf Abschluss der Anmeldung…</string>
     <string name="login_failed">Anmeldung fehlgeschlagen</string>
-    <string name="login_timeout">Zeit abgelaufen — versuch es erneut</string>
+    <string name="login_timeout">Zeit abgelaufen - versuch es erneut</string>
     <string name="liked">Favoriten</string>
     <string name="downloads">Downloads</string>
     <string name="history">Verlauf</string>

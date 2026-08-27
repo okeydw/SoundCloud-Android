@@ -6,14 +6,14 @@
     <string name="search_hint">Rechercher des titres…</string>
     <string name="search_empty">Aucun résultat</string>
     <string name="search_idle">Saisis une requête et lance la recherche</string>
-    <string name="wave_empty">Ta Vague est encore vide — écoute d\'abord quelque chose</string>
+    <string name="wave_empty">Ta Vague est encore vide - écoute d\'abord quelque chose</string>
     <string name="load_more">Afficher plus</string>
     <string name="error_network">Erreur réseau. Vérifie ta connexion.</string>
-    <string name="login_explain">Connecte-toi avec ton compte SoundCloud — le navigateur va s\'ouvrir. Reviens ensuite dans l\'application.</string>
+    <string name="login_explain">Connecte-toi avec ton compte SoundCloud - le navigateur va s\'ouvrir. Reviens ensuite dans l\'application.</string>
     <string name="login_button">Se connecter avec SoundCloud</string>
     <string name="login_waiting">En attente de la fin de la connexion…</string>
     <string name="login_failed">Échec de la connexion</string>
-    <string name="login_timeout">Délai dépassé — réessaie</string>
+    <string name="login_timeout">Délai dépassé - réessaie</string>
     <string name="liked">Titres likés</string>
     <string name="downloads">Téléchargements</string>
     <string name="history">Historique</string>

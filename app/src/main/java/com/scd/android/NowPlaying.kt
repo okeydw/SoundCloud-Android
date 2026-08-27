@@ -43,6 +43,9 @@ object PlaylistEvents {
 object NavEvents {
     var playlistUrn by mutableStateOf<String?>(null)
     var playlistTitle by mutableStateOf<String?>(null)
+    var pendingUrl by mutableStateOf<String?>(null)
+    var claimToken by mutableStateOf<String?>(null)
+    var sessionReady by mutableStateOf(false)
 
     fun openPlaylist(urn: String, title: String) {
         playlistTitle = title
@@ -52,5 +55,21 @@ object NavEvents {
     fun consume() {
         playlistUrn = null
         playlistTitle = null
+    }
+
+    fun openUrl(url: String) {
+        pendingUrl = url
+    }
+
+    fun consumeUrl() {
+        pendingUrl = null
+    }
+
+    fun claim(token: String) {
+        claimToken = token
+    }
+
+    fun consumeClaim() {
+        claimToken = null
     }
 }

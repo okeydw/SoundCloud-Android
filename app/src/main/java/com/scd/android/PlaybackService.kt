@@ -36,12 +36,35 @@ class PlaybackService : MediaSessionService() {
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
-        val dataSourceFactory =
+        val local = androidx.media3.datasource.DefaultDataSource.Factory(this)
+        val network =
             androidx.media3.datasource.DefaultDataSource.Factory(this, ScDataSource.Factory(Api.http))
+
+        val dataSourceFactory: androidx.media3.datasource.DataSource.Factory = runCatching {
+            val cache = MediaCache.get(this)
+            scope.launch { runCatching { MediaCache.prune() } }
+            val cached = androidx.media3.datasource.cache.CacheDataSource.Factory()
+                .setCache(cache)
+                .setUpstreamDataSourceFactory(network)
+                .setCacheKeyFactory { spec -> MediaCache.keyOf(spec.uri.toString()) }
+                .setFlags(androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+            Logs.add("player", "media cache on")
+            RoutingDataSource.Factory(local, cached)
+        }.getOrElse { e ->
+            Logs.add("player", "media cache off: ${e.javaClass.simpleName}: ${e.message}")
+            RoutingDataSource.Factory(local, network)
+        }
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(60_000, 180_000, 1_500, 3_000)
+            .setBackBuffer(30_000, true)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         val player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory),
             )
+            .setLoadControl(loadControl)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -78,6 +101,7 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         updateCustomLayout()
+        Logs.add("player", "service ready")
     }
 
     private inner class SessionCallback : MediaSession.Callback {

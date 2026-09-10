@@ -26,6 +26,10 @@ object Endpoints {
         "https://images.r2.relay.scnative.space",
     )
 
+    const val STREAM_STAR = "https://stream-star.scnative.space"
+    const val STORAGE_STAR = "https://storage-star.scnative.space"
+    const val STORAGE_MAIN = "https://storage.scnative.space"
+
     @Volatile
     var apiIndex = 0
         private set

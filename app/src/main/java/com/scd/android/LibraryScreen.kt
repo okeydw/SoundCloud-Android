@@ -42,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.ContentScale
@@ -83,13 +84,13 @@ private fun StarBadge() {
     Row(
         Modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(androidx.compose.ui.graphics.Color(0xFFFF5500))
+            .background(MaterialTheme.colorScheme.primary)
             .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             "★ " + stringResource(R.string.star_badge),
-            color = androidx.compose.ui.graphics.Color.White,
+            color = MaterialTheme.colorScheme.onPrimary,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
         )
@@ -106,7 +107,7 @@ fun LibraryScreen(
     val context = LocalContext.current
     var view by remember { mutableStateOf<LibView>(LibView.Root) }
     var username by remember { mutableStateOf(Prefs.username) }
-    var avatar by remember { mutableStateOf<String?>(null) }
+    var avatar by remember { mutableStateOf(Prefs.avatarUrl) }
     var playlists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
     var likedPls by remember { mutableStateOf<List<Playlist>>(emptyList()) }
     var showSettings by remember { mutableStateOf(false) }
@@ -126,6 +127,7 @@ fun LibraryScreen(
                     Prefs.saveUsername(it.username)
                 }
                 avatar = it.avatar_url
+                Prefs.saveAvatar(it.avatar_url)
             }
         }
     }
@@ -261,8 +263,8 @@ fun LibraryScreen(
             play = play,
             dimUndownloaded = offline,
             downloadAll = !offline,
-            loader = { page ->
-                val res = Api.likedTracks(page, fresh = page == 0 && !offline)
+            loader = { page, fresh ->
+                val res = Api.likedTracks(page, fresh = fresh && !offline)
                 Likes.seed(res.collection)
                 res.collection to res.has_more
             },
@@ -272,7 +274,7 @@ fun LibraryScreen(
             title = stringResource(R.string.downloads),
             onBack = { view = LibView.Root },
             play = play,
-            loader = { page -> if (page == 0) Downloads.tracks() to false else emptyList<Track>() to false },
+            loader = { page, _ -> if (page == 0) Downloads.tracks() to false else emptyList<Track>() to false },
         )
 
         LibView.HistoryView -> LibTracks(
@@ -280,7 +282,7 @@ fun LibraryScreen(
             onBack = { view = LibView.Root },
             play = play,
             dimUndownloaded = offline,
-            loader = { page ->
+            loader = { page, _ ->
                 val res = Api.history(offset = page * 50, limit = 50)
                 val batch = res.collection.map { it.toTrack() }.distinctBy { it.urn }
                 batch to (page * 50 + res.collection.size < res.total)
@@ -292,8 +294,8 @@ fun LibraryScreen(
             onBack = { view = LibView.Root },
             play = play,
             dimUndownloaded = offline,
-            loader = { page ->
-                val res = Api.playlistTracks(v.urn, page, fresh = page == 0 && !offline)
+            loader = { page, fresh ->
+                val res = Api.playlistTracks(v.urn, page, fresh = fresh && !offline)
                 res.collection to res.has_more
             },
             downloadAll = !offline,
@@ -318,7 +320,7 @@ fun LibraryScreen(
             play = play,
             dimUndownloaded = offline,
             downloadAll = !offline,
-            loader = { page ->
+            loader = { page, _ ->
                 val res = Api.userTracks(v.urn, page)
                 res.collection to res.has_more
             },
@@ -452,7 +454,7 @@ private fun LibTracks(
     title: String,
     onBack: () -> Unit,
     play: (List<Track>, Track) -> Unit,
-    loader: suspend (Int) -> Pair<List<Track>, Boolean>,
+    loader: suspend (Int, Boolean) -> Pair<List<Track>, Boolean>,
     downloadAll: Boolean = false,
     dimUndownloaded: Boolean = false,
     onRename: (suspend (String) -> Unit)? = null,
@@ -478,7 +480,7 @@ private fun LibTracks(
             loading = true
             error = null
             try {
-                val (batch, more) = loader(p)
+                val (batch, more) = loader(p, false)
                 items = if (p == 0) batch else (items + batch).distinctBy { it.urn }
                 page = p
                 hasMore = more
@@ -486,6 +488,16 @@ private fun LibTracks(
                 error = e.message
             } finally {
                 loading = false
+            }
+
+            if (p == 0 && !Prefs.offline) {
+                runCatching { loader(0, true) }.onSuccess { (batch, more) ->
+                    if (page == 0 && batch.isNotEmpty()) {
+                        items = batch
+                        hasMore = more
+                        error = null
+                    }
+                }
             }
         }
     }
@@ -599,7 +611,7 @@ private fun LibTracks(
                                 var more = hasMore
                                 while (more) {
                                     p++
-                                    val (batch, hasNext) = runCatching { loader(p) }.getOrNull() ?: break
+                                    val (batch, hasNext) = runCatching { loader(p, false) }.getOrNull() ?: break
                                     all += batch
                                     more = hasNext
                                 }
@@ -709,14 +721,14 @@ fun SettingsScreen(
     val ctx = LocalContext.current
     var section by remember { mutableStateOf(-1) }
     val scope = rememberCoroutineScope()
-    BackHandler { if (section >= 0) section = -1 else onBack() }
+    BackHandler { if (section == 6) section = 1 else if (section >= 0) section = -1 else onBack() }
 
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { if (section >= 0) section = -1 else onBack() }) {
+            IconButton(onClick = { if (section == 6) section = 1 else if (section >= 0) section = -1 else onBack() }) {
                 Icon(painterResource(R.drawable.ic_arrow_back), null)
             }
             Text(
@@ -728,6 +740,7 @@ fun SettingsScreen(
                         3 -> R.string.tab_star
                         4 -> R.string.tab_about
                         5 -> R.string.tab_logs
+                        6 -> R.string.tab_advanced
                         else -> R.string.settings
                     },
                 ),
@@ -876,7 +889,7 @@ fun SettingsScreen(
                         Text("Star", Modifier.weight(1f), fontWeight = FontWeight.Medium)
                         Text(
                             stringResource(if (Prefs.star) R.string.star_active else R.string.star_inactive),
-                            color = if (Prefs.star) androidx.compose.ui.graphics.Color(0xFFFF5500) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (Prefs.star) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.Medium,
                         )
                     }
@@ -946,6 +959,13 @@ fun SettingsScreen(
                         Prefs.immersiveArtwork,
                     ) { Prefs.changeImmersiveArtwork(it) }
 
+                    Spacer(Modifier.height(16.dp))
+                    SettingsRow(
+                        R.drawable.ic_settings,
+                        stringResource(R.string.tab_advanced),
+                        stringResource(R.string.settings_advanced_sub),
+                    ) { section = 6 }
+
                     Spacer(Modifier.height(8.dp))
                     SettingSwitch(
                         stringResource(R.string.crossfade),
@@ -991,10 +1011,12 @@ fun SettingsScreen(
                     val downloadedSet = Downloads.downloaded
                     val tracks = Downloads.tracks()
                     val usedTracks = remember(downloadedSet) { tracks.sumOf { Downloads.fileFor(it.urn).length() } }
+                    var cacheBump by remember { mutableStateOf(0) }
+                    val cacheBytes = remember(cacheBump) { CacheTools.sizeBytes(ctx) }
                     val stat = remember { runCatching { android.os.StatFs(ctx.filesDir.path) }.getOrNull() }
                     val total = stat?.totalBytes ?: 0L
                     val free = stat?.availableBytes ?: 0L
-                    val usedOther = (total - free - usedTracks).coerceAtLeast(0L)
+                    val usedOther = (total - free - usedTracks - cacheBytes).coerceAtLeast(0L)
 
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.storage_downloaded), Modifier.weight(1f), fontWeight = FontWeight.Medium)
@@ -1002,17 +1024,80 @@ fun SettingsScreen(
                     }
 
                     Spacer(Modifier.height(12.dp))
-                    val barTotal = (usedTracks + usedOther + free).toFloat().coerceAtLeast(1f)
-                    val trackWeight = if (usedTracks > 0) maxOf(usedTracks.toFloat(), barTotal * 0.03f) else 0f
+                    val barTotal = (usedTracks + cacheBytes + usedOther + free).toFloat().coerceAtLeast(1f)
+                    val minSlice = barTotal * 0.03f
+                    val trackWeight = if (usedTracks > 0) maxOf(usedTracks.toFloat(), minSlice) else 0f
+                    val cacheWeight = if (cacheBytes > 0) maxOf(cacheBytes.toFloat(), minSlice) else 0f
+                    val cacheColor = MaterialTheme.colorScheme.tertiary
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))) {
                         if (trackWeight > 0f) Box(Modifier.weight(trackWeight).height(12.dp).background(MaterialTheme.colorScheme.primary))
+                        if (cacheWeight > 0f) Box(Modifier.weight(cacheWeight).height(12.dp).background(cacheColor))
                         if (usedOther > 0) Box(Modifier.weight(usedOther.toFloat()).height(12.dp).background(MaterialTheme.colorScheme.onSurfaceVariant))
                         if (free > 0) Box(Modifier.weight(free.toFloat()).height(12.dp).background(MaterialTheme.colorScheme.surfaceVariant))
                     }
                     Spacer(Modifier.height(10.dp))
                     StorageLegend(MaterialTheme.colorScheme.primary, stringResource(R.string.storage_used_tracks), fmtBytes(usedTracks))
+                    StorageLegend(cacheColor, stringResource(R.string.storage_cache), fmtBytes(cacheBytes))
                     StorageLegend(MaterialTheme.colorScheme.onSurfaceVariant, stringResource(R.string.storage_other), fmtBytes(usedOther))
                     StorageLegend(MaterialTheme.colorScheme.surfaceVariant, stringResource(R.string.storage_free), fmtBytes(free))
+
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        stringResource(R.string.storage_cache_hint),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+
+                    Spacer(Modifier.height(4.dp))
+                    var limitOpen by remember { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.cache_limit), Modifier.weight(1f))
+                        Box {
+                            TextButton(onClick = { limitOpen = true }) {
+                                Text(cacheSizeLabel(Prefs.cacheLimit))
+                                Icon(painterResource(R.drawable.ic_chevron_down), null, modifier = Modifier.size(18.dp))
+                            }
+                            DropdownMenu(expanded = limitOpen, onDismissRequest = { limitOpen = false }) {
+                                CacheLimits.sizes.forEach { value ->
+                                    DropdownMenuItem(
+                                        text = { Text(cacheSizeLabel(value)) },
+                                        onClick = {
+                                            limitOpen = false
+                                            if (Prefs.cacheLimit != value) Prefs.changeCacheLimit(value)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    var keepOpen by remember { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.cache_keep), Modifier.weight(1f))
+                        Box {
+                            TextButton(onClick = { keepOpen = true }) {
+                                Text(cacheDaysLabel(Prefs.cacheDays))
+                                Icon(painterResource(R.drawable.ic_chevron_down), null, modifier = Modifier.size(18.dp))
+                            }
+                            DropdownMenu(expanded = keepOpen, onDismissRequest = { keepOpen = false }) {
+                                CacheLimits.days.forEach { value ->
+                                    DropdownMenuItem(
+                                        text = { Text(cacheDaysLabel(value)) },
+                                        onClick = {
+                                            keepOpen = false
+                                            if (Prefs.cacheDays != value) {
+                                                Prefs.changeCacheDays(value)
+                                                App.scope.launch {
+                                                    MediaCache.prune()
+                                                    cacheBump++
+                                                }
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     Spacer(Modifier.height(16.dp))
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1021,13 +1106,46 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(8.dp))
                     SettingSwitch(
+                        title = stringResource(R.string.hq_streaming),
+                        hint = if (Prefs.star) {
+                            stringResource(R.string.hq_streaming_hint)
+                        } else {
+                            stringResource(R.string.hq_streaming_locked)
+                        },
+                        checked = Prefs.star && Prefs.hqStreaming,
+                        enabled = Prefs.star,
+                    ) { Prefs.changeHqStreaming(it) }
+
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitch(
                         stringResource(R.string.play_blocked),
                         stringResource(R.string.play_blocked_hint),
                         Prefs.playBlocked,
                     ) { Prefs.changePlayBlocked(it) }
 
+                    Spacer(Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                CacheTools.clear(ctx)
+                                cacheBump++
+                                android.widget.Toast.makeText(
+                                    ctx,
+                                    ctx.getString(R.string.storage_cache_cleared),
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        enabled = cacheBytes > 0,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                        ),
+                    ) { Text(stringResource(R.string.storage_cache_clear)) }
+
                     if (tracks.isNotEmpty()) {
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(8.dp))
                         Button(
                             onClick = { scope.launch { tracks.forEach { runCatching { Downloads.remove(it.urn) } } } },
                             modifier = Modifier.fillMaxWidth(),
@@ -1037,6 +1155,193 @@ fun SettingsScreen(
                             ),
                         ) { Text(stringResource(R.string.clear_downloads)) }
                     }
+                }
+
+                6 -> {
+                    var cropSource by remember { mutableStateOf<android.net.Uri?>(null) }
+                    val pickImage = androidx.activity.compose.rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+                    ) { uri -> if (uri != null) cropSource = uri }
+
+                    cropSource?.let { uri ->
+                        CropDialog(
+                            source = uri,
+                            onDismiss = { cropSource = null },
+                            onResult = { ok ->
+                                cropSource = null
+                                if (!ok) {
+                                    android.widget.Toast.makeText(
+                                        ctx,
+                                        ctx.getString(R.string.background_failed),
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            },
+                        )
+                    }
+
+                    Text(stringResource(R.string.background_image), fontWeight = FontWeight.Medium)
+                    Text(
+                        stringResource(R.string.background_image_hint),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.OutlinedButton(onClick = { pickImage.launch("image/*") }) {
+                            Text(
+                                stringResource(
+                                    if (Prefs.backgroundImage == null) R.string.background_choose
+                                    else R.string.background_replace
+                                )
+                            )
+                        }
+                        if (Prefs.backgroundImage != null) {
+                            androidx.compose.material3.TextButton(
+                                onClick = { BackgroundImage.clear(ctx) },
+                            ) { Text(stringResource(R.string.background_remove)) }
+                        }
+                    }
+
+                    if (Prefs.backgroundImage != null) {
+                        Spacer(Modifier.height(8.dp))
+                        SettingSwitch(
+                            title = stringResource(R.string.background_blur),
+                            hint = if (BlurSupport.available) {
+                                stringResource(R.string.background_blur_hint)
+                            } else {
+                                stringResource(R.string.background_blur_unsupported)
+                            },
+                            checked = Prefs.backgroundBlur && BlurSupport.available,
+                            enabled = BlurSupport.available,
+                        ) { Prefs.changeBackgroundBlur(it) }
+
+                        if (Prefs.backgroundBlur && BlurSupport.available) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                stringResource(R.string.background_blur_amount) +
+                                    "  ${Prefs.backgroundBlurRadius.toInt()}",
+                                fontWeight = FontWeight.Medium,
+                            )
+                            androidx.compose.material3.Slider(
+                                value = Prefs.backgroundBlurRadius,
+                                onValueChange = { Prefs.changeBackgroundBlurRadius(it) },
+                                valueRange = 0f..60f,
+                            )
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+                        Text(stringResource(R.string.background_dim), fontWeight = FontWeight.Medium)
+                        androidx.compose.material3.Slider(
+                            value = Prefs.backgroundDim,
+                            onValueChange = { Prefs.changeBackgroundDim(it) },
+                            valueRange = 0.2f..0.95f,
+                        )
+                    }
+
+                    Spacer(Modifier.height(20.dp))
+                    Text(
+                        stringResource(R.string.header_alpha) +
+                            "  ${(Prefs.headerAlpha * 100).toInt()}%",
+                        fontWeight = FontWeight.Medium,
+                    )
+                    androidx.compose.material3.Slider(
+                        value = Prefs.headerAlpha,
+                        onValueChange = { Prefs.changeHeaderAlpha(it) },
+                        valueRange = 0f..1f,
+                    )
+                    Text(
+                        stringResource(R.string.footer_alpha) +
+                            "  ${(Prefs.footerAlpha * 100).toInt()}%",
+                        fontWeight = FontWeight.Medium,
+                    )
+                    androidx.compose.material3.Slider(
+                        value = Prefs.footerAlpha,
+                        onValueChange = { Prefs.changeFooterAlpha(it) },
+                        valueRange = 0f..1f,
+                    )
+
+                    Spacer(Modifier.height(20.dp))
+                    Text(stringResource(R.string.accent_custom), fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(4.dp))
+                    RgbPicker(
+                        color = Prefs.accent,
+                        onChange = { Prefs.changeAccent(it) },
+                        onReset = { Prefs.changeAccent(AccentPalette.DEFAULT) },
+                    )
+
+                    Spacer(Modifier.height(20.dp))
+                    SettingSwitch(
+                        title = stringResource(R.string.text_color_custom),
+                        hint = stringResource(R.string.text_color_hint),
+                        checked = Prefs.textColor != 0,
+                    ) { on ->
+                        Prefs.changeTextColor(if (on) 0xFFFFFFFF.toInt() else 0)
+                    }
+                    if (Prefs.textColor != 0) {
+                        Spacer(Modifier.height(4.dp))
+                        RgbPicker(
+                            color = Prefs.textColor,
+                            onChange = { Prefs.changeTextColor(it) },
+                            onReset = { Prefs.changeTextColor(0) },
+                        )
+                    }
+
+                    Spacer(Modifier.height(24.dp))
+                    Text(stringResource(R.string.theme_share), fontWeight = FontWeight.Medium)
+                    Text(
+                        stringResource(R.string.theme_share_hint),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+
+                    val exportTheme = androidx.activity.compose.rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts
+                            .CreateDocument("application/json"),
+                    ) { uri ->
+                        if (uri != null) {
+                            scope.launch {
+                                val ok = ThemeIO.export(ctx, uri)
+                                android.widget.Toast.makeText(
+                                    ctx,
+                                    ctx.getString(if (ok) R.string.theme_exported else R.string.theme_failed),
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                    }
+                    val importTheme = androidx.activity.compose.rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+                    ) { uri ->
+                        if (uri != null) {
+                            scope.launch {
+                                val ok = ThemeIO.import(ctx, uri)
+                                android.widget.Toast.makeText(
+                                    ctx,
+                                    ctx.getString(if (ok) R.string.theme_imported else R.string.theme_failed),
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { exportTheme.launch("scd-theme.json") },
+                        ) { Text(stringResource(R.string.theme_export)) }
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = { importTheme.launch("application/json") },
+                        ) { Text(stringResource(R.string.theme_import)) }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        stringResource(R.string.theme_discord),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.clickable { section = 3 },
+                    )
                 }
 
                 5 -> {
@@ -1165,15 +1470,102 @@ private fun SettingsRow(icon: Int, title: String, subtitle: String, onClick: () 
 }
 
 @Composable
-private fun SettingSwitch(title: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SettingSwitch(
+    title: String,
+    hint: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onChange: (Boolean) -> Unit,
+) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f).alpha(if (enabled) 1f else 0.5f)) {
             Text(title, fontWeight = FontWeight.Medium)
             Text(hint, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, enabled = enabled, onCheckedChange = onChange)
     }
 }
+
+@Composable
+private fun RgbPicker(color: Int, onChange: (Int) -> Unit, onReset: () -> Unit) {
+    val r = (color shr 16) and 0xFF
+    val g = (color shr 8) and 0xFF
+    val b = color and 0xFF
+
+    fun pack(red: Int, green: Int, blue: Int): Int =
+        (0xFF shl 24) or (red shl 16) or (green shl 8) or blue
+
+    val hex = String.format("%02X%02X%02X", r, g, b)
+    var typed by remember(hex) { mutableStateOf(hex) }
+
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(androidx.compose.ui.graphics.Color(pack(r, g, b)))
+            )
+            Spacer(Modifier.width(10.dp))
+            OutlinedTextField(
+                value = typed,
+                onValueChange = { raw ->
+                    val clean = raw.trimStart('#').filter { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
+                        .take(6)
+                        .uppercase()
+                    typed = clean
+                    if (clean.length == 6) {
+                        runCatching { clean.toInt(16) }.getOrNull()?.let { rgb ->
+                            onChange(pack((rgb shr 16) and 0xFF, (rgb shr 8) and 0xFF, rgb and 0xFF))
+                        }
+                    }
+                },
+                prefix = { Text("#") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onReset) { Text(stringResource(R.string.color_reset)) }
+        }
+        ColorSlider(stringResource(R.string.color_red), r) { onChange(pack(it, g, b)) }
+        ColorSlider(stringResource(R.string.color_green), g) { onChange(pack(r, it, b)) }
+        ColorSlider(stringResource(R.string.color_blue), b) { onChange(pack(r, g, it)) }
+    }
+}
+
+@Composable
+private fun ColorSlider(label: String, value: Int, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(64.dp),
+        )
+        androidx.compose.material3.Slider(
+            value = value.toFloat(),
+            onValueChange = { onChange(it.toInt().coerceIn(0, 255)) },
+            valueRange = 0f..255f,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "$value",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(32.dp),
+        )
+    }
+}
+
+@Composable
+private fun cacheSizeLabel(value: Long): String =
+    if (value == CacheLimits.UNLIMITED) stringResource(R.string.cache_unlimited)
+    else stringResource(R.string.cache_gb, (value / (1024L * 1024L * 1024L)).toInt())
+
+@Composable
+private fun cacheDaysLabel(value: Int): String =
+    if (value == CacheLimits.FOREVER) stringResource(R.string.cache_forever)
+    else stringResource(R.string.cache_days, value)
 
 @Composable
 private fun StorageLegend(color: androidx.compose.ui.graphics.Color, label: String, value: String) {

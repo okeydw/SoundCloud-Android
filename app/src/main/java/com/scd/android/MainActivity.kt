@@ -20,6 +20,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -198,11 +201,30 @@ class MainActivity : ComponentActivity() {
         setContent {
             val base = if (isAppDark()) DarkColors else LightColors
             val accent = Color(Prefs.accent)
-            MaterialTheme(
-                colorScheme = base.copy(primary = accent, secondary = accent),
-            ) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Root(controllerState.value)
+            var scheme = base.copy(primary = accent, secondary = accent)
+            if (Prefs.textColor != 0) {
+                val text = Color(Prefs.textColor)
+                scheme = scheme.copy(
+                    onBackground = text,
+                    onSurface = text,
+                    onSurfaceVariant = text.copy(alpha = 0.7f),
+                )
+            }
+            MaterialTheme(colorScheme = scheme) {
+                val customBackground = Prefs.backgroundImage != null
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background),
+                ) {
+                    AppBackground()
+                    Surface(
+                        Modifier.fillMaxSize(),
+                        color = if (customBackground) Color.Transparent else MaterialTheme.colorScheme.background,
+                        contentColor = MaterialTheme.colorScheme.onBackground,
+                    ) {
+                        Root(controllerState.value)
+                    }
                 }
             }
         }
@@ -410,6 +432,9 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             ) {
                 if (player.isPlaying) streamRetries = 0
                 NowPlaying.sync(controller)
+                if (player.playbackState == androidx.media3.common.Player.STATE_READY) {
+                    retryIfSnippet(controller)
+                }
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -425,8 +450,11 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                     val pos = controller.currentPosition
                     val rebuilt = (0 until controller.mediaItemCount).map { i ->
                         val mi = controller.getMediaItemAt(i)
-                        if (Downloads.isDownloaded(mi.mediaId)) mi
-                        else mi.buildUpon().setUri(Api.streamUrl(mi.mediaId)).build()
+                        if (Downloads.isDownloaded(mi.mediaId)) {
+                            mi
+                        } else {
+                            mi.buildUpon().setUri(Api.streamUrl(mi.mediaId)).build()
+                        }
                     }
                     controller.setMediaItems(rebuilt, idx, pos)
                     controller.prepare()
@@ -560,6 +588,9 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                 page = res.page
                 hasMore = res.has_more
                 searched = true
+                if (res.has_more) {
+                    App.scope.launch { runCatching { Api.searchTracks(q, res.page + 1) } }
+                }
             } catch (e: Exception) {
                 handleError(e)
             } finally {
@@ -749,12 +780,29 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = if (Prefs.backgroundImage != null) {
+            Color.Transparent
+        } else {
+            MaterialTheme.colorScheme.background
+        },
+        topBar = {
+            if (Prefs.headerAlpha < 1f) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .windowInsetsTopHeight(WindowInsets.statusBars)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = Prefs.headerAlpha))
+                )
+            }
+        },
         bottomBar = {
             Column {
                 PlayerBar(controller, onExpand = { showPlayer = true })
                 if (!Prefs.offline) {
-                    NavigationBar {
+                    NavigationBar(
+                        containerColor = androidx.compose.material3.NavigationBarDefaults
+                            .containerColor.copy(alpha = Prefs.footerAlpha),
+                    ) {
                         NavigationBarItem(
                             selected = tab == Tab.Search,
                             onClick = { tab = Tab.Search; openArtist = null; openPlaylist = null },
@@ -1388,15 +1436,50 @@ fun StarTag() {
     Box(
         Modifier
             .clip(RoundedCornerShape(4.dp))
-            .background(Color(0xFFFF5500))
+            .background(MaterialTheme.colorScheme.primary)
             .padding(horizontal = 5.dp, vertical = 1.dp),
     ) {
         Text(
             "★ " + stringResource(R.string.star_badge),
-            color = Color.White,
+            color = MaterialTheme.colorScheme.onPrimary,
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
         )
+    }
+}
+
+@Composable
+fun TrackArtwork(
+    url: String?,
+    size: androidx.compose.ui.unit.Dp,
+    corner: androidx.compose.ui.unit.Dp = 6.dp,
+) {
+    Box(
+        Modifier
+            .size(size)
+            .clip(RoundedCornerShape(corner))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        var failed by remember(url) { mutableStateOf(false) }
+        if (url.isNullOrEmpty() || failed) {
+            Icon(
+                painterResource(R.drawable.ic_music),
+                null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(size * 0.45f),
+            )
+        } else {
+            AsyncImage(
+                model = url,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+                onState = { state ->
+                    failed = state is coil.compose.AsyncImagePainter.State.Error
+                },
+            )
+        }
     }
 }
 
@@ -1420,15 +1503,7 @@ fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box {
-            AsyncImage(
-                model = Api.artworkUrl(track.artwork_url, "t120x120"),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
+            TrackArtwork(Api.artworkUrl(track.artwork_url, "t120x120"), 52.dp)
             if (dimmed && !track.unavailable) {
                 Box(
                     Modifier
@@ -1536,8 +1611,58 @@ fun EqualizerBars(playing: Boolean, color: Color) {
     }
 }
 
+private val snippetHandled = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+/**
+ * Сервер иногда отдаёт превью вместо трека — ровно 10 или 30 секунд.
+ * Ловим это по расхождению с длительностью из API и переигрываем через hq.
+ */
+private fun retryIfSnippet(controller: MediaController) {
+    val item = controller.currentMediaItem ?: return
+    val urn = item.mediaId.takeIf { it.isNotEmpty() } ?: return
+    if (Downloads.isDownloaded(urn)) return
+    if (!Prefs.star || !Prefs.hqStreaming) return
+    if (urn in snippetHandled) return
+
+    val expected = item.mediaMetadata.extras?.getLong("duration") ?: 0L
+    val actual = controller.duration
+    if (expected <= 45_000L || actual <= 0L) return
+    if (actual >= expected - 5_000L) return
+
+    val snippet = kotlin.math.abs(actual - 10_000L) < 1_500L ||
+        kotlin.math.abs(actual - 30_000L) < 1_500L
+    if (!snippet) return
+
+    snippetHandled.add(urn)
+    Logs.add("player", "snippet ${actual / 1000}s vs ${expected / 1000}s → retry via hq")
+    ScDataSource.forceHq(urn, true)
+
+    val index = controller.currentMediaItemIndex
+    controller.replaceMediaItem(index, item.buildUpon().build())
+    controller.prepare()
+    controller.play()
+
+    App.scope.launch {
+        kotlinx.coroutines.delay(30_000)
+        val stillStuck = withContext(Dispatchers.Main) {
+            controller.currentMediaItem?.mediaId == urn && !controller.isPlaying
+        }
+        if (stillStuck) {
+            Logs.add("player", "hq retry timed out → back to normal path")
+            ScDataSource.forceHq(urn, false)
+            withContext(Dispatchers.Main) {
+                val i = controller.currentMediaItemIndex
+                controller.currentMediaItem?.let { controller.replaceMediaItem(i, it.buildUpon().build()) }
+                controller.prepare()
+                controller.play()
+            }
+        }
+    }
+}
+
 fun Track.toMediaItem(): MediaItem {
     val local = if (Downloads.isDownloaded(urn)) Downloads.fileFor(urn) else null
+    val gp = goPlus
     return MediaItem.Builder()
         .setMediaId(urn)
         .setUri(local?.toUri() ?: Api.streamUrl(urn).toUri())
@@ -1553,6 +1678,7 @@ fun Track.toMediaItem(): MediaItem {
                         putString("waveform_url", waveform_url)
                         putString("permalink_url", permalink_url)
                         putLong("duration", duration)
+                        putBoolean("go_plus", gp)
                     }
                 )
                 .build()

@@ -19,6 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop версия</a>]</b><br>
 <b>Неофициальный клиент SoundCloud для Android</b><br>
 Без рекламы · Без капчи · Без цензуры · Доступно в России
 </p>
@@ -38,12 +39,6 @@
 <img src="https://img.shields.io/badge/Скачать_APK-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"/>
 </a>
 </p>
-
----
-
-> [!WARNING]
-> ⚠️ **Из-за систем безопасности основного API и SounCloud при входе вас может выкинуть из другой сессии.** Если вы залогинены на другом устройстве (например в десктоп-клиенте), вход здесь может «отвязать» ту сессию, и наоборот. Это ограничение бэкенда, а не бага приложения - просто войдите заново там, где нужно.
-
 
 ---
 
@@ -85,6 +80,8 @@
 ---
 
 ## Скриншоты
+
+> Фон, цвет текста и тему можно менять под себя - своя картинка на фон, RGB-палитра и готовые темы.
 
 <p align="center">
 <img src="docs/screenshots/wave.png" width="24%" />

@@ -116,7 +116,10 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
     var dragTotal by remember { mutableStateOf(0f) }
     val liked = currentUrn != null && Likes.isLiked(currentUrn)
 
-    Surface(color = barColor, contentColor = MaterialTheme.colorScheme.onSurface) {
+    Surface(
+        color = barColor.copy(alpha = barColor.alpha * Prefs.footerAlpha),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -241,15 +244,7 @@ private fun MiniContent(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(
-            model = artworkUri,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
+        TrackArtwork(artworkUri, 40.dp, 4.dp)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             if (marquee) {
@@ -344,10 +339,14 @@ fun NowPlayingScreen(
     val isGoPlus = fullTrack?.goPlus == true
     val duration = NowPlaying.duration.takeIf { it > 0 } ?: (fullTrack?.duration ?: 0L)
 
-    var waveform by remember(currentUrn) { mutableStateOf<List<Float>?>(null) }
+    var waveform by remember(currentUrn) { mutableStateOf(WaveCache.get(currentUrn)) }
     LaunchedEffect(currentUrn, fullTrack) {
+        if (waveform != null) return@LaunchedEffect
+        val urn = currentUrn ?: return@LaunchedEffect
         val url = NowPlaying.waveformUrl ?: fullTrack?.waveform_url ?: return@LaunchedEffect
-        if (waveform == null) waveform = runCatching { Api.waveform(url) }.getOrNull()
+        val loaded = runCatching { Api.waveform(url) }.getOrNull() ?: return@LaunchedEffect
+        WaveCache.put(urn, loaded)
+        if (currentUrn == urn) waveform = loaded
     }
 
     val background = MaterialTheme.colorScheme.background
@@ -562,6 +561,22 @@ fun NowPlayingScreen(
                             if (isGoPlus) {
                                 Spacer(Modifier.height(6.dp))
                                 StarTag()
+                            }
+                            if (StreamStatus.isProtected(currentUrn)) {
+                                Spacer(Modifier.height(6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(
+                                        Modifier.size(12.dp),
+                                        strokeWidth = 1.5.dp,
+                                        color = subColor,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        stringResource(R.string.stream_protected),
+                                        color = subColor,
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
                             }
                             Spacer(Modifier.height(4.dp))
                             Text(

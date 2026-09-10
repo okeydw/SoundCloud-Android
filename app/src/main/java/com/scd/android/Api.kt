@@ -59,9 +59,15 @@ object Api {
 
     fun initHttp(context: Context) {
         if (::http.isInitialized) return
-        val cache = Cache(File(context.cacheDir, "http"), 50L * 1024 * 1024)
+        ScDataSource.cacheDir = File(context.cacheDir, "goplus").apply { mkdirs() }
+        val cache = Cache(File(context.cacheDir, "http"), 300L * 1024 * 1024)
+        val dispatcher = okhttp3.Dispatcher().apply {
+            maxRequests = 96
+            maxRequestsPerHost = 24
+        }
         http = OkHttpClient.Builder()
             .cache(cache)
+            .dispatcher(dispatcher)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .addInterceptor(NetMonitor.offlineInterceptor(context))
@@ -78,7 +84,8 @@ object Api {
                             path.startsWith("/users/") ||
                             path.startsWith("/me/likes") ||
                             path.startsWith("/me/playlists")
-                        ) -> 86400
+                        ) -> 604800
+                    isApi && (path.startsWith("/tracks") || path.startsWith("/history")) -> 3600
                     isApi -> 60
                     else -> null
                 }
@@ -409,14 +416,18 @@ object Api {
         http.newCall(req).execute().use { }
     }
 
-    fun streamUrl(urn: String, hq: Boolean = false): String {
+    fun streamUrl(urn: String, hq: Boolean = false, goPlus: Boolean = false): String {
+        val base = if (goPlus && Prefs.star) Endpoints.STREAM_STAR else STREAM_BASE
         val params = buildList {
             if (hq) add("hq=true")
             sessionId?.let { add("session_id=${enc(it)}") }
         }
         val qs = if (params.isEmpty()) "" else "?" + params.joinToString("&")
-        return "$STREAM_BASE/stream/${enc(urn)}$qs"
+        return "$base/stream/${enc(urn)}$qs"
     }
+
+    fun parseDownload(body: String): DownloadResponse? =
+        runCatching { json.decodeFromString(DownloadResponse.serializer(), body) }.getOrNull()
 
     suspend fun streamProbe(urn: String): String = withContext(Dispatchers.IO) {
         runCatching {
@@ -425,7 +436,7 @@ object Api {
                 .header("Range", "bytes=0-15")
                 .cacheControl(CacheControl.FORCE_NETWORK)
                 .build()
-            http.newCall(req).execute().use { res ->
+            ScDataSource.probeClient(http).newCall(req).execute().use { res ->
                 val ct = res.header("content-type") ?: "?"
                 val cl = res.header("content-length") ?: "?"
                 val bytes = runCatching { res.peekBody(16L).bytes() }.getOrNull()
@@ -523,11 +534,7 @@ data class Track(
 
     val starLocked: Boolean get() = access == "preview" && !Prefs.star
 
-    val unavailable: Boolean
-        get() = access == "blocked" ||
-            scdMeta?.storage_state == "missing" ||
-            scdMeta?.storage_state == "failed" ||
-            scdMeta?.storage_state == "too_long"
+    val unavailable: Boolean get() = access == "blocked"
 }
 
 @Serializable
@@ -630,6 +637,26 @@ data class MeProfile(
 @Serializable
 data class Subscription(
     val premium: Boolean = false,
+)
+
+@Serializable
+data class DownloadResponse(
+    val track_urn: String = "",
+    val candidates: List<DownloadCandidate> = emptyList(),
+)
+
+@Serializable
+data class DownloadCandidate(
+    val kind: String = "",
+    val quality: String? = null,
+    val preset: String? = null,
+    val mime: String? = null,
+    val url: String? = null,
+    val manifest_url: String? = null,
+    val content_type: String? = null,
+    val init_base64: String? = null,
+    val segments: List<String> = emptyList(),
+    val key_base64: String? = null,
 )
 
 @Serializable

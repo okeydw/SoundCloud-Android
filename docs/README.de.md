@@ -19,6 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop-Version</a>]</b><br>
 <b>Inoffizieller SoundCloud-Client für Android</b><br>
 Keine Werbung · Kein Captcha · Keine Zensur
 </p>
@@ -38,11 +39,6 @@ Keine Werbung · Kein Captcha · Keine Zensur
 <img src="https://img.shields.io/badge/APK_herunterladen-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="APK herunterladen"/>
 </a>
 </p>
-
----
-
-> [!WARNING]
-> ⚠️ **Aufgrund der Sicherheitssysteme der Haupt-API und von SoundCloud kann dich die Anmeldung aus einer anderen Sitzung abmelden.** Wenn du auf einem anderen Gerät angemeldet bist (z. B. im Desktop-Client), kann die Anmeldung hier jene Sitzung „trennen“ und umgekehrt. Das ist eine Einschränkung des Backends, kein Fehler der App — melde dich einfach dort erneut an, wo du es brauchst.
 
 ---
 
@@ -84,6 +80,8 @@ Geh zur [Releases-Seite](https://github.com/okeydw/SoundCloud-Android/releases/l
 
 ## Screenshots
 
+> Hintergrund, Textfarbe und Design lassen sich anpassen — eigenes Hintergrundbild, RGB-Palette und fertige Themes.
+
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />
 <img src="screenshots/player.png" width="24%" />
@@ -121,39 +119,6 @@ Dasselbe Backend wie [SoundCloud-Desktop](https://github.com/zxcloli666/SoundClo
 **Kompatibilität:** `minSdk 26` (Android 8.0) … `targetSdk 35`, `compileSdk 35`.
 
 ---
-
-## Struktur
-
-```
-app/src/main/java/com/scd/android/
-  App.kt              - Application: Init von Sitzung/Cache/Einstellungen, Coil-Cover-Loader über Proxy (eindeutiger Schlüssel pro Bild)
-  MainActivity.kt     - Einstiegspunkt, Navigation (Suche / Wave / Ich), Mosaik-Kacheln, „Kein Internet“-Banner, Filtern nicht verfügbarer Tracks, Deep-Links aus Benachrichtigungen
-  Api.kt              - API-Client: Suche, Streaming, Cover, Likes/Dislikes für Tracks & Playlists, Verlauf, Datenmodelle; mehrstufiger HTTP-Cache (kalte Daten lange)
-  NetMonitor.kt       - Netzwerkprüfung (WLAN / mobil) + Offline-Fallback aus dem Cache
-  Prefs.kt            - Einstellungen (Design, Sprache, Offline, immersiv) + zwischengespeicherter Benutzername
-  LocaleHelper.kt     - Überschreiben der App-Locale (Sprachwechsel)
-
-  PlaybackService.kt  - MediaSessionService: Hintergrund-Player, Benachrichtigung, Like/Shuffle darin, Player per Tap öffnen
-  Player.kt           - Mini- und Vollbild-Player (Waveform, Gesten, Shuffle/Repeat, immersiv, Marquee, zur Playlist hinzufügen)
-  NowPlaying.kt       - globaler Player-Zustand + Navigations-/Playlist-Refresh-Events (PlaylistEvents, NavEvents)
-
-  WaveScreen.kt       - Wave: Pager-Feed, Swipes und Doppeltipp = Like mit Animation, Aktualisieren
-  ArtistScreen.kt     - Künstlerprofil: Tracks und Playlists (auch offline aus Downloads)
-  PlaylistScreen.kt   - Playlist-Ansicht: Trackliste, Playlist liken, alles herunterladen / abbrechen
-  LibraryScreen.kt    - Tab „Ich“: Begrüßung, Likes, Downloads, eigene & gelikte Playlists, Verlauf + Einstellungen
-
-  Likes.kt / Dislikes.kt - Track-Like/Dislike-Zustand (gegenseitig ausschließend, mit Backend synchronisiert)
-  LikedPlaylists.kt   - Zustand gelikter Playlists (mit Backend synchronisiert)
-  Downloads.kt        - Tracks in einen privaten Ordner laden, Index, Fortschritts-Benachrichtigung, Abbruch und Deep-Link
-  Genres.kt           - Genre-Liste für Kacheln bei leerer Suche
-
-app/src/main/res/
-  drawable/           - Vektor-Icons (Lucide-Stil) + Logo
-  values/, values-*/  - Strings in 9 Sprachen + values-night (dunkles Design)
-
-proguard-rules.pro    - R8-Regeln für den Release-Build (serialization / OkHttp)
-.github/workflows/    - CI: Lint, Tests, Debug-APK-Build
-```
 
 Vollständiges Änderungsprotokoll in [CHANGELOG.md](../CHANGELOG.md).
 

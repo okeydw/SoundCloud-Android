@@ -19,6 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Versión de escritorio</a>]</b><br>
 <b>Cliente no oficial de SoundCloud para Android</b><br>
 Sin anuncios · Sin captcha · Sin censura
 </p>
@@ -38,11 +39,6 @@ Sin anuncios · Sin captcha · Sin censura
 <img src="https://img.shields.io/badge/Descargar_APK-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="Descargar APK"/>
 </a>
 </p>
-
----
-
-> [!WARNING]
-> ⚠️ **Debido a los sistemas de seguridad de la API principal y de SoundCloud, iniciar sesión puede cerrarte otra sesión.** Si tienes sesión iniciada en otro dispositivo (por ejemplo, el cliente de escritorio), iniciar sesión aquí puede «desvincular» esa sesión, y viceversa. Es una limitación del backend, no un fallo de la app: simplemente vuelve a iniciar sesión donde lo necesites.
 
 ---
 
@@ -84,6 +80,8 @@ Ve a la [página de releases](https://github.com/okeydw/SoundCloud-Android/relea
 
 ## Capturas
 
+> El fondo, el color del texto y el tema se pueden personalizar — tu propia imagen de fondo, paleta RGB y temas listos para usar.
+
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />
 <img src="screenshots/player.png" width="24%" />
@@ -121,39 +119,6 @@ El mismo backend que [SoundCloud-Desktop](https://github.com/zxcloli666/SoundClo
 **Compatibilidad:** `minSdk 26` (Android 8.0) … `targetSdk 35`, `compileSdk 35`.
 
 ---
-
-## Estructura
-
-```
-app/src/main/java/com/scd/android/
-  App.kt              - Application: init de sesión/caché/ajustes, cargador de portadas Coil vía proxy (clave única por imagen)
-  MainActivity.kt     - punto de entrada, navegación (Búsqueda / Wave / Yo), mosaico de tiles, banner «sin internet», filtrado de pistas no disponibles, deep links desde notificaciones
-  Api.kt              - cliente API: búsqueda, streaming, portadas, me gusta/no me gusta de pistas y listas, historial, modelos de datos; caché HTTP multinivel (datos fríos por mucho tiempo)
-  NetMonitor.kt       - comprobación de red (Wi-Fi / móvil) + respaldo offline desde caché
-  Prefs.kt            - ajustes (tema, idioma, offline, inmersivo) + nombre de usuario en caché
-  LocaleHelper.kt     - sustitución de la configuración regional de la app (cambio de idioma)
-
-  PlaybackService.kt  - MediaSessionService: reproductor en segundo plano, notificación, me gusta/aleatorio en ella, abrir el reproductor al tocar
-  Player.kt           - mini reproductor y reproductor a pantalla completa (waveform, gestos, aleatorio/repetición, inmersivo, marquee, añadir a lista)
-  NowPlaying.kt       - estado global del reproductor + eventos de navegación/actualización de listas (PlaylistEvents, NavEvents)
-
-  WaveScreen.kt       - Wave: feed con pager, swipes y doble toque = me gusta con animación, actualizar
-  ArtistScreen.kt     - perfil de artista: pistas y listas (incl. offline desde descargas)
-  PlaylistScreen.kt   - pantalla de lista: lista de pistas, dar me gusta a la lista, descargar todo / cancelar
-  LibraryScreen.kt    - pestaña «Yo»: saludo, me gusta, descargas, listas propias y con me gusta, historial + pantalla de ajustes
-
-  Likes.kt / Dislikes.kt - estado de me gusta/no me gusta de pistas (mutuamente excluyentes, sincronizados con el backend)
-  LikedPlaylists.kt   - estado de listas con me gusta (sincronizado con el backend)
-  Downloads.kt        - descarga de pistas a una carpeta privada, índice, notificación de progreso, cancelación y deep link
-  Genres.kt           - lista de géneros para los tiles en búsqueda vacía
-
-app/src/main/res/
-  drawable/           - iconos vectoriales (estilo Lucide) + logo
-  values/, values-*/  - cadenas en 9 idiomas + values-night (tema oscuro)
-
-proguard-rules.pro    - reglas R8 para la build de release (serialization / OkHttp)
-.github/workflows/    - CI: lint, tests, build de APK debug
-```
 
 Registro de cambios completo en [CHANGELOG.md](../CHANGELOG.md).
 

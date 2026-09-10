@@ -26,6 +26,11 @@ object FeedCache {
         }.getOrDefault(emptyList())
     }
 
+    fun clear() {
+        if (!::dir.isInitialized) return
+        runCatching { dir.listFiles()?.forEach { it.delete() } }
+    }
+
     suspend fun save(key: String, tracks: List<Track>) = withContext(Dispatchers.IO) {
         if (!::dir.isInitialized || tracks.isEmpty()) return@withContext
         runCatching {

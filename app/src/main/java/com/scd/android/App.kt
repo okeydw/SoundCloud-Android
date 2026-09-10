@@ -28,6 +28,31 @@ class App : Application(), ImageLoaderFactory {
         LikedArtists.init(this)
         Likes.init(this)
         scope.launch { runCatching { Endpoints.probeAll() } }
+        installCrashLog()
+        scope.launch { runCatching { MediaCache.dropLegacy(this@App) } }
+    }
+
+    private fun installCrashLog() {
+        val sp = getSharedPreferences("crash", MODE_PRIVATE)
+        sp.getString("last", null)?.let {
+            Logs.add("crash", it)
+            sp.edit().remove("last").apply()
+        }
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            runCatching {
+                val text = buildString {
+                    append(error.javaClass.name).append(": ").append(error.message)
+                    error.stackTrace.take(6).forEach { append("\n  at ").append(it) }
+                    error.cause?.let { c ->
+                        append("\ncaused by ").append(c.javaClass.name).append(": ").append(c.message)
+                        c.stackTrace.take(4).forEach { append("\n  at ").append(it) }
+                    }
+                }
+                sp.edit().putString("last", text).commit()
+            }
+            previous?.uncaughtException(thread, error)
+        }
     }
 
     companion object {
@@ -54,6 +79,20 @@ class App : Application(), ImageLoaderFactory {
                     }
                     .build()
             }
+            .diskCache {
+                val limit = Prefs.cacheLimit
+                val budget = if (limit == CacheLimits.UNLIMITED) {
+                    2L * 1024 * 1024 * 1024
+                } else {
+                    (limit / 10).coerceIn(128L * 1024 * 1024, 2L * 1024 * 1024 * 1024)
+                }
+                coil.disk.DiskCache.Builder()
+                    .directory(java.io.File(cacheDir, "images"))
+                    .maxSizeBytes(budget)
+                    .build()
+                    .also { Images.disk = it }
+            }
+            .respectCacheHeaders(false)
             .crossfade(true)
             .build()
 }

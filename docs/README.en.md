@@ -19,6 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop version</a>]</b><br>
 <b>Unofficial SoundCloud client for Android</b><br>
 No ads · No captcha · No censorship
 </p>
@@ -38,11 +39,6 @@ No ads · No captcha · No censorship
 <img src="https://img.shields.io/badge/Download_APK-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="Download APK"/>
 </a>
 </p>
-
----
-
-> [!WARNING]
-> ⚠️ **Because of the main API's and SoundCloud's security systems, signing in may log you out of another session.** If you're logged in on another device (e.g. the desktop client), signing in here may "unlink" that session, and vice versa. This is a backend limitation, not an app bug — just sign in again where you need to.
 
 ---
 
@@ -84,6 +80,8 @@ Go to the [releases page](https://github.com/okeydw/SoundCloud-Android/releases/
 
 ## Screenshots
 
+> Background, text color and theme are yours to change — your own wallpaper, an RGB palette and ready-made themes.
+
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />
 <img src="screenshots/player.png" width="24%" />
@@ -121,39 +119,6 @@ Same backend as [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-De
 **Compatibility:** `minSdk 26` (Android 8.0) … `targetSdk 35`, `compileSdk 35`.
 
 ---
-
-## Structure
-
-```
-app/src/main/java/com/scd/android/
-  App.kt              - Application: session/cache/settings init, Coil cover loader via proxy (unique key per image)
-  MainActivity.kt     - entry point, navigation (Search / Wave / Me), mosaic tiles, "no internet" banner, filtering unavailable tracks, deep links from notifications
-  Api.kt              - API client: search, streaming, covers, track & playlist likes/dislikes, history, data models; multi-tier HTTP cache (cold data cached long)
-  NetMonitor.kt       - network check (Wi-Fi / mobile) + offline fallback from cache
-  Prefs.kt            - settings (theme, language, offline, immersive) + cached username
-  LocaleHelper.kt     - app locale override (language switch)
-
-  PlaybackService.kt  - MediaSessionService: background player, notification, like/shuffle in it, open player on tap
-  Player.kt           - mini and full-screen player (waveform, gestures, shuffle/repeat, immersive, marquee, add to playlist)
-  NowPlaying.kt       - global player state + navigation/playlist-refresh events (PlaylistEvents, NavEvents)
-
-  WaveScreen.kt       - Wave: pager feed, swipes and double-tap = like with animation, refresh
-  ArtistScreen.kt     - artist profile: tracks and playlists (incl. offline from downloads)
-  PlaylistScreen.kt   - playlist screen: track list, like playlist, download all / cancel
-  LibraryScreen.kt    - "Me" tab: greeting, likes, downloads, own & liked playlists, history + settings screen
-
-  Likes.kt / Dislikes.kt - track like/dislike state (mutually exclusive, synced with backend)
-  LikedPlaylists.kt   - liked-playlist state (synced with backend)
-  Downloads.kt        - download tracks to a private folder, index, progress notification, cancel and deep link
-  Genres.kt           - genre list for tiles on empty search
-
-app/src/main/res/
-  drawable/           - vector icons (Lucide style) + logo
-  values/, values-*/  - strings in 9 languages + values-night (dark theme)
-
-proguard-rules.pro    - R8 rules for the release build (serialization / OkHttp)
-.github/workflows/    - CI: lint, tests, debug APK build
-```
 
 Full changelog is in [CHANGELOG.md](../CHANGELOG.md).
 

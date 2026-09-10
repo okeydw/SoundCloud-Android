@@ -19,6 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">桌面版</a>]</b><br>
 <b>非官方 SoundCloud Android 客户端</b><br>
 无广告 · 无验证码 · 无审查
 </p>
@@ -38,11 +39,6 @@
 <img src="https://img.shields.io/badge/下载_APK-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="下载 APK"/>
 </a>
 </p>
-
----
-
-> [!WARNING]
-> ⚠️ **由于主 API 和 SoundCloud 的安全机制，登录可能会使你从另一个会话中退出。** 如果你在其他设备（例如桌面客户端）已登录，在这里登录可能会“解绑”那个会话，反之亦然。这是后端的限制，而非应用的 bug——在需要的地方重新登录即可。
 
 ---
 
@@ -84,6 +80,8 @@
 
 ## 截图
 
+> 背景、文字颜色和主题都可以自定义 —— 自己的背景图、RGB 调色板和现成主题。
+
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />
 <img src="screenshots/player.png" width="24%" />
@@ -121,39 +119,6 @@
 **兼容性：** `minSdk 26`（Android 8.0）… `targetSdk 35`, `compileSdk 35`。
 
 ---
-
-## 结构
-
-```
-app/src/main/java/com/scd/android/
-  App.kt              - Application：会话/缓存/设置初始化，通过代理的 Coil 封面加载器（每张图唯一键）
-  MainActivity.kt     - 入口，导航（搜索 / Wave / 我），马赛克瓦片，“无网络”横幅，过滤不可用曲目，来自通知的深链接
-  Api.kt              - API 客户端：搜索、流媒体、封面、曲目与歌单的喜欢/不喜欢、历史、数据模型；多级 HTTP 缓存（冷数据长时间缓存）
-  NetMonitor.kt       - 网络检测（Wi-Fi / 移动数据）+ 从缓存的离线回退
-  Prefs.kt            - 设置（主题、语言、离线、沉浸）+ 用户名缓存
-  LocaleHelper.kt     - 覆盖应用语言环境（切换语言）
-
-  PlaybackService.kt  - MediaSessionService：后台播放器、通知、其中的喜欢/随机、点按打开播放器
-  Player.kt           - 迷你与全屏播放器（波形、手势、随机/循环、沉浸、跑马灯、加入歌单）
-  NowPlaying.kt       - 全局播放器状态 + 导航/歌单刷新事件（PlaylistEvents, NavEvents）
-
-  WaveScreen.kt       - Wave：分页信息流，滑动与双击 = 带动画的喜欢，刷新
-  ArtistScreen.kt     - 艺术家主页：曲目和歌单（包括来自下载的离线内容）
-  PlaylistScreen.kt   - 歌单页：曲目列表、给歌单点赞、全部下载 / 取消
-  LibraryScreen.kt    - “我”标签：问候、喜欢、下载、自建与已赞歌单、历史 + 设置页
-
-  Likes.kt / Dislikes.kt - 曲目喜欢/不喜欢状态（互斥，与后端同步）
-  LikedPlaylists.kt   - 已赞歌单状态（与后端同步）
-  Downloads.kt        - 将曲目下载到私有文件夹、索引、进度通知、取消与深链接
-  Genres.kt           - 空搜索时瓦片使用的流派列表
-
-app/src/main/res/
-  drawable/           - 矢量图标（Lucide 风格）+ logo
-  values/, values-*/  - 9 种语言的字符串 + values-night（深色主题）
-
-proguard-rules.pro    - release 构建的 R8 规则（serialization / OkHttp）
-.github/workflows/    - CI：lint、测试、构建 debug APK
-```
 
 完整更新日志见 [CHANGELOG.md](../CHANGELOG.md)。
 

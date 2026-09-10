@@ -82,7 +82,10 @@ object Downloads {
             var fetched = false
             for (attempt in Endpoints.streamHosts.indices) {
                 val ok = runCatching {
-                    val req = Request.Builder().url(Api.streamUrl(track.urn)).build()
+                    val gp = track.goPlus
+                    val req = Request.Builder()
+                        .url(Api.streamUrl(track.urn, hq = gp && Prefs.star, goPlus = gp))
+                        .build()
                     Api.http.newCall(req).execute().use { res ->
                         if (!res.isSuccessful || res.header("content-length") == "0") return@use false
                         val body = res.body ?: return@use false

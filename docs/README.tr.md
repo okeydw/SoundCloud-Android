@@ -19,6 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Masaüstü sürümü</a>]</b><br>
 <b>Android için resmi olmayan SoundCloud istemcisi</b><br>
 Reklamsız · Captcha yok · Sansürsüz
 </p>
@@ -38,11 +39,6 @@ Reklamsız · Captcha yok · Sansürsüz
 <img src="https://img.shields.io/badge/APK_indir-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="APK indir"/>
 </a>
 </p>
-
----
-
-> [!WARNING]
-> ⚠️ **Ana API'nin ve SoundCloud'un güvenlik sistemleri nedeniyle giriş yapmak sizi başka bir oturumdan atabilir.** Başka bir cihazda (ör. masaüstü istemcide) oturum açtıysanız, buradan giriş yapmak o oturumu "koparabilir" ve tersi de geçerlidir. Bu bir uygulama hatası değil, arka ucun bir kısıtlamasıdır — gerektiği yerde yeniden giriş yapmanız yeterli.
 
 ---
 
@@ -84,6 +80,8 @@ Reklamsız · Captcha yok · Sansürsüz
 
 ## Ekran görüntüleri
 
+> Arka plan, metin rengi ve tema değiştirilebilir — kendi arka plan görseliniz, RGB paleti ve hazır temalar.
+
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />
 <img src="screenshots/player.png" width="24%" />
@@ -121,39 +119,6 @@ Hata mı buldun ya da fikrin mi var? — [issue aç](https://github.com/okeydw/S
 **Uyumluluk:** `minSdk 26` (Android 8.0) … `targetSdk 35`, `compileSdk 35`.
 
 ---
-
-## Yapı
-
-```
-app/src/main/java/com/scd/android/
-  App.kt              - Application: oturum/önbellek/ayar başlatma, proxy üzerinden Coil kapak yükleyici (görsel başına benzersiz anahtar)
-  MainActivity.kt     - giriş noktası, gezinme (Arama / Wave / Ben), mozaik döşemeler, «internet yok» afişi, uygun olmayan parçaların filtrelenmesi, bildirimlerden deep link
-  Api.kt              - API istemcisi: arama, akış, kapaklar, parça & çalma listesi beğeni/beğenmeme, geçmiş, veri modelleri; çok katmanlı HTTP önbelleği (soğuk veriler uzun süre)
-  NetMonitor.kt       - ağ kontrolü (Wi-Fi / mobil) + önbellekten çevrimdışı yedek
-  Prefs.kt            - ayarlar (tema, dil, çevrimdışı, sürükleyici) + önbelleklenen kullanıcı adı
-  LocaleHelper.kt     - uygulama yerel ayarını değiştirme (dil değişimi)
-
-  PlaybackService.kt  - MediaSessionService: arka plan oynatıcı, bildirim, içinde beğeni/karıştır, dokununca oynatıcıyı açma
-  Player.kt           - mini ve tam ekran oynatıcı (waveform, hareketler, karıştır/tekrarla, sürükleyici, marquee, çalma listesine ekleme)
-  NowPlaying.kt       - genel oynatıcı durumu + gezinme/çalma listesi yenileme olayları (PlaylistEvents, NavEvents)
-
-  WaveScreen.kt       - Wave: pager akışı, kaydırmalar ve çift dokunuş = animasyonlu beğeni, yenileme
-  ArtistScreen.kt     - sanatçı profili: parçalar ve çalma listeleri (indirilenlerden çevrimdışı dahil)
-  PlaylistScreen.kt   - çalma listesi ekranı: parça listesi, listeyi beğenme, hepsini indir / iptal
-  LibraryScreen.kt    - «Ben» sekmesi: karşılama, beğeniler, indirilenler, kendi & beğenilen çalma listeleri, geçmiş + ayarlar ekranı
-
-  Likes.kt / Dislikes.kt - parça beğeni/beğenmeme durumu (karşılıklı dışlayan, arka uçla senkron)
-  LikedPlaylists.kt   - beğenilen çalma listelerinin durumu (arka uçla senkron)
-  Downloads.kt        - parçaları özel klasöre indirme, dizin, ilerleme bildirimi, iptal ve deep link
-  Genres.kt           - boş aramada döşemeler için tür listesi
-
-app/src/main/res/
-  drawable/           - vektör ikonlar (Lucide tarzı) + logo
-  values/, values-*/  - 9 dilde metinler + values-night (koyu tema)
-
-proguard-rules.pro    - release derlemesi için R8 kuralları (serialization / OkHttp)
-.github/workflows/    - CI: lint, testler, debug APK derlemesi
-```
 
 Tam değişiklik günlüğü [CHANGELOG.md](../CHANGELOG.md) dosyasında.
 

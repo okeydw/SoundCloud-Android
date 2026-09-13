@@ -29,6 +29,10 @@
 <img src="https://img.shields.io/github/v/release/okeydw/SoundCloud-Android?style=for-the-badge&logo=github&color=0048FF&label=VERSION" alt="Version"/>
 </a>
 
+<a href="https://github.com/okeydw/SoundCloud-Android/releases">
+<img src="https://img.shields.io/github/downloads/okeydw/SoundCloud-Android/total?style=for-the-badge&logo=github&color=0048FF&label=Downloads" alt="Downloads"/>
+</a>
+
 <a href="../LICENSE">
 <img src="https://img.shields.io/badge/License-MIT-0048FF?style=for-the-badge" alt="License"/>
 </a>
@@ -129,3 +133,15 @@
 MIT。详情见 [LICENSE](../LICENSE) 文件。
 
 _SoundCloud 是 SoundCloud Ltd. 的商标。本应用与 SoundCloud 无关联。_
+
+---
+
+<p align="center">
+<code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud 安卓</code> · <code>soundcloud 客户端</code> · <code>soundcloud 无广告</code> · <code>soundcloud 被封锁</code> · <code>soundcloud 打不开</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>soundcloud 音乐播放器</code>
+</p>
+
+<p align="center">
+<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
+<img src="https://img.shields.io/badge/下载_SoundCloud_Android-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="下载 SoundCloud Android"/>
+</a>
+</p>

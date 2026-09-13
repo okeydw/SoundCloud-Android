@@ -29,6 +29,10 @@ Keine Werbung · Kein Captcha · Keine Zensur
 <img src="https://img.shields.io/github/v/release/okeydw/SoundCloud-Android?style=for-the-badge&logo=github&color=0048FF&label=VERSION" alt="Version"/>
 </a>
 
+<a href="https://github.com/okeydw/SoundCloud-Android/releases">
+<img src="https://img.shields.io/github/downloads/okeydw/SoundCloud-Android/total?style=for-the-badge&logo=github&color=0048FF&label=Downloads" alt="Downloads"/>
+</a>
+
 <a href="../LICENSE">
 <img src="https://img.shields.io/badge/License-MIT-0048FF?style=for-the-badge" alt="License"/>
 </a>
@@ -129,3 +133,15 @@ Vollständiges Änderungsprotokoll in [CHANGELOG.md](../CHANGELOG.md).
 MIT. Details in der Datei [LICENSE](../LICENSE).
 
 _SoundCloud ist eine Marke von SoundCloud Ltd. Diese App ist nicht mit SoundCloud verbunden._
+
+---
+
+<p align="center">
+<code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud client</code> · <code>soundcloud für android</code> · <code>soundcloud ohne werbung</code> · <code>soundcloud gesperrt</code> · <code>soundcloud funktioniert nicht</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>soundcloud musikplayer</code>
+</p>
+
+<p align="center">
+<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
+<img src="https://img.shields.io/badge/SoundCloud_Android_herunterladen-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="SoundCloud Android herunterladen"/>
+</a>
+</p>

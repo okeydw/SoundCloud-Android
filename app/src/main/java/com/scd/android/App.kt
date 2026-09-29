@@ -23,12 +23,18 @@ class App : Application(), ImageLoaderFactory {
         Endpoints.init(this)
         Api.initHttp(this)
         Api.loadSession(this)
+        DurationCache.init(this)
         Downloads.init(this)
         FeedCache.init(this)
         LikedArtists.init(this)
         Likes.init(this)
+        Dislikes.init(this)
+        LikesAutoCache.init(this)
+        ScAnon.init(this)
+        scope.launch { kotlinx.coroutines.delay(3_000); ScAnon.warmUp() }
         scope.launch { runCatching { Endpoints.probeAll() } }
         installCrashLog()
+        scope.launch { runCatching { NoteArtwork.init(this@App) } }
         scope.launch { runCatching { MediaCache.dropLegacy(this@App) } }
     }
 
@@ -63,6 +69,7 @@ class App : Application(), ImageLoaderFactory {
         ImageLoader.Builder(this)
             .okHttpClient {
                 Api.http.newBuilder()
+                    .cache(null)
                     .addInterceptor { chain ->
                         val req = chain.request()
                         if (req.url.host.endsWith("sndcdn.com")) {

@@ -26,6 +26,11 @@ object LikedArtists {
 
     fun isLiked(urn: String) = artists.any { it.urn == urn }
 
+    fun reset() {
+        artists = emptyList()
+        if (::sp.isInitialized) runCatching { sp.edit().remove(KEY).apply() }
+    }
+
     fun toggle(artist: Artist) {
         artists = if (isLiked(artist.urn)) {
             artists.filterNot { it.urn == artist.urn }

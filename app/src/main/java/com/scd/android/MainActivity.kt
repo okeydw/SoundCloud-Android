@@ -92,6 +92,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.session.MediaController
@@ -157,21 +158,17 @@ class MainActivity : ComponentActivity() {
             val data = intent.data
             if (data?.scheme == "scd") {
                 val token = data.getQueryParameter("token") ?: data.getQueryParameter("claim")
-                if (token != null) {
-                    val app = applicationContext
-                    App.scope.launch {
-                        val res = runCatching { Api.linkClaim(token) }
-                        val sid = res.getOrNull()?.sessionId
-                        if (sid != null) {
-                            Api.storeSession(app, sid)
-                            NavEvents.sessionReady = true
-                        } else {
-                            Logs.add("qr", "deeplink claim failed: ${res.exceptionOrNull()?.message ?: "no session"}")
-                        }
-                    }
-                }
+                val mode = data.getQueryParameter("mode")?.lowercase()
+                if (!token.isNullOrBlank() && token.length <= 512) PendingLink.set(token, pull = mode == "pull")
             } else {
-                data?.toString()?.takeIf { "soundcloud.com" in it }?.let { NavEvents.openUrl(it) }
+                val host = data?.host?.lowercase()
+                val trusted = host != null && (host == "soundcloud.com" || host.endsWith(".soundcloud.com"))
+                if (trusted && isAuthPage(host!!, data.path ?: "")) {
+                    Logs.add("auth", "sign-in page bounced back to browser")
+                    openInBrowser(this, data.toString())
+                } else if (trusted) {
+                    NavEvents.openUrl(data.toString())
+                }
             }
         }
     }
@@ -193,7 +190,11 @@ class MainActivity : ComponentActivity() {
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         controllerFuture = MediaController.Builder(this, token).buildAsync().also { future ->
             future.addListener(
-                { controllerState.value = future.get() },
+                {
+                    runCatching { future.get() }
+                        .onSuccess { controllerState.value = it }
+                        .onFailure { Logs.add("player", "controller failed: ${it.javaClass.simpleName}") }
+                },
                 MoreExecutors.directExecutor(),
             )
         }
@@ -283,8 +284,136 @@ fun Root(controller: MediaController?) {
         }
     }
 
+    val sessionContext = LocalContext.current
+    LaunchedEffect(SessionState.expired) {
+        if (!SessionState.expired) return@LaunchedEffect
+        val stream = SessionState.fromStream
+        val recentlyRefreshed = System.currentTimeMillis() - SessionState.lastRefreshAt < 10 * 60_000L
+        if (stream && !recentlyRefreshed) {
+            val code = Api.refreshSession()
+            if (code in 200..299) {
+                SessionState.lastRefreshAt = System.currentTimeMillis()
+                SessionState.consume()
+                Logs.add("auth", "stream 401 → session refreshed")
+                ScDataSource.forgetResolved()
+                controller?.let { c ->
+                    if (c.playerError != null || c.playbackState == androidx.media3.common.Player.STATE_IDLE) {
+                        c.prepare()
+                        c.play()
+                    }
+                }
+                return@LaunchedEffect
+            }
+            if (code != 401) {
+                SessionState.consume()
+                Logs.add("auth", "refresh unavailable (code $code), keeping session")
+                return@LaunchedEffect
+            }
+        }
+        val valid = Api.sessionValid()
+        SessionState.consume()
+        when {
+            valid == false -> {
+                Logs.add("auth", "session not authenticated${if (stream) " (stream 401)" else ""} → sign in again")
+                AccountData.wipe(sessionContext, controller)
+                hasSession = false
+            }
+            stream && valid == true -> Logs.add("auth", "stream 401 while session is valid")
+            else -> Logs.add("auth", "401 ignored, session check: $valid")
+        }
+    }
+
+    val linkToken = PendingLink.token
+    val linkPull = PendingLink.pull
+    if (linkToken != null && linkPull && !hasSession) {
+        LaunchedEffect(linkToken) {
+            Logs.add("qr", "pull link ignored: not signed in")
+            android.widget.Toast.makeText(
+                sessionContext,
+                sessionContext.getString(R.string.link_pull_need_login),
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+            PendingLink.clear()
+        }
+    } else if (linkToken != null) {
+        var busy by remember { mutableStateOf(false) }
+        val account = Prefs.username ?: "SoundCloud"
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!busy) PendingLink.clear() },
+            title = {
+                Text(stringResource(if (linkPull) R.string.link_pull_title else R.string.link_confirm_title))
+            },
+            text = {
+                Text(
+                    when {
+                        linkPull -> stringResource(R.string.link_pull_text, account)
+                        hasSession -> stringResource(R.string.link_confirm_replace)
+                        else -> stringResource(R.string.link_confirm_text)
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        busy = true
+                        App.scope.launch {
+                            val res = runCatching { Api.linkClaim(linkToken, pull = linkPull) }
+                            val sid = res.getOrNull()?.sessionId
+                            withContext(Dispatchers.Main) {
+                                when {
+                                    linkPull && res.isSuccess -> {
+                                        Logs.add("qr", "pull link: other device signed in")
+                                        android.widget.Toast.makeText(
+                                            sessionContext,
+                                            sessionContext.getString(R.string.link_pull_done),
+                                            android.widget.Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                    !linkPull && sid != null -> {
+                                        if (hasSession) AccountData.wipe(sessionContext, controller)
+                                        Api.storeSession(sessionContext, sid)
+                                        hasSession = true
+                                    }
+                                    else -> {
+                                        val err = res.exceptionOrNull()
+                                        Logs.add(
+                                            "qr",
+                                            "link claim failed (${if (linkPull) "pull" else "push"}): " +
+                                                (err?.message ?: "no session"),
+                                        )
+                                        val code = (err as? ApiHttpException)?.code
+                                        android.widget.Toast.makeText(
+                                            sessionContext,
+                                            sessionContext.getString(
+                                                if (code == 400 || code == 404) R.string.link_expired else R.string.login_failed,
+                                            ),
+                                            android.widget.Toast.LENGTH_LONG,
+                                        ).show()
+                                    }
+                                }
+                                busy = false
+                                PendingLink.clear()
+                            }
+                        }
+                    },
+                ) {
+                    Text(stringResource(if (linkPull) R.string.link_pull_yes else R.string.link_confirm_yes))
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !busy, onClick = { PendingLink.clear() }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
     if (hasSession) {
-        MainScreen(controller, onSessionExpired = { hasSession = false })
+        MainScreen(controller, onSessionExpired = {
+            AccountData.wipe(sessionContext, controller)
+            hasSession = false
+        })
     } else {
         LoginScreen(onDone = { hasSession = true })
     }
@@ -418,22 +547,77 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
 
     LaunchedEffect(Unit) { Dislikes.seed() }
     LaunchedEffect(Unit) {
-        if (!Prefs.offline) runCatching { Likes.seed(Api.likedTracks(0, 200).collection) }
+        if (!Prefs.offline) {
+            kotlinx.coroutines.delay(600)
+            val since = Likes.snapshot()
+            runCatching { Api.likedTracks(0, 100, fresh = true) }.onSuccess { res ->
+                if (res.has_more) Likes.seed(res.collection) else Likes.replaceAll(res.collection, since)
+            }
+            delay(5_000)
+            LikesAutoCache.run(context)
+        }
     }
 
     DisposableEffect(controller) {
         if (controller == null) return@DisposableEffect onDispose {}
         NowPlaying.sync(controller)
         var streamRetries = 0
+        var resumeRetries = 0
+        var skipped = 0
         val listener = object : androidx.media3.common.Player.Listener {
             override fun onEvents(
                 player: androidx.media3.common.Player,
                 events: androidx.media3.common.Player.Events,
             ) {
-                if (player.isPlaying) streamRetries = 0
+                if (player.isPlaying) {
+                    streamRetries = 0
+                    resumeRetries = 0
+                    skipped = 0
+                }
                 NowPlaying.sync(controller)
                 if (player.playbackState == androidx.media3.common.Player.STATE_READY) {
+                    DurationCache.record(controller.currentMediaItem?.mediaId, controller.duration)
                     retryIfSnippet(controller)
+                }
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val prevUrn = NowPlaying.urn
+                val prevPos = NowPlaying.position
+                val auto = reason == androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
+                val manual = reason == androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
+
+                if (prevUrn != null && prevUrn != mediaItem?.mediaId) {
+                    if (manual && prevPos < 30_000L) WaveFeedback.negative(prevUrn)
+                    if (auto) WaveFeedback.positive(prevUrn)
+                }
+
+                if (auto && prevUrn != null && prevUrn != mediaItem?.mediaId &&
+                    !Downloads.isDownloaded(prevUrn) && prevUrn !in healedUrns
+                ) {
+                    val expected = DurationCache.get(prevUrn)
+                    if (expected > 60_000L && prevPos in 1L until 10_000L) {
+                        healedUrns.add(prevUrn)
+                        Logs.add("player", "трек оборвался на ${prevPos / 1000}с из ${expected / 1000}с → перекачиваю")
+                        val back = controller.previousMediaItemIndex
+                        if (back != androidx.media3.common.C.INDEX_UNSET) {
+                            controller.pause()
+                            scope.launch {
+                                withContext(Dispatchers.IO) { ScDataSource.invalidateNow(prevUrn) }
+                                controller.seekTo(back, 0L)
+                                controller.prepare()
+                                controller.play()
+                            }
+                            return
+                        }
+                        ScDataSource.invalidate(prevUrn)
+                    }
+                }
+
+                val urn = mediaItem?.mediaId ?: return
+                if (auto && Dislikes.isDisliked(urn) && controller.hasNextMediaItem()) {
+                    Logs.add("player", "дизлайк → пропуск")
+                    controller.seekToNextMediaItem()
                 }
             }
 
@@ -441,7 +625,19 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                 val cause = error.cause
                 val httpCode = (cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
 
-                if (controller.mediaItemCount > 0 && streamRetries < Endpoints.streamHosts.size) {
+                val noSource = NoPlayableSourceException.matches(error) ||
+                    ScDataSource.failedRecently(controller.currentMediaItem?.mediaId)
+                val position = controller.currentPosition
+                if (!noSource && httpCode == null && position > 3_000 && resumeRetries < 3) {
+                    resumeRetries++
+                    Logs.add("player", "${error.errorCodeName} at ${position / 1000}s → resume")
+                    controller.seekTo(position)
+                    controller.prepare()
+                    controller.play()
+                    return
+                }
+
+                if (!noSource && controller.mediaItemCount > 0 && streamRetries < Endpoints.streamHosts.size) {
                     streamRetries++
                     Logs.add("player", "${error.errorCodeName}${httpCode?.let { " [HTTP $it]" } ?: ""} → rotate stream")
                     Endpoints.rotateStream()
@@ -462,12 +658,27 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                     return
                 }
 
+                val deadUrn = controller.currentMediaItem?.mediaId
+                if (deadUrn != null) ScDataSource.invalidate(deadUrn)
+                if (controller.hasNextMediaItem() && skipped < 3) {
+                    Logs.add("player", "трек не играется → следующий")
+                    skipped++
+                    streamRetries = 0
+                    resumeRetries = 0
+                    controller.seekToNext()
+                    controller.prepare()
+                    controller.play()
+                    return
+                }
+
                 val detail = buildString {
                     append(error.errorCodeName)
                     error.message?.let { append(": ").append(it) }
                     if (httpCode != null) append(" [HTTP ").append(httpCode).append("]")
                     else if (cause != null) append(" (").append(cause.javaClass.simpleName).append(")")
                 }
+                skipped = 0
+                controller.pause()
                 Logs.add("player", detail)
                 android.util.Log.e("SCDPlayer", "playback error: $detail", error)
                 if (Prefs.streamDebug) android.widget.Toast.makeText(context, detail, android.widget.Toast.LENGTH_LONG).show()
@@ -477,26 +688,17 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         onDispose { controller.removeListener(listener) }
     }
 
-    LaunchedEffect(controller) {
-        if (controller == null) return@LaunchedEffect
-        while (true) {
-            NowPlaying.position = controller.currentPosition.coerceAtLeast(0L)
-            NowPlaying.duration = controller.duration.coerceAtLeast(0L)
-            delay(250)
-        }
-    }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
-    LaunchedEffect(NowPlaying.urn) {
-        val c = controller ?: return@LaunchedEffect
-        if (!NowPlaying.autoContinue) return@LaunchedEffect
-        if (c.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) return@LaunchedEffect
-        val count = c.mediaItemCount
-        if (count == 0 || c.currentMediaItemIndex < count - 2) return@LaunchedEffect
-        val urn = c.currentMediaItem?.mediaId ?: return@LaunchedEffect
-        val related = runCatching { Api.relatedTracks(urn, 20) }.getOrNull() ?: return@LaunchedEffect
-        val existing = (0 until c.mediaItemCount).mapNotNull { c.getMediaItemAt(it).mediaId }.toSet()
-        val add = related.collection.filter { it.urn !in existing && !it.unavailable && !it.starLocked }
-        if (add.isNotEmpty()) c.addMediaItems(add.map { it.toMediaItem() })
+    LaunchedEffect(controller, lifecycleOwner) {
+        if (controller == null) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while (true) {
+                NowPlaying.position = controller.currentPosition.coerceAtLeast(0L)
+                NowPlaying.duration = controller.duration.coerceAtLeast(0L)
+                delay(if (controller.isPlaying) 250 else 1000)
+            }
+        }
     }
 
     LaunchedEffect(controller, Prefs.crossfade) {
@@ -521,18 +723,20 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                 minOf(fadeIn, fadeOut)
             }
             c.volume = vol
-            delay(60)
+            delay(if (c.isPlaying) 60 else 500)
         }
     }
 
     var noInternet by remember { mutableStateOf(false) }
     var serverDown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            val net = hasNetwork(context)
-            noInternet = !net
-            serverDown = if (net && !Prefs.offline) !Api.healthOk() else false
-            delay(12000)
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while (true) {
+                val net = hasNetwork(context)
+                noInternet = !net
+                serverDown = if (net && !Prefs.offline) !Api.healthOk() else false
+                delay(12000)
+            }
         }
     }
 
@@ -562,78 +766,80 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
     }
 
     fun handleError(e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) return
         if (e is ApiHttpException && e.code == 401) {
-            Api.storeSession(context, null)
-            onSessionExpired()
+            SessionState.markExpired()
         } else {
             error = e.message
         }
     }
 
+    val searchJobs = remember { mutableMapOf<String, kotlinx.coroutines.Job>() }
+
+    fun runSearch(key: String, reset: Boolean, block: suspend () -> Unit) {
+        val running = searchJobs[key]
+        if (running?.isActive == true) {
+            if (reset) running.cancel() else return
+        }
+        searchJobs[key] = scope.launch {
+            val self = coroutineContext[kotlinx.coroutines.Job]
+            searchLoading = true
+            try {
+                block()
+            } catch (e: Exception) {
+                handleError(e)
+            } finally {
+                if (searchJobs[key] === self) searchJobs.remove(key)
+                searchLoading = searchJobs.values.any { it.isActive && it !== self }
+            }
+        }
+    }
+
     fun search(nextPage: Int) {
         val q = query.trim()
-        if (q.isEmpty() || searchLoading) return
+        if (q.isEmpty()) return
         suggestions = emptyList()
         if (nextPage == 0) {
             searchCat = SearchCat.Tracks
             artistResults = emptyList()
             plResults = emptyList()
+            searchJobs.remove("artists")?.cancel()
+            searchJobs.remove("playlists")?.cancel()
         }
-        scope.launch {
-            searchLoading = true
+        runSearch("tracks", reset = nextPage == 0) {
             error = null
-            try {
-                val res = Api.searchTracks(q, nextPage)
-                results = if (nextPage == 0) res.collection else (results + res.collection).distinctBy { it.urn }
-                page = res.page
-                hasMore = res.has_more
-                searched = true
-                if (res.has_more) {
-                    App.scope.launch { runCatching { Api.searchTracks(q, res.page + 1) } }
-                }
-            } catch (e: Exception) {
-                handleError(e)
-            } finally {
-                searchLoading = false
+            val res = Api.searchTracks(q, nextPage)
+            results = if (nextPage == 0) res.collection else (results + res.collection).distinctBy { it.urn }
+            page = res.page
+            hasMore = res.has_more
+            searched = true
+            if (res.has_more) {
+                App.scope.launch { runCatching { Api.searchTracks(q, res.page + 1) } }
             }
         }
     }
 
     fun loadArtists(nextPage: Int) {
         val q = query.trim()
-        if (q.isEmpty() || searchLoading) return
-        scope.launch {
-            searchLoading = true
-            try {
-                val res = Api.searchUsers(q, nextPage)
-                artistResults = if (nextPage == 0) res.collection
-                    else (artistResults + res.collection).distinctBy { it.urn }
-                artistPage = res.page
-                artistHasMore = res.has_more
-            } catch (e: Exception) {
-                handleError(e)
-            } finally {
-                searchLoading = false
-            }
+        if (q.isEmpty()) return
+        runSearch("artists", reset = nextPage == 0) {
+            val res = Api.searchUsers(q, nextPage)
+            artistResults = if (nextPage == 0) res.collection
+                else (artistResults + res.collection).distinctBy { it.urn }
+            artistPage = res.page
+            artistHasMore = res.has_more
         }
     }
 
     fun loadSearchPlaylists(nextPage: Int) {
         val q = query.trim()
-        if (q.isEmpty() || searchLoading) return
-        scope.launch {
-            searchLoading = true
-            try {
-                val res = Api.searchPlaylists(q, nextPage)
-                plResults = if (nextPage == 0) res.collection
-                    else (plResults + res.collection).distinctBy { it.urn }
-                plPage = res.page
-                plHasMore = res.has_more
-            } catch (e: Exception) {
-                handleError(e)
-            } finally {
-                searchLoading = false
-            }
+        if (q.isEmpty()) return
+        runSearch("playlists", reset = nextPage == 0) {
+            val res = Api.searchPlaylists(q, nextPage)
+            plResults = if (nextPage == 0) res.collection
+                else (plResults + res.collection).distinctBy { it.urn }
+            plPage = res.page
+            plHasMore = res.has_more
         }
     }
 
@@ -645,10 +851,29 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             playlistResults = emptyList()
             return@LaunchedEffect
         }
-        delay(150)
+        delay(350)
         runCatching { Api.searchTracks(q, 0, 6) }.onSuccess { suggestions = it.collection.distinctBy { t -> t.urn } }
-        runCatching { Api.searchUsers(q, 0, 8) }.onSuccess { userSuggestions = it.collection.distinctBy { u -> u.urn }.take(4) }
-        runCatching { Api.searchPlaylists(q, 0, 8) }.onSuccess { playlistResults = it.collection.distinctBy { p -> p.urn }.take(4) }
+        coroutineScope {
+            launch {
+                runCatching { Api.searchUsers(q, 0, 8) }
+                    .onSuccess { userSuggestions = it.collection.distinctBy { u -> u.urn }.take(4) }
+            }
+            launch {
+                runCatching { Api.searchPlaylists(q, 0, 8) }
+                    .onSuccess { playlistResults = it.collection.distinctBy { p -> p.urn }.take(4) }
+            }
+        }
+    }
+
+    suspend fun waveMore(): List<Track> {
+        WaveFeedback.flush(waveCursor)?.let { waveCursor = it }
+        val (batch, cursor) = Api.waveTracks(waveCursor.ifEmpty { null })
+        val known = wave.map { it.urn }.toSet()
+        val fresh = batch.filter { (!it.unavailable || Prefs.playBlocked) && it.urn !in known }
+        if (cursor.isNotEmpty()) waveCursor = cursor
+        WaveFeedback.own(fresh)
+        wave = (wave + fresh).distinctBy { it.urn }
+        return fresh
     }
 
     fun loadWave(more: Boolean) {
@@ -657,12 +882,20 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             waveLoading = true
             error = null
             try {
-                val (batch, cursor) = Api.waveTracks(if (more) waveCursor.ifEmpty { null } else null)
-                wave = (if (more) wave + batch else batch)
-                    .distinctBy { it.urn }
-                    .filter { !it.unavailable || Prefs.playBlocked }
+                if (more) {
+                    waveMore()
+                    return@launch
+                }
+                val (batch, cursor) = Api.waveTracks(null)
+                if (batch.isEmpty() && wave.isNotEmpty()) return@launch
+                val playable = batch.filter { !it.unavailable || Prefs.playBlocked }
+                if (playable.size < batch.size) {
+                    Logs.add("wave", "hidden blocked: ${batch.size - playable.size} of ${batch.size}")
+                }
+                wave = playable.distinctBy { it.urn }
+                WaveFeedback.own(wave)
                 waveCursor = cursor
-                if (!more) FeedCache.save("wave", wave)
+                FeedCache.save("wave", wave)
             } catch (e: Exception) {
                 handleError(e)
             } finally {
@@ -679,11 +912,13 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             try {
                 val (batch, cursor) = Api.waveTracks(null)
                 val fresh = batch.distinctBy { it.urn }.filter { !it.unavailable || Prefs.playBlocked }
+                if (fresh.isEmpty()) return@launch
+                WaveFeedback.own(fresh)
                 wave = fresh
                 waveCursor = cursor
                 FeedCache.save("wave", fresh)
                 controller?.let { c ->
-                    if (c.mediaItemCount > 0) {
+                    if (c.mediaItemCount > 0 && NowPlaying.autoContinue) {
                         val curUrn = c.currentMediaItem?.mediaId
                         val curIndex = c.currentMediaItemIndex
                         if (c.mediaItemCount > curIndex + 1) {
@@ -700,25 +935,113 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
         }
     }
 
+    LaunchedEffect(NowPlaying.urn) {
+        val c = controller ?: return@LaunchedEffect
+        if (Prefs.offline) return@LaunchedEffect
+        if (c.repeatMode != androidx.media3.common.Player.REPEAT_MODE_OFF) return@LaunchedEffect
+        val count = c.mediaItemCount
+        val urn = c.currentMediaItem?.mediaId ?: return@LaunchedEffect
+        val tail = if (WaveFeedback.isOwned(urn)) 5 else 2
+        if (count == 0 || c.currentMediaItemIndex < count - tail) return@LaunchedEffect
+        val existing = (0 until c.mediaItemCount).mapNotNull { c.getMediaItemAt(it).mediaId }.toSet()
+        fun usable(list: List<Track>) = list.filter {
+            it.urn !in existing && !it.starLocked && (!it.unavailable || Prefs.playBlocked) &&
+                !Dislikes.isDisliked(it.urn)
+        }
+        var add = emptyList<Track>()
+        var source = ""
+        if (LocalRadio.trackRadioSeed != null) {
+            add = usable(LocalRadio.trackBatch(20))
+            source = "track radio"
+        }
+        if (add.isEmpty() && WaveFeedback.isOwned(urn) && !waveLoading) {
+            waveLoading = true
+            add = try {
+                usable(runCatching { waveMore() }.getOrDefault(emptyList()))
+            } finally {
+                waveLoading = false
+            }
+            source = "wave cursor"
+        }
+        if (add.isEmpty()) {
+            add = usable(Api.waveFromTrack(urn))
+            source = "wave from track"
+        }
+        if (add.isEmpty()) {
+            add = usable(runCatching { Api.relatedTracks(urn, 20).collection }.getOrDefault(emptyList()))
+            source = "related"
+        }
+        if (add.isEmpty()) {
+            add = usable(withContext(Dispatchers.IO) { ScAnon.related(urn, 20) })
+            source = "soundcloud related"
+        }
+        if (add.isEmpty()) Logs.add("queue", "autopilot: nothing found after ${urn.substringAfterLast(':')}")
+        if (add.isNotEmpty()) {
+            Logs.add("queue", "autopilot +${add.size} from $source")
+            c.addMediaItems(add.map { it.toMediaItem() })
+        }
+    }
+
     var tilePage by remember { mutableStateOf(0) }
     var tilesLoading by remember { mutableStateOf(false) }
+
+    val tileGenrePage = remember { mutableMapOf<String, Int>() }
+    val tileExhausted = remember { mutableSetOf<String>() }
 
     fun loadTiles(nextPage: Int) {
         if (tilesLoading || Prefs.offline) return
         scope.launch {
             tilesLoading = true
-            val picked = GENRES.shuffled().take(3)
-            val fetched = coroutineScope {
-                picked.map { g -> async { runCatching { Api.searchTracks(g, nextPage, 12) }.getOrNull() } }.awaitAll()
+            try {
+                if (nextPage == 0) {
+                    tileGenrePage.clear()
+                    tileExhausted.clear()
+                }
+                val known = if (nextPage == 0) emptySet() else tiles.map { it.urn }.toSet()
+                fun good(t: Track) = t.artwork_url != null && t.urn !in known && !t.starLocked &&
+                    (!t.unavailable || Prefs.playBlocked) && !Dislikes.isDisliked(t.urn)
+                val gathered = LinkedHashMap<String, Track>()
+                var attempts = 0
+                while (gathered.size < 18 && attempts < 4) {
+                    attempts++
+                    val pool = GENRES.filter { it !in tileExhausted }.ifEmpty {
+                        tileExhausted.clear()
+                        tileGenrePage.clear()
+                        GENRES
+                    }
+                    val picked = pool.shuffled().take(3)
+                    val fetched = coroutineScope {
+                        picked.map { g ->
+                            async { g to runCatching { Api.searchTracks(g, tileGenrePage[g] ?: 0, 20) }.getOrNull() }
+                        }.awaitAll()
+                    }
+                    fetched.forEach { (g, res) ->
+                        if (res == null) return@forEach
+                        tileGenrePage[g] = (tileGenrePage[g] ?: 0) + 1
+                        if (!res.has_more || res.collection.isEmpty()) tileExhausted += g
+                        res.collection.filter(::good).forEach { gathered.putIfAbsent(it.urn, it) }
+                    }
+                    if (gathered.size < 18) {
+                        val base = tiles + gathered.values
+                        if (base.isNotEmpty()) {
+                            val seed = base.random()
+                            runCatching { Api.relatedTracks(seed.urn, 20) }.getOrNull()?.collection
+                                ?.filter(::good)
+                                ?.forEach { gathered.putIfAbsent(it.urn, it) }
+                        }
+                    }
+                }
+                val fresh = gathered.values.toList().shuffled()
+                if (fresh.isEmpty()) {
+                    Logs.add("tiles", "page $nextPage: nothing new")
+                    return@launch
+                }
+                tiles = if (nextPage == 0) fresh else tiles + fresh
+                tilePage = nextPage
+                if (nextPage == 0) FeedCache.save("tiles", tiles)
+            } finally {
+                tilesLoading = false
             }
-            val all = tiles.toMutableList()
-            fetched.filterNotNull().forEach { p ->
-                all += p.collection.filter { t -> t.artwork_url != null && (!t.unavailable || Prefs.playBlocked) }
-            }
-            tiles = all.distinctBy { it.urn }.let { if (nextPage == 0) it.shuffled() else it }
-            tilePage = nextPage
-            if (nextPage == 0) FeedCache.save("tiles", tiles)
-            tilesLoading = false
         }
     }
 
@@ -735,11 +1058,18 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
 
     LaunchedEffect(Unit) {
         if (Prefs.offline) return@LaunchedEffect
+        launch { runCatching { Api.subscription() }.onSuccess { Prefs.saveStar(it.premium) } }
+        launch {
+            runCatching { Api.me() }.onSuccess { me ->
+                me.urn?.takeIf { it.isNotEmpty() }?.let { Prefs.saveUserUrn(it) }
+            }
+        }
+        delay(1_500)
         launch { runCatching { Api.myPlaylists() } }
         launch { runCatching { Api.likedPlaylists() } }
+        delay(400)
         launch { runCatching { Api.likedTracks() } }
         launch { runCatching { Api.history() } }
-        launch { runCatching { Api.subscription() } }
     }
     LaunchedEffect(tab) { error = null }
 
@@ -750,33 +1080,85 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             val playable = list.filter { (!it.unavailable || Prefs.playBlocked) && !it.starLocked }
             val index = playable.indexOfFirst { it.urn == track.urn }.coerceAtLeast(0)
             NowPlaying.autoContinue = autoContinue
+            LocalRadio.stopTrackRadio()
             c.setMediaItems(playable.map { it.toMediaItem() }, index, 0)
             c.prepare()
             c.play()
         }
     }
 
-    LaunchedEffect(NavEvents.pendingUrl) {
-        val url = NavEvents.pendingUrl ?: return@LaunchedEffect
-        NavEvents.consumeUrl()
-        val r = runCatching { Api.resolve(url) }.getOrNull() ?: return@LaunchedEffect
+    val liveController by rememberUpdatedState(controller)
+
+    suspend fun openLink(url: String) {
+        Logs.add("link", "open ${url.substringAfter("://").substringBefore('?')}")
+        fun fail(why: String) {
+            Logs.add("link", why)
+            android.widget.Toast.makeText(
+                context,
+                context.getString(R.string.link_failed),
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+        val r = try {
+            Api.resolve(url)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Logs.add("link", "resolve error: ${e.javaClass.simpleName}")
+            null
+        }
+        if (r == null) {
+            fail("resolve gave nothing")
+            return
+        }
         when (r.kind) {
             "track" -> {
-                val t = runCatching { Api.trackByUrn(r.urn) }.getOrNull() ?: return@LaunchedEffect
+                val t = Api.lastResolvedTrack?.takeIf { it.urn == r.urn && it.title.isNotEmpty() }
+                    ?: runCatching { Api.trackByUrn(r.urn) }.getOrNull()
+                if (t == null) {
+                    fail("track ${r.urn} not loaded")
+                    return
+                }
+                if (t.starLocked || (t.unavailable && !Prefs.playBlocked)) {
+                    fail("track ${r.urn} is locked (${t.access})")
+                    return
+                }
                 openArtist = null
                 openPlaylist = null
-                play(listOf(t), t)
+                var c = liveController
+                var waited = 0
+                while (c == null && waited < 100) {
+                    delay(100)
+                    waited++
+                    c = liveController
+                }
+                if (c == null) {
+                    fail("player not ready")
+                    return
+                }
+                NowPlaying.autoContinue = false
+                c.setMediaItems(listOf(t.toMediaItem()), 0, 0)
+                c.prepare()
+                c.play()
                 showPlayer = true
+                Logs.add("link", "playing ${t.title.take(30)}")
             }
             "user" -> {
                 openPlaylist = null
                 openArtist = r.urn
             }
-            "playlist" -> {
+            "playlist", "system-playlist" -> {
                 openArtist = null
                 openPlaylist = Playlist(urn = r.urn, title = r.title ?: "")
             }
+            else -> fail("unsupported kind ${r.kind}")
         }
+    }
+
+    LaunchedEffect(NavEvents.pendingUrl) {
+        val url = NavEvents.pendingUrl ?: return@LaunchedEffect
+        scope.launch { openLink(url) }
+        NavEvents.consumeUrl()
     }
 
     Scaffold(
@@ -912,6 +1294,15 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                 )
             } else when (tab) {
                 Tab.Search -> Box(Modifier.fillMaxSize()) {
+                    androidx.activity.compose.BackHandler(enabled = query.isNotEmpty() || searched) {
+                        searchJobs.values.forEach { it.cancel() }
+                        searchJobs.clear()
+                        query = ""
+                        searched = false
+                        results = emptyList()
+                        hasMore = false
+                        suggestions = emptyList()
+                    }
                     val barPad = 76.dp
                     val resultsPad = 132.dp
                     when {
@@ -1073,12 +1464,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
                                             .padding(vertical = 8.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        AsyncImage(
-                                            model = Api.artworkUrl(p.artwork_url, "t120x120"),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(28.dp).clip(RoundedCornerShape(4.dp)),
-                                            contentScale = ContentScale.Crop,
-                                        )
+                                        PlaylistArtwork(p, 28.dp, 4.dp)
                                         Spacer(Modifier.width(10.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text(
@@ -1171,14 +1557,14 @@ fun TileGrid(
         return
     }
     val gridState = rememberLazyStaggeredGridState()
+    val curOnLoadMore by rememberUpdatedState(onLoadMore)
     if (onLoadMore != null) {
-        val curOnLoadMore by rememberUpdatedState(onLoadMore)
-        val curCount by rememberUpdatedState(tiles.size)
         LaunchedEffect(gridState) {
-            snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
-                .collect { last ->
-                    if (curCount > 0 && last >= curCount - 6) curOnLoadMore()
-                }
+            snapshotFlow {
+                (gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) to gridState.layoutInfo.totalItemsCount
+            }.collect { (last, total) ->
+                if (total > 0 && last >= total - 8) curOnLoadMore?.invoke()
+            }
         }
     }
     LazyVerticalStaggeredGrid(
@@ -1224,6 +1610,19 @@ fun TileGrid(
                 }
             }
         }
+        if (onLoadMore != null) {
+            item(span = androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan.FullLine) {
+                Box(Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        curOnLoadMore?.invoke()
+                        delay(4_000)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1238,6 +1637,7 @@ fun TrackList(
     onPlay: (Track) -> Unit,
     dimUndownloaded: Boolean = false,
     topPadding: Dp = 0.dp,
+    rowTrailing: (@Composable (Track) -> Unit)? = null,
 ) {
     when {
         error != null -> Text(
@@ -1266,7 +1666,12 @@ fun TrackList(
     ) {
         items(tracks) { track ->
             val unavailable = dimUndownloaded && !Downloads.isDownloaded(track.urn)
-            TrackRow(track = track, onClick = { onPlay(track) }, dimmed = unavailable)
+            TrackRow(
+                track = track,
+                onClick = { onPlay(track) },
+                dimmed = unavailable,
+                trailing = rowTrailing?.let { slot -> @Composable { slot(track) } },
+            )
         }
         if (canLoadMore && tracks.isNotEmpty()) {
             item {
@@ -1401,12 +1806,7 @@ fun PlaylistCardList(
                 Modifier.fillMaxWidth().clickable { onOpen(p) }.padding(vertical = 6.dp, horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AsyncImage(
-                    model = Api.artworkUrl(p.artwork_url, "t120x120"),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
-                )
+                PlaylistArtwork(p, 52.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(p.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
@@ -1484,13 +1884,23 @@ fun TrackArtwork(
 }
 
 @Composable
-fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
+fun TrackRow(
+    track: Track,
+    onClick: () -> Unit,
+    dimmed: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     val scope = rememberCoroutineScope()
     val liked = Likes.isLiked(track.urn)
     val isCurrent = NowPlaying.urn == track.urn
     val accent = MaterialTheme.colorScheme.primary
     val dim = dimmed || track.starLocked || (track.unavailable && !Prefs.playBlocked)
     val rowAlpha = if (dim) 0.4f else 1f
+    LaunchedEffect(track.urn) {
+        if (track.goPlus && track.displayDuration in 1L..35_000L && !Prefs.offline) {
+            DurationCache.resolve(track.urn)
+        }
+    }
 
     Row(
         Modifier
@@ -1564,19 +1974,36 @@ fun TrackRow(track: Track, onClick: () -> Unit, dimmed: Boolean = false) {
                 modifier = Modifier.size(15.dp),
             )
             Spacer(Modifier.width(4.dp))
+            if (Prefs.streamTags) {
+                val q = Downloads.cachedQuality(track.urn)
+                LaunchedEffect(track.urn) { if (q == null) Downloads.quality(track.urn) }
+                if (q != null) {
+                    Text(
+                        q.split(' ').take(2).joinToString(" "),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+            }
         }
         Text(
-            formatDuration(track.duration),
+            formatDuration(track.displayDuration),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
         )
-        IconButton(onClick = { scope.launch { Likes.toggle(track) } }, modifier = Modifier.size(40.dp)) {
-            Icon(
-                painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                null,
-                tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
+        if (trailing != null) {
+            trailing()
+        } else {
+            IconButton(onClick = { scope.launch { Likes.toggle(track) } }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                    null,
+                    tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }
@@ -1613,10 +2040,8 @@ fun EqualizerBars(playing: Boolean, color: Color) {
 
 private val snippetHandled = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
-/**
- * Сервер иногда отдаёт превью вместо трека — ровно 10 или 30 секунд.
- * Ловим это по расхождению с длительностью из API и переигрываем через hq.
- */
+private val healedUrns = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
 private fun retryIfSnippet(controller: MediaController) {
     val item = controller.currentMediaItem ?: return
     val urn = item.mediaId.takeIf { it.isNotEmpty() } ?: return
@@ -1624,21 +2049,26 @@ private fun retryIfSnippet(controller: MediaController) {
     if (!Prefs.star || !Prefs.hqStreaming) return
     if (urn in snippetHandled) return
 
-    val expected = item.mediaMetadata.extras?.getLong("duration") ?: 0L
+    val expected = maxOf(item.mediaMetadata.extras?.getLong("duration") ?: 0L, DurationCache.get(urn))
     val actual = controller.duration
-    if (expected <= 45_000L || actual <= 0L) return
-    if (actual >= expected - 5_000L) return
-
+    if (actual <= 0L) return
     val snippet = kotlin.math.abs(actual - 10_000L) < 1_500L ||
         kotlin.math.abs(actual - 30_000L) < 1_500L
     if (!snippet) return
+    val goPlus = item.mediaMetadata.extras?.getBoolean("go_plus") == true
+    if (expected > 45_000L) {
+        if (actual >= expected - 5_000L) return
+    } else if (!goPlus) {
+        return
+    }
 
     snippetHandled.add(urn)
     Logs.add("player", "snippet ${actual / 1000}s vs ${expected / 1000}s → retry via hq")
     ScDataSource.forceHq(urn, true)
+    ScDataSource.invalidate(urn)
 
     val index = controller.currentMediaItemIndex
-    controller.replaceMediaItem(index, item.buildUpon().build())
+    controller.replaceMediaItem(index, item.buildUpon().setUri(Api.streamUrl(urn, hq = true)).build())
     controller.prepare()
     controller.play()
 
@@ -1652,7 +2082,9 @@ private fun retryIfSnippet(controller: MediaController) {
             ScDataSource.forceHq(urn, false)
             withContext(Dispatchers.Main) {
                 val i = controller.currentMediaItemIndex
-                controller.currentMediaItem?.let { controller.replaceMediaItem(i, it.buildUpon().build()) }
+                controller.currentMediaItem?.let {
+                    controller.replaceMediaItem(i, it.buildUpon().setUri(Api.streamUrl(urn)).build())
+                }
                 controller.prepare()
                 controller.play()
             }
@@ -1663,6 +2095,9 @@ private fun retryIfSnippet(controller: MediaController) {
 fun Track.toMediaItem(): MediaItem {
     val local = if (Downloads.isDownloaded(urn)) Downloads.fileFor(urn) else null
     val gp = goPlus
+    if (gp) ScDataSource.markGoPlus(urn)
+    val localArt = Downloads.artPathOrNull(urn)
+    val artwork = localArt?.let { java.io.File(it).toUri() } ?: Api.artworkUrl(artwork_url)?.toUri()
     return MediaItem.Builder()
         .setMediaId(urn)
         .setUri(local?.toUri() ?: Api.streamUrl(urn).toUri())
@@ -1670,14 +2105,21 @@ fun Track.toMediaItem(): MediaItem {
             MediaMetadata.Builder()
                 .setTitle(title)
                 .setArtist(user?.username)
-                .setArtworkUri(Api.artworkUrl(artwork_url)?.toUri())
+                .setArtworkUri(artwork)
+                .apply {
+                    if (artwork == null) {
+                        NoteArtwork.bytes?.let {
+                            setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                        }
+                    }
+                }
                 .setExtras(
                     Bundle().apply {
                         putString("artist_urn", user?.urn)
                         putString("artwork_url", artwork_url)
                         putString("waveform_url", waveform_url)
                         putString("permalink_url", permalink_url)
-                        putLong("duration", duration)
+                        putLong("duration", displayDuration)
                         putBoolean("go_plus", gp)
                     }
                 )
@@ -1693,6 +2135,7 @@ fun MediaItem.toTrackOrNull(): Track? {
     return Track(
         urn = mediaId,
         title = title,
+        monetization_model = if (md.extras?.getBoolean("go_plus") == true) "SUB_HIGH_TIER" else null,
         duration = md.extras?.getLong("duration") ?: 0L,
         artwork_url = md.extras?.getString("artwork_url"),
         waveform_url = md.extras?.getString("waveform_url"),
@@ -1736,6 +2179,19 @@ fun openInBrowser(context: android.content.Context, url: String) {
             )
         }
     }
+}
+
+private val authPrefixes = listOf(
+    "/signin", "/login", "/logout", "/connect", "/authorize", "/oauth", "/signup",
+    "/register", "/password", "/you/", "/settings", "/sso", "/google", "/apple", "/facebook",
+)
+
+fun isAuthPage(host: String, path: String): Boolean {
+    if (host != "soundcloud.com" && host != "www.soundcloud.com" && host != "m.soundcloud.com" &&
+        host != "on.soundcloud.com"
+    ) return true
+    val p = path.lowercase()
+    return authPrefixes.any { p == it.trimEnd('/') || p.startsWith(it) }
 }
 
 fun openCamera(context: android.content.Context) {

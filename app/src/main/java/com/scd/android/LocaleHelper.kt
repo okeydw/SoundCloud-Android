@@ -11,7 +11,7 @@ object LocaleHelper {
         if (lang == "system") return base
         val locale = Locale(lang)
         Locale.setDefault(locale)
-        val config = base.resources.configuration
+        val config = android.content.res.Configuration(base.resources.configuration)
         config.setLocale(locale)
         return ContextWrapper(base.createConfigurationContext(config))
     }

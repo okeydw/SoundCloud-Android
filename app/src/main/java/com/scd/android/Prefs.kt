@@ -64,6 +64,8 @@ object Prefs {
         private set
     var avatarUrl by mutableStateOf<String?>(null)
         private set
+    var userUrn by mutableStateOf<String?>(null)
+        private set
     var crossfade by mutableStateOf(false)
         private set
     var playBlocked by mutableStateOf(false)
@@ -71,6 +73,20 @@ object Prefs {
     var star by mutableStateOf(false)
         private set
     var hqStreaming by mutableStateOf(true)
+        private set
+    var apiStar by mutableStateOf(true)
+        private set
+    var anonFallback by mutableStateOf(true)
+        private set
+    var downloadHq by mutableStateOf(true)
+        private set
+    var autoCacheLikes by mutableStateOf(false)
+        private set
+    var eqEnabled by mutableStateOf(false)
+        private set
+    var eqPreset by mutableStateOf(-1)
+        private set
+    var eqBands by mutableStateOf("")
         private set
     var streamDebug by mutableStateOf(false)
         private set
@@ -99,10 +115,18 @@ object Prefs {
         footerAlpha = sp.getFloat("footer_alpha", 1f)
         username = sp.getString("username", null)
         avatarUrl = sp.getString("avatar_url", null)
+        userUrn = sp.getString("user_urn", null)
         crossfade = sp.getBoolean("crossfade", false)
         playBlocked = sp.getBoolean("play_blocked", false)
         star = sp.getBoolean("star", false)
         hqStreaming = sp.getBoolean("hq_streaming", true)
+        apiStar = sp.getBoolean("api_star", true)
+        anonFallback = sp.getBoolean("anon_fallback", true)
+        downloadHq = sp.getBoolean("download_hq", true)
+        autoCacheLikes = sp.getBoolean("auto_cache_likes", false)
+        eqEnabled = sp.getBoolean("eq_enabled", false)
+        eqPreset = sp.getInt("eq_preset", -1)
+        eqBands = sp.getString("eq_bands", "") ?: ""
         streamDebug = sp.getBoolean("stream_debug", false)
         streamTags = sp.getBoolean("stream_tags", false)
         accent = sp.getInt("accent", AccentPalette.DEFAULT)
@@ -141,6 +165,37 @@ object Prefs {
         sp.edit().putBoolean("hq_streaming", value).apply()
     }
 
+    fun changeDownloadHq(value: Boolean) {
+        downloadHq = value
+        sp.edit().putBoolean("download_hq", value).apply()
+    }
+
+    fun changeAnonFallback(value: Boolean) {
+        anonFallback = value
+        sp.edit().putBoolean("anon_fallback", value).apply()
+    }
+
+    fun changeAutoCacheLikes(value: Boolean) {
+        autoCacheLikes = value
+        sp.edit().putBoolean("auto_cache_likes", value).apply()
+    }
+
+    fun changeEq(enabled: Boolean, preset: Int, bands: String) {
+        eqEnabled = enabled
+        eqPreset = preset
+        eqBands = bands
+        sp.edit()
+            .putBoolean("eq_enabled", enabled)
+            .putInt("eq_preset", preset)
+            .putString("eq_bands", bands)
+            .apply()
+    }
+
+    fun changeApiStar(value: Boolean) {
+        apiStar = value
+        sp.edit().putBoolean("api_star", value).apply()
+    }
+
     fun saveStar(value: Boolean) {
         star = value
         sp.edit().putBoolean("star", value).apply()
@@ -159,6 +214,11 @@ object Prefs {
     fun saveUsername(value: String?) {
         username = value
         sp.edit().putString("username", value).apply()
+    }
+
+    fun saveUserUrn(value: String?) {
+        userUrn = value
+        sp.edit().putString("user_urn", value).apply()
     }
 
     fun saveAvatar(value: String?) {

@@ -1,7 +1,6 @@
 package com.scd.android
 
 import android.content.Context
-import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -14,8 +13,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
 
 object BlurSupport {
@@ -25,27 +22,6 @@ object BlurSupport {
 object BackgroundImage {
 
     private fun dir(context: Context) = File(context.applicationContext.filesDir, "background")
-
-    fun fileFor(context: Context, stamp: Long) = File(dir(context), "bg_$stamp.jpg")
-
-    suspend fun import(context: Context, source: Uri): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
-            val folder = dir(context).apply { mkdirs() }
-            val stamp = System.currentTimeMillis()
-            val target = File(folder, "bg_$stamp.jpg")
-            context.contentResolver.openInputStream(source).use { input ->
-                if (input == null) return@runCatching false
-                target.outputStream().use { output -> input.copyTo(output) }
-            }
-            if (target.length() <= 0L) {
-                target.delete()
-                return@runCatching false
-            }
-            folder.listFiles()?.forEach { if (it != target) it.delete() }
-            Prefs.changeBackgroundImage(target.absolutePath)
-            true
-        }.getOrDefault(false)
-    }
 
     fun save(context: Context, bitmap: android.graphics.Bitmap): Boolean = runCatching {
         val folder = dir(context).apply { mkdirs() }

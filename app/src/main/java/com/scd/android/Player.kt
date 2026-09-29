@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -103,12 +104,13 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
         label = "barTint",
     )
 
-    val idx = controller?.currentMediaItemIndex ?: 0
     val count = controller?.mediaItemCount ?: 0
-    val hasPrev = controller != null && idx > 0
-    val hasNext = controller != null && idx in 0 until (count - 1)
-    val prev = if (hasPrev) controller!!.getMediaItemAt(idx - 1).mediaMetadata else null
-    val next = if (hasNext) controller!!.getMediaItemAt(idx + 1).mediaMetadata else null
+    val prevIdx = controller?.previousMediaItemIndex ?: -1
+    val nextIdx = controller?.nextMediaItemIndex ?: -1
+    val hasPrev = controller != null && prevIdx in 0 until count
+    val hasNext = controller != null && nextIdx in 0 until count
+    val prev = if (hasPrev) controller!!.getMediaItemAt(prevIdx).mediaMetadata else null
+    val next = if (hasNext) controller!!.getMediaItemAt(nextIdx).mediaMetadata else null
 
     val scope = rememberCoroutineScope()
     val offsetX = remember { Animatable(0f) }
@@ -152,12 +154,12 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
                                         when {
                                             v <= -threshold && hasNext -> {
                                                 offsetX.animateTo(-widthPx, tween(160))
-                                                controller?.seekToNext()
+                                                controller?.seekToNextMediaItem()
                                                 offsetX.snapTo(0f)
                                             }
                                             v >= threshold && hasPrev -> {
                                                 offsetX.animateTo(widthPx, tween(160))
-                                                controller?.seekToPrevious()
+                                                controller?.seekToPreviousMediaItem()
                                                 offsetX.snapTo(0f)
                                             }
                                             else -> offsetX.animateTo(0f, tween(160))
@@ -311,6 +313,8 @@ fun NowPlayingScreen(
 
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableStateOf(0f) }
+    var showLyrics by remember { mutableStateOf(false) }
+    var showEq by remember { mutableStateOf(false) }
 
     var fullTrack by remember(currentUrn) { mutableStateOf<Track?>(null) }
     var streamHost by remember(currentUrn) { mutableStateOf<String?>(null) }
@@ -330,14 +334,35 @@ fun NowPlayingScreen(
             streamHost = "offline"
         }
     }
+    var offlineQuality by remember(currentUrn) { mutableStateOf(currentUrn?.let { Downloads.cachedQuality(it) }) }
+    LaunchedEffect(currentUrn) {
+        val urn = currentUrn ?: return@LaunchedEffect
+        if (Downloads.isDownloaded(urn)) offlineQuality = Downloads.quality(urn)
+    }
     val qualityTag = when {
-        Downloads.isDownloaded(currentUrn ?: "") -> "OFFLINE"
-        Prefs.star -> "HQ"
+        Downloads.isDownloaded(currentUrn ?: "") -> offlineQuality ?: "OFFLINE"
+        ScDataSource.wasHq(currentUrn) -> "HQ"
         else -> "SQ"
     }
     val serverTag = streamHost?.split('.')?.take(2)?.joinToString(".")
     val isGoPlus = fullTrack?.goPlus == true
-    val duration = NowPlaying.duration.takeIf { it > 0 } ?: (fullTrack?.duration ?: 0L)
+    val apiDuration = maxOf(
+        fullTrack?.displayDuration ?: 0L,
+        currentUrn?.let { DurationCache.get(it) } ?: 0L,
+    ).takeIf { it > 0L } ?: NowPlaying.duration
+    val playerDuration = NowPlaying.duration
+    val duration = when {
+        playerDuration <= 0L -> apiDuration
+        apiDuration > 45_000L && playerDuration < apiDuration - 10_000L -> apiDuration
+        else -> playerDuration
+    }
+    fun seekFraction(frac: Float) {
+        if (duration <= 0L) return
+        var target = (frac * duration).toLong()
+        val real = controller.duration
+        if (real > 0L && target > real - 500L) target = (real - 500L).coerceAtLeast(0L)
+        controller.seekTo(target)
+    }
 
     var waveform by remember(currentUrn) { mutableStateOf(WaveCache.get(currentUrn)) }
     LaunchedEffect(currentUrn, fullTrack) {
@@ -461,21 +486,42 @@ fun NowPlayingScreen(
                                 Icon(painterResource(R.drawable.ic_share), null, tint = titleColor, modifier = Modifier.size(20.dp))
                             }
                             IconButton(onClick = {
-                                currentUrn?.let { urn ->
+                                val seed = fullTrack?.takeIf { it.urn == currentUrn }
+                                    ?: controller.currentMediaItem?.toTrackOrNull()
+                                if (seed != null) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        context.getString(R.string.radio_starting),
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
                                     scope.launch {
-                                        val related = runCatching { Api.relatedTracks(urn) }.getOrNull() ?: return@launch
-                                        val curId = controller.currentMediaItem?.mediaId
-                                        val add = related.collection
-                                            .distinctBy { it.urn }
-                                            .filter { it.urn != curId && !it.unavailable && !it.starLocked }
-                                        if (add.isNotEmpty()) {
-                                            NowPlaying.autoContinue = true
-                                            val curIdx = controller.currentMediaItemIndex
-                                            if (controller.mediaItemCount > curIdx + 1) {
-                                                controller.removeMediaItems(curIdx + 1, controller.mediaItemCount)
-                                            }
-                                            controller.addMediaItems(add.map { it.toMediaItem() })
+                                        fun usable(list: List<Track>) = list.distinctBy { it.urn }.filter {
+                                            it.urn != seed.urn && !it.starLocked &&
+                                                (!it.unavailable || Prefs.playBlocked) && !Dislikes.isDisliked(it.urn)
                                         }
+                                        LocalRadio.startFrom(seed, listOf(seed.urn))
+                                        var add = usable(Api.waveFromTrack(seed.urn))
+                                        var source = "server"
+                                        if (add.isEmpty()) {
+                                            add = usable(LocalRadio.trackBatch(20))
+                                            source = "local"
+                                        }
+                                        if (add.isEmpty()) {
+                                            Logs.add("radio", "nothing found for ${seed.title.take(30)}")
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                context.getString(R.string.radio_failed),
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
+                                            return@launch
+                                        }
+                                        Logs.add("radio", "+${add.size} from $source")
+                                        NowPlaying.autoContinue = true
+                                        val curIdx = controller.currentMediaItemIndex
+                                        if (controller.mediaItemCount > curIdx + 1) {
+                                            controller.removeMediaItems(curIdx + 1, controller.mediaItemCount)
+                                        }
+                                        controller.addMediaItems(add.map { it.toMediaItem() })
                                     }
                                 }
                             }) {
@@ -653,6 +699,20 @@ fun NowPlayingScreen(
                                         )
                                     }
                             }
+                            Spacer(Modifier.weight(1f))
+                            if (!Prefs.offline) {
+                                IconButton(onClick = { showLyrics = true }) {
+                                    Icon(painterResource(R.drawable.ic_lyrics), null, tint = subColor, modifier = Modifier.size(22.dp))
+                                }
+                            }
+                            IconButton(onClick = { showEq = true }) {
+                                Icon(
+                                    painterResource(R.drawable.ic_equalizer),
+                                    null,
+                                    tint = if (Prefs.eqEnabled) MaterialTheme.colorScheme.primary else subColor,
+                                    modifier = Modifier.size(21.dp),
+                                )
+                            }
                         }
                     }
 
@@ -664,7 +724,7 @@ fun NowPlayingScreen(
                             samples = wf,
                             progress = if (duration > 0) position.toFloat() / duration else 0f,
                             isPlaying = isPlaying,
-                            onSeek = { frac -> if (duration > 0) controller.seekTo((frac * duration).toLong()) },
+                            onSeek = { frac -> seekFraction(frac) },
                             modifier = Modifier.fillMaxWidth().height(56.dp),
                         )
                     } else {
@@ -675,7 +735,7 @@ fun NowPlayingScreen(
                                 dragValue = it
                             },
                             onValueChangeFinished = {
-                                if (duration > 0) controller.seekTo((dragValue * duration).toLong())
+                                seekFraction(dragValue)
                                 dragging = false
                             },
                             modifier = Modifier.fillMaxWidth(),
@@ -766,6 +826,29 @@ fun NowPlayingScreen(
             }
         }
     }
+
+    val urnForExtras = currentUrn
+    if (showLyrics && urnForExtras != null) {
+        LyricsSheet(
+            urn = urnForExtras,
+            title = listOf(artist, title).filter { it.isNotBlank() }.joinToString(" — "),
+            controller = controller,
+            onClose = { showLyrics = false },
+        )
+    }
+    if (showEq) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showEq = false }) {
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
+                Column(
+                    Modifier
+                        .padding(20.dp)
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                ) {
+                    EqualizerPanel()
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -792,6 +875,9 @@ fun AddToPlaylistMenu(expanded: Boolean, track: Track, onDismiss: () -> Unit) {
     LaunchedEffect(expanded) {
         if (expanded) {
             runCatching { Api.myPlaylists() }.onSuccess { playlists = it.collection }
+            if (!Prefs.offline) {
+                runCatching { Api.myPlaylists(fresh = true) }.onSuccess { playlists = it.collection }
+            }
         }
     }
 

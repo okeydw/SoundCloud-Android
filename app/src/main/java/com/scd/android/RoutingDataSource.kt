@@ -6,7 +6,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
 
-@UnstableApi
+@androidx.annotation.OptIn(UnstableApi::class)
 class RoutingDataSource(
     private val localFactory: DataSource.Factory,
     private val networkFactory: DataSource.Factory,
@@ -44,6 +44,7 @@ class RoutingDataSource(
         }
     }
 
+    @androidx.annotation.OptIn(UnstableApi::class)
     class Factory(
         private val localFactory: DataSource.Factory,
         private val networkFactory: DataSource.Factory,

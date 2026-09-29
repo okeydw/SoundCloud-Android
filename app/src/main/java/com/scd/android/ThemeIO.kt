@@ -59,28 +59,53 @@ object ThemeIO {
         }.getOrDefault(false)
     }
 
+    private const val MAX_FILE_BYTES = 24L * 1024 * 1024
+
+    private fun readLimited(context: Context, source: Uri): ByteArray? {
+        context.contentResolver.openInputStream(source)?.use { input ->
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                total += n
+                if (total > MAX_FILE_BYTES) return null
+                out.write(buffer, 0, n)
+            }
+            return out.toByteArray()
+        }
+        return null
+    }
+
+    private fun isImage(bytes: ByteArray): Boolean {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        return bounds.outWidth > 0 && bounds.outHeight > 0
+    }
+
+    private fun opaque(color: Int): Int = color or 0xFF000000.toInt()
+
     suspend fun import(context: Context, source: Uri): Boolean = withContext(Dispatchers.IO) {
         runCatching {
-            val text = context.contentResolver.openInputStream(source)?.use {
-                it.readBytes().decodeToString()
-            } ?: return@runCatching false
+            val raw = readLimited(context, source) ?: return@runCatching false
+            val pack = json.decodeFromString(ThemePack.serializer(), raw.decodeToString())
 
-            val pack = json.decodeFromString(ThemePack.serializer(), text)
+            val image = pack.image?.takeIf { it.isNotEmpty() }?.let { Base64.decode(it, Base64.DEFAULT) }
+            if (image != null && !isImage(image)) return@runCatching false
 
-            Prefs.changeAccent(pack.accent)
-            Prefs.changeTextColor(pack.textColor)
+            Prefs.changeAccent(opaque(pack.accent))
+            Prefs.changeTextColor(if (pack.textColor == 0) 0 else opaque(pack.textColor))
             Prefs.changeHeaderAlpha(pack.headerAlpha.coerceIn(0f, 1f))
             Prefs.changeFooterAlpha(pack.footerAlpha.coerceIn(0f, 1f))
             Prefs.changeBackgroundBlur(pack.backgroundBlur)
             Prefs.changeBackgroundBlurRadius(pack.backgroundBlurRadius.coerceIn(0f, 60f))
             Prefs.changeBackgroundDim(pack.backgroundDim.coerceIn(0f, 0.95f))
 
-            val encoded = pack.image
-            if (encoded.isNullOrEmpty()) {
+            if (image == null) {
                 BackgroundImage.clear(context)
             } else {
-                val bytes = Base64.decode(encoded, Base64.DEFAULT)
-                BackgroundImage.saveBytes(context, bytes)
+                BackgroundImage.saveBytes(context, image)
             }
             true
         }.getOrDefault(false)

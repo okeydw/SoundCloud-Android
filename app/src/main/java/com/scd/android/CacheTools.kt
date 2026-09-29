@@ -21,7 +21,7 @@ object CacheTools {
 
     suspend fun clear(context: Context) = withContext(Dispatchers.IO) {
         val root = context.applicationContext.cacheDir
-        runCatching { MediaCache.clear() }
+        runCatching { MediaCache.clear(context) }
         runCatching { Api.http.cache?.evictAll() }
         runCatching { Images.clear() }
         ScDataSource.forgetResolved()

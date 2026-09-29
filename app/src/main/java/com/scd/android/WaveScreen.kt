@@ -67,14 +67,6 @@ fun WaveFeed(
     onPlay: (Track) -> Unit,
 ) {
     when {
-        error != null -> {
-            Text(
-                stringResource(R.string.error_network) + "\n" + error,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(16.dp),
-            )
-            return
-        }
         tracks.isEmpty() && loading -> {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -82,12 +74,23 @@ fun WaveFeed(
             return
         }
         tracks.isEmpty() -> {
-            Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.fillMaxSize().padding(32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 Text(
-                    stringResource(R.string.wave_empty),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (error != null) stringResource(R.string.error_network) + "\n" + error
+                    else stringResource(R.string.wave_empty),
+                    color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
+                Spacer(Modifier.height(16.dp))
+                androidx.compose.material3.Button(onClick = onRefresh) {
+                    Icon(painterResource(R.drawable.ic_refresh), null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.wave_refresh))
+                }
             }
             return
         }
@@ -104,7 +107,7 @@ fun WaveFeed(
         }
     }
 
-    LaunchedEffect(pagerState.settledPage) {
+    LaunchedEffect(pagerState.settledPage, tracks.size) {
         val settled = pagerState.settledPage
         if (settled >= tracks.size - 4 && canLoadMore && !loading) onLoadMore()
     }

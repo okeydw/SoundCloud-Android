@@ -5,8 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-val appVersionName = "0.4.2"
-val appVersionCode = 7
+val appVersionName = "0.4.3"
+val appVersionCode = 8
 
 android {
     namespace = "com.scd.android"
@@ -62,6 +62,12 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    bundle {
+        language {
+            enableSplit = false
+        }
     }
 
     lint {

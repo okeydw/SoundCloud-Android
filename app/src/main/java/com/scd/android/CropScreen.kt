@@ -170,7 +170,6 @@ object ImageCropper {
             val canvas = Canvas(result)
             val ratio = outW.toFloat() / frameW
 
-            // ContentScale.Crop: картинка растянута так, чтобы покрыть рамку целиком
             val cover = max(frameW.toFloat() / bitmap.width, frameH.toFloat() / bitmap.height)
             val drawn = cover * scale * ratio
             val matrix = Matrix().apply {
@@ -202,8 +201,34 @@ object ImageCropper {
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        return context.contentResolver.openInputStream(uri).use {
+        val raw = context.contentResolver.openInputStream(uri).use {
             BitmapFactory.decodeStream(it, null, options)
+        } ?: return null
+        val orientation = runCatching {
+            context.contentResolver.openInputStream(uri)?.use {
+                android.media.ExifInterface(it).getAttributeInt(
+                    android.media.ExifInterface.TAG_ORIENTATION,
+                    android.media.ExifInterface.ORIENTATION_NORMAL,
+                )
+            }
+        }.getOrNull() ?: android.media.ExifInterface.ORIENTATION_NORMAL
+        return applyOrientation(raw, orientation)
+    }
+
+    private fun applyOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+        val m = Matrix()
+        when (orientation) {
+            android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.setScale(-1f, 1f)
+            android.media.ExifInterface.ORIENTATION_ROTATE_180 -> m.setRotate(180f)
+            android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.setScale(1f, -1f)
+            android.media.ExifInterface.ORIENTATION_TRANSPOSE -> { m.setRotate(90f); m.postScale(-1f, 1f) }
+            android.media.ExifInterface.ORIENTATION_ROTATE_90 -> m.setRotate(90f)
+            android.media.ExifInterface.ORIENTATION_TRANSVERSE -> { m.setRotate(-90f); m.postScale(-1f, 1f) }
+            android.media.ExifInterface.ORIENTATION_ROTATE_270 -> m.setRotate(-90f)
+            else -> return bitmap
         }
+        val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
+        if (rotated !== bitmap) bitmap.recycle()
+        return rotated
     }
 }

@@ -6,7 +6,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -19,6 +23,9 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.Cache
 import okhttp3.CacheControl
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -29,7 +36,8 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 object Api {
-    val API_BASE get() = Endpoints.apiBase
+    val API_BASE get() = if (Endpoints.starApiActive) Endpoints.API_STAR else Endpoints.apiBase
+    val CONTROL_BASE get() = Endpoints.apiBase
     val STREAM_BASE get() = Endpoints.streamBase
     val IMAGES_BASE get() = Endpoints.imageBase
 
@@ -78,6 +86,8 @@ object Api {
                 val path = req.url.encodedPath
                 val isApi = host in Endpoints.apiHostnames
                 val maxAge = when {
+                    path.startsWith("/auth") || path.startsWith("/health") ||
+                        path.startsWith("/recommendations") -> null
                     host in Endpoints.imageHostnames || host.endsWith("sndcdn.com") -> 604800
                     isApi && (
                         path.contains("/playlists") ||
@@ -89,7 +99,7 @@ object Api {
                     isApi -> 60
                     else -> null
                 }
-                if (req.method == "GET" && maxAge != null) {
+                if (req.method == "GET" && maxAge != null && res.code == 200) {
                     res.newBuilder()
                         .removeHeader("Pragma")
                         .header("Cache-Control", "public, max-age=$maxAge")
@@ -99,7 +109,68 @@ object Api {
             .build()
     }
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
+
+    private val apiClient: OkHttpClient by lazy {
+        http.newBuilder()
+            .callTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private val mutateClient: OkHttpClient by lazy {
+        http.newBuilder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .callTimeout(90, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private fun neverReachedServer(e: Throwable): Boolean =
+        e is java.net.ConnectException || e is java.net.UnknownHostException ||
+            e is javax.net.ssl.SSLHandshakeException || e is java.net.NoRouteToHostException
+
+    private suspend fun mutate(method: String, path: String, body: okhttp3.RequestBody?): String =
+        withContext(Dispatchers.IO) {
+            val bases = if (Endpoints.starApiActive) listOf(Endpoints.API_STAR, Endpoints.apiBase) else listOf(Endpoints.apiBase)
+            var last: Exception? = null
+            for ((i, base) in bases.withIndex()) {
+                val hasNext = i < bases.lastIndex
+                val host = base.removePrefix("https://")
+                val req = Request.Builder()
+                    .url(base + path)
+                    .method(method, body)
+                    .apply { sessionId?.let { header("x-session-id", it) } }
+                    .build()
+                try {
+                    mutateClient.newCall(req).execute().use { res ->
+                        val text = res.body?.string() ?: ""
+                        if (res.isSuccessful) return@withContext text
+                        Logs.add("api", "$method $path → ${res.code} @$host ${text.take(120).replace('\n', ' ')}")
+                        val html = res.header("content-type")?.contains("text/html", ignoreCase = true) == true
+                        val infra = res.code in 502..504 && html
+                        val starGate = base == Endpoints.API_STAR && res.code == 403
+                        if (hasNext && (infra || starGate)) {
+                            last = ApiHttpException(res.code, text.take(300))
+                            return@use
+                        }
+                        if (res.code == 401) SessionState.markExpired()
+                        throw ApiHttpException(res.code, text.take(300))
+                    }
+                } catch (e: ApiHttpException) {
+                    throw e
+                } catch (e: IOException) {
+                    Logs.add("api", "$method $path fail ${e.javaClass.simpleName} @$host")
+                    last = e
+                    if (!hasNext || !neverReachedServer(e)) throw e
+                }
+            }
+            throw last ?: IOException("mutation failed")
+        }
 
     suspend fun searchTracks(q: String, page: Int = 0, limit: Int = 20): PagedTracks =
         getJson("$API_BASE/tracks?limit=$limit&page=$page&q=${enc(q)}", PagedTracks.serializer())
@@ -123,34 +194,207 @@ object Api {
         getJson("$API_BASE/auth/login", LoginResponse.serializer())
 
     suspend fun authLoginStatus(id: String): LoginStatus =
-        getJson("$API_BASE/auth/login/status?id=${enc(id)}", LoginStatus.serializer())
+        getJson("$API_BASE/auth/login/status?id=${enc(id)}", LoginStatus.serializer(), fresh = true)
 
     suspend fun trackByUrn(urn: String): Track =
-        getJson("$API_BASE/tracks/${enc(urn)}", Track.serializer())
+        getJson("$API_BASE/tracks/${enc(urn)}", Track.serializer()).also {
+            DurationCache.record(it.urn, maxOf(it.duration, it.full_duration ?: 0L))
+        }
+
+    @Volatile
+    var lastResolvedTrack: Track? = null
+        private set
+
+    private fun expandShortLink(url: String): String {
+        val host = url.substringAfter("://").substringBefore('/').lowercase()
+        if (host != "on.soundcloud.com") return url
+        return runCatching {
+            val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+            ScDataSource.probeClient(http).newBuilder()
+                .cache(null)
+                .followRedirects(true)
+                .build()
+                .newCall(req).execute().use { res -> res.request.url.toString() }
+        }.getOrDefault(url).also { Logs.add("link", "short → ${it.substringAfter("://").substringBefore('?')}") }
+    }
 
     suspend fun resolve(url: String): ResolveResult? = withContext(Dispatchers.IO) {
-        runCatching { getJson("$API_BASE/resolve?url=${enc(url)}", ResolveResult.serializer()) }
+        val clean = shareUrl(expandShortLink(url))
+        val bases = listOf(Endpoints.STREAM_STAR, STREAM_BASE) + Endpoints.streamHosts
+        for (base in bases.distinct()) {
+            val body = runCatching {
+                val req = Request.Builder()
+                    .url("$base/resolve?url=${enc(clean)}")
+                    .cacheControl(CacheControl.FORCE_NETWORK)
+                    .build()
+                ScDataSource.probeClient(http).newCall(req).execute().use { res ->
+                    if (res.isSuccessful) res.body?.string() else {
+                        Logs.add("link", "resolve HTTP ${res.code} @${base.removePrefix("https://")}")
+                        null
+                    }
+                }
+            }.getOrNull() ?: continue
+            val parsed = runCatching { json.decodeFromString(ResolveResult.serializer(), body) }.getOrNull()
+                ?.takeIf { it.urn.isNotEmpty() } ?: continue
+            if (parsed.kind == "track") {
+                lastResolvedTrack = runCatching { json.decodeFromString(Track.serializer(), body) }.getOrNull()
+            }
+            Logs.add("link", "resolved ${parsed.kind} via ${base.removePrefix("https://")}")
+            return@withContext parsed
+        }
+        runCatching { getJson("$API_BASE/resolve?url=${enc(clean)}", ResolveResult.serializer()) }
+            .onFailure { Logs.add("link", "resolve failed: ${it.message?.take(120)}") }
             .getOrNull()
             ?.takeIf { it.urn.isNotEmpty() }
     }
 
-    suspend fun relatedTracks(urn: String, limit: Int = 40): PagedTracks =
-        getJson("$API_BASE/tracks/${enc(urn)}/related?limit=$limit&page=0", PagedTracks.serializer())
+    fun shareUrl(url: String): String {
+        val trimmed = url.trim().substringBefore('#')
+        val q = trimmed.indexOf('?')
+        if (q < 0) return trimmed
+        val base = trimmed.substring(0, q)
+        val kept = trimmed.substring(q + 1)
+            .split('&')
+            .filter { part ->
+                part.isNotEmpty() &&
+                    !part.startsWith("utm_") &&
+                    !part.startsWith("si=") &&
+                    !part.startsWith("ref=") &&
+                    !part.startsWith("in=")
+            }
+        return if (kept.isEmpty()) base else base + "?" + kept.joinToString("&")
+    }
 
-    suspend fun waveTracks(cursor: String? = null, limit: Int = 20): Pair<List<Track>, String> {
+    suspend fun relatedTracks(urn: String, limit: Int = 40, page: Int = 0): PagedTracks =
+        getJson("$API_BASE/tracks/${enc(urn)}/related?limit=$limit&page=$page", PagedTracks.serializer())
+
+    @Volatile
+    private var waveSeed: String? = null
+
+    private suspend fun waveBatch(
+        cursor: String?,
+        limit: Int,
+        seedTrack: String?,
+        hideListened: Boolean?,
+    ): Pair<List<Track>, String> {
         val url = buildString {
-            append("$API_BASE/recommendations/wave?limit=$limit")
+            if (seedTrack != null) {
+                append("$API_BASE/recommendations/wave/from-track/${enc(seedTrack.substringAfterLast(':'))}?limit=$limit")
+            } else {
+                append("$API_BASE/recommendations/wave?limit=$limit")
+            }
             cursor?.takeIf { it.isNotEmpty() }?.let { append("&cursor=${enc(it)}") }
+            hideListened?.let { append("&hide_listened=${if (it) 1 else 0}") }
         }
-        val payload = getJson(url, WavePayload.serializer())
+        val payload = getJson(url, WavePayload.serializer(), fresh = true)
         val tracks = coroutineScope {
             payload.tracks.map { rec ->
                 async {
-                    runCatching { trackByUrn("soundcloud:tracks:${rec.id.content}") }.getOrNull()
+                    kotlinx.coroutines.withTimeoutOrNull(20_000) {
+                        val id = rec.id.content.removePrefix("soundcloud:tracks:")
+                        runCatching { trackByUrn("soundcloud:tracks:$id") }.getOrNull()
+                    }
                 }
             }.awaitAll().filterNotNull()
         }
+        val label = if (seedTrack != null) "from-track" else "user"
+        Logs.add("wave", "$label ids=${payload.tracks.size} → tracks=${tracks.size}" + if (hideListened == false) " (+listened)" else "")
         return tracks to payload.cursor
+    }
+
+    private val slowClient: OkHttpClient by lazy {
+        http.newBuilder()
+            .callTimeout(180, TimeUnit.SECONDS)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .build()
+    }
+
+    suspend fun lyrics(urn: String): LyricsResponse? = withContext(Dispatchers.IO) {
+        for (id in listOf(urn, urn.substringAfterLast(':')).distinct()) {
+            val req = Request.Builder()
+                .url("$API_BASE/lyrics/${enc(id)}")
+                .apply { sessionId?.let { header("x-session-id", it) } }
+                .build()
+            val result = runCatching {
+                slowClient.newCall(req).await().use { res ->
+                    if (!res.isSuccessful) return@use null
+                    json.decodeFromString(LyricsResponse.serializer(), res.body?.string() ?: "")
+                }
+            }.getOrNull()
+            if (result != null) return@withContext result
+        }
+        null
+    }
+
+    suspend fun waveFeedback(cursor: String, negatives: Int, positives: Int): String? = withContext(Dispatchers.IO) {
+        val payload = buildJsonObject {
+            put("cursor", cursor)
+            put("negatives", negatives)
+            put("positives", positives)
+        }.toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("$API_BASE/recommendations/wave/feedback")
+            .post(payload)
+            .apply { sessionId?.let { header("x-session-id", it) } }
+            .build()
+        apiClient.newCall(req).execute().use { res ->
+            if (!res.isSuccessful) return@use null
+            runCatching {
+                json.parseToJsonElement(res.body?.string() ?: "").jsonObject["cursor"]
+                    ?.jsonPrimitive?.contentOrNull
+            }.getOrNull()?.takeIf { it.isNotEmpty() }
+        }
+    }
+
+    suspend fun waveFromTrack(urn: String, limit: Int = 20): List<Track> =
+        runCatching { waveBatch(null, limit, urn, null).first }.getOrDefault(emptyList())
+
+    suspend fun waveTracks(cursor: String? = null, limit: Int = 20): Pair<List<Track>, String> {
+        if (cursor == LocalRadio.CURSOR) return LocalRadio.batch(limit) to LocalRadio.CURSOR
+        if (!cursor.isNullOrEmpty()) {
+            val next = waveBatch(cursor, limit, waveSeed, null)
+            if (next.first.isNotEmpty()) return next
+            Logs.add("wave", "server wave ran out → local radio")
+            return LocalRadio.batch(limit) to LocalRadio.CURSOR
+        }
+
+        waveSeed = null
+        val first = runCatching { waveBatch(null, limit, null, null) }
+        first.exceptionOrNull()?.let {
+            if (it is kotlinx.coroutines.CancellationException) throw it
+            Logs.add("wave", "failed: ${it.javaClass.simpleName}: ${it.message?.take(120)} → local radio")
+            LocalRadio.resetWave()
+            val local = LocalRadio.batch(limit)
+            if (local.isNotEmpty()) return local to LocalRadio.CURSOR
+            throw it
+        }
+        first.getOrNull()?.takeIf { it.first.isNotEmpty() }?.let { return it }
+
+        if (System.currentTimeMillis() - SessionState.lastRefreshAt > 10 * 60_000L) {
+            val code = refreshSession()
+            if (code in 200..299) {
+                SessionState.lastRefreshAt = System.currentTimeMillis()
+                Logs.add("wave", "empty → session refreshed, retrying")
+                runCatching { waveBatch(null, limit, null, null) }.getOrNull()
+                    ?.takeIf { it.first.isNotEmpty() }?.let { return it }
+            }
+        }
+
+        val withListened = runCatching { waveBatch(null, limit, null, false) }
+        withListened.getOrNull()?.takeIf { it.first.isNotEmpty() }?.let { return it }
+
+        val seed = Likes.urns.firstOrNull()
+        if (seed != null) {
+            val fromTrack = runCatching { waveBatch(null, limit, seed, false) }
+            fromTrack.getOrNull()?.takeIf { it.first.isNotEmpty() }?.let {
+                waveSeed = seed
+                return it
+            }
+        }
+
+        Logs.add("wave", "server wave empty → local radio")
+        LocalRadio.resetWave()
+        return LocalRadio.batch(limit) to LocalRadio.CURSOR
     }
 
     suspend fun history(offset: Int = 0, limit: Int = 50): HistoryPage =
@@ -159,24 +403,16 @@ object Api {
     suspend fun likedTracks(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedTracks =
         getJson("$API_BASE/me/likes/tracks?limit=$limit&page=$page", PagedTracks.serializer(), fresh)
 
-    suspend fun likeTrack(track: Track): Unit = withContext(Dispatchers.IO) {
-        val body = json.encodeToString(Track.serializer(), track)
-            .toRequestBody("application/json".toMediaType())
-        val req = Request.Builder()
-            .url("$API_BASE/likes/tracks/${enc(track.urn)}")
-            .post(body)
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { it.checkOk() }
+    private fun jsonBody(text: String) = text.toRequestBody("application/json".toMediaType())
+
+    private val emptyBody get() = ByteArray(0).toRequestBody(null)
+
+    suspend fun likeTrack(track: Track) {
+        mutate("POST", "/likes/tracks/${enc(track.urn)}", jsonBody(json.encodeToString(Track.serializer(), track)))
     }
 
-    suspend fun unlikeTrack(urn: String): Unit = withContext(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url("$API_BASE/likes/tracks/${enc(urn)}")
-            .delete()
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { it.checkOk() }
+    suspend fun unlikeTrack(urn: String) {
+        mutate("DELETE", "/likes/tracks/${enc(urn)}", null)
     }
 
     suspend fun myPlaylists(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedPlaylists =
@@ -188,44 +424,19 @@ object Api {
     suspend fun likedPlaylists(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedPlaylists =
         getJson("$API_BASE/me/likes/playlists?limit=$limit&page=$page", PagedPlaylists.serializer(), fresh)
 
-    suspend fun likePlaylist(urn: String): Unit = withContext(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url("$API_BASE/likes/playlists/${enc(urn)}")
-            .post(ByteArray(0).toRequestBody(null))
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { it.checkOk() }
+    suspend fun likePlaylist(urn: String) {
+        mutate("POST", "/likes/playlists/${enc(urn)}", emptyBody)
     }
 
-    suspend fun unlikePlaylist(urn: String): Unit = withContext(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url("$API_BASE/likes/playlists/${enc(urn)}")
-            .delete()
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { it.checkOk() }
+    suspend fun unlikePlaylist(urn: String) {
+        mutate("DELETE", "/likes/playlists/${enc(urn)}", null)
     }
 
     suspend fun authStatus(): AuthStatus =
-        getJson("$API_BASE/auth/status", AuthStatus.serializer())
+        getJson("$API_BASE/auth/session", AuthStatus.serializer(), fresh = true)
 
     suspend fun me(fresh: Boolean = false): MeProfile =
         getJson("$API_BASE/me", MeProfile.serializer(), fresh)
-
-    suspend fun updateProfile(username: String?, avatarDataUrl: String?): Boolean = withContext(Dispatchers.IO) {
-        val payload = buildJsonObject {
-            put("user", buildJsonObject {
-                username?.let { put("username", it) }
-                avatarDataUrl?.let { put("avatar_data", it) }
-            })
-        }.toString().toRequestBody("application/json".toMediaType())
-        val req = Request.Builder()
-            .url("$API_BASE/me")
-            .put(payload)
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        runCatching { http.newCall(req).execute().use { it.isSuccessful } }.getOrDefault(false)
-    }
 
     suspend fun latestRelease(): Pair<String, String>? = withContext(Dispatchers.IO) {
         runCatching {
@@ -244,37 +455,71 @@ object Api {
         }.getOrNull()
     }
 
-    suspend fun linkCreate(mode: String = "pull"): LinkCreate = withContext(Dispatchers.IO) {
-        val payload = buildJsonObject { put("mode", mode) }
-            .toString().toRequestBody("application/json".toMediaType())
-        val req = Request.Builder()
-            .url("$API_BASE/auth/link/create")
-            .post(payload)
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { res ->
-            val body = res.body?.string() ?: ""
-            if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
-            json.decodeFromString(LinkCreate.serializer(), body)
-        }
-    }
-
-    suspend fun linkStatus(id: String): LinkStatus =
-        getJson("$API_BASE/auth/link/status?id=${enc(id)}", LinkStatus.serializer(), fresh = true)
-
-    suspend fun linkClaim(claimToken: String): LinkClaim = withContext(Dispatchers.IO) {
+    suspend fun linkClaim(claimToken: String, pull: Boolean): LinkClaim = withContext(Dispatchers.IO) {
+        val sid = sessionId
+        if (pull && sid == null) throw ApiHttpException(401, "not signed in")
         val payload = buildJsonObject { put("claimToken", claimToken) }
             .toString().toRequestBody("application/json".toMediaType())
         val req = Request.Builder()
-            .url("$API_BASE/auth/link/claim")
+            .url("$CONTROL_BASE/auth/link/claim")
             .post(payload)
-            .apply { sessionId?.let { header("x-session-id", it) } }
+            .apply { if (pull && sid != null) header("x-session-id", sid) }
+            .cacheControl(CacheControl.FORCE_NETWORK)
             .build()
         http.newCall(req).execute().use { res ->
             val body = res.body?.string() ?: ""
             if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
-            json.decodeFromString(LinkClaim.serializer(), body)
+            val claim = json.decodeFromString(LinkClaim.serializer(), body)
+            val expected = if (pull) "pull" else "push"
+            if (claim.mode.isNotEmpty() && claim.mode != expected) {
+                throw ApiHttpException(400, "link mode ${claim.mode}, expected $expected")
+            }
+            claim
         }
+    }
+
+    suspend fun refreshSession(): Int = withContext(Dispatchers.IO) {
+        val sid = sessionId ?: return@withContext 401
+        runCatching {
+            val req = Request.Builder()
+                .url("$CONTROL_BASE/auth/refresh")
+                .header("x-session-id", sid)
+                .post(ByteArray(0).toRequestBody(null))
+                .cacheControl(CacheControl.FORCE_NETWORK)
+                .build()
+            http.newBuilder()
+                .callTimeout(45, TimeUnit.SECONDS)
+                .build()
+                .newCall(req).execute().use { res ->
+                    if (!res.isSuccessful) {
+                        Logs.add("auth", "refresh HTTP ${res.code}: ${res.body?.string()?.take(120) ?: ""}")
+                    }
+                    res.code
+                }
+        }.getOrElse {
+            Logs.add("auth", "refresh failed: ${it.javaClass.simpleName}")
+            -1
+        }
+    }
+
+    suspend fun sessionValid(): Boolean? = withContext(Dispatchers.IO) {
+        val sid = sessionId ?: return@withContext false
+        runCatching {
+            val req = Request.Builder()
+                .url("$CONTROL_BASE/auth/session")
+                .header("x-session-id", sid)
+                .cacheControl(CacheControl.FORCE_NETWORK)
+                .build()
+            apiClient.newCall(req).execute().use { res ->
+                when {
+                    res.code == 401 || res.code == 403 -> false
+                    !res.isSuccessful -> null
+                    else -> runCatching {
+                        json.decodeFromString(AuthStatus.serializer(), res.body?.string() ?: "").authenticated
+                    }.getOrNull()
+                }
+            }
+        }.getOrNull()
     }
 
     suspend fun subscription(): Subscription =
@@ -283,101 +528,79 @@ object Api {
     suspend fun healthOk(): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             val req = Request.Builder()
-                .url("$API_BASE/health")
+                .url("$CONTROL_BASE/health")
                 .cacheControl(CacheControl.FORCE_NETWORK)
                 .build()
-            http.newCall(req).execute().use { it.isSuccessful }
+            ScDataSource.probeClient(http).newCall(req).execute().use { it.isSuccessful }
         }.getOrDefault(false)
     }
 
     suspend fun dislikedIds(): List<String> =
         getJson("$API_BASE/dislikes/ids", DislikeIds.serializer()).ids
 
-    suspend fun dislike(track: Track): Unit = withContext(Dispatchers.IO) {
-        val body = json.encodeToString(Track.serializer(), track)
-            .toRequestBody("application/json".toMediaType())
-        val req = Request.Builder()
-            .url("$API_BASE/dislikes/${enc(track.urn)}")
-            .post(body)
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { it.checkOk() }
+    suspend fun dislike(track: Track) {
+        mutate("POST", "/dislikes/${enc(track.urn)}", jsonBody(json.encodeToString(Track.serializer(), track)))
     }
 
-    suspend fun undislike(urn: String): Unit = withContext(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url("$API_BASE/dislikes/${enc(urn)}")
-            .delete()
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { it.checkOk() }
+    suspend fun undislike(urn: String) {
+        mutate("DELETE", "/dislikes/${enc(urn)}", null)
     }
 
-    suspend fun createPlaylist(title: String): String? = withContext(Dispatchers.IO) {
+    suspend fun createPlaylist(title: String): String? {
         val payload = buildJsonObject {
             put("playlist", buildJsonObject {
                 put("title", title)
                 put("sharing", "public")
             })
-        }.toString().toRequestBody("application/json".toMediaType())
-        val req = Request.Builder()
-            .url("$API_BASE/playlists")
-            .post(payload)
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { res ->
-            val body = res.body?.string() ?: ""
-            if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
-            runCatching { json.decodeFromString(Playlist.serializer(), body).urn }.getOrNull()
-        }
+        }.toString()
+        val body = mutate("POST", "/playlists", jsonBody(payload))
+        val urn = runCatching { json.decodeFromString(Playlist.serializer(), body).urn }.getOrNull()
+        Logs.add("api", "playlist created: ${urn ?: "no urn in reply"}")
+        return urn
     }
 
-    suspend fun deletePlaylist(urn: String): Unit = withContext(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url("$API_BASE/playlists/${enc(urn)}")
-            .delete()
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { it.checkOk() }
+    suspend fun deletePlaylist(urn: String) {
+        mutate("DELETE", "/playlists/${enc(urn)}", null)
     }
 
-    suspend fun addToPlaylist(playlistUrn: String, trackUrn: String): Unit = withContext(Dispatchers.IO) {
-        val payload = buildJsonObject { put("add", trackUrn) }
-            .toString().toRequestBody("application/json".toMediaType())
-        val req = Request.Builder()
-            .url("$API_BASE/playlists/${enc(playlistUrn)}/tracks")
-            .post(payload)
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { it.checkOk() }
+    suspend fun addToPlaylist(playlistUrn: String, trackUrn: String) {
+        val payload = buildJsonObject { put("add", trackUrn) }.toString()
+        mutate("POST", "/playlists/${enc(playlistUrn)}/tracks", jsonBody(payload))
+        Events.playlistAdd(trackUrn)
     }
 
-    suspend fun renamePlaylist(urn: String, title: String): Unit = withContext(Dispatchers.IO) {
+    suspend fun sendEvent(userUrn: String, trackUrn: String, type: String, positionPct: Double?) {
+        val payload = buildJsonObject {
+            put("scUserId", userUrn)
+            put("scTrackId", trackUrn)
+            put("eventType", type)
+            if (positionPct != null) put("positionPct", positionPct)
+        }.toString()
+        mutate("POST", "/events", jsonBody(payload))
+    }
+
+    suspend fun renamePlaylist(urn: String, title: String) {
         val payload = buildJsonObject {
             put("playlist", buildJsonObject { put("title", title) })
-        }.toString().toRequestBody("application/json".toMediaType())
-        val req = Request.Builder()
-            .url("$API_BASE/playlists/${enc(urn)}")
-            .put(payload)
-            .apply { sessionId?.let { header("x-session-id", it) } }
-            .build()
-        http.newCall(req).execute().use { it.checkOk() }
+        }.toString()
+        mutate("PUT", "/playlists/${enc(urn)}", jsonBody(payload))
     }
 
     suspend fun waveform(rawUrl: String, bars: Int = 96): List<Float> = withContext(Dispatchers.IO) {
         val url = rawUrl
             .replace(Regex("\\.png(\\?.*)?$"), ".json$1")
             .replaceFirst("http://", "https://")
-        val direct = runCatching {
-            http.newCall(Request.Builder().url(url).build()).execute().use { res ->
+        val client = ScDataSource.probeClient(http)
+        val proxied = runCatching {
+            val (n, v) = imageProxyTarget(url)
+            client.newCall(
+                Request.Builder().url("$IMAGES_BASE/?t=${enc(v)}").header(n, v).build()
+            ).execute().use { res ->
                 if (res.isSuccessful) res.body?.string() else null
             }
         }.getOrNull()
-        val body = direct ?: runCatching {
-            val (n, v) = imageProxyTarget(url)
-            http.newCall(
-                Request.Builder().url("$IMAGES_BASE/?t=${enc(v)}").header(n, v).build()
-            ).execute().use { res ->
+        val body = proxied ?: runCatching {
+            client.newCall(Request.Builder().url(url).build()).execute().use { res ->
                 if (res.isSuccessful) res.body?.string() else null
             }
         }.getOrNull() ?: throw IOException("waveform fetch failed")
@@ -418,12 +641,17 @@ object Api {
 
     fun streamUrl(urn: String, hq: Boolean = false, goPlus: Boolean = false): String {
         val base = if (goPlus && Prefs.star) Endpoints.STREAM_STAR else STREAM_BASE
-        val params = buildList {
-            if (hq) add("hq=true")
-            sessionId?.let { add("session_id=${enc(it)}") }
-        }
-        val qs = if (params.isEmpty()) "" else "?" + params.joinToString("&")
+        val qs = if (hq) "?hq=true" else ""
         return "$base/stream/${enc(urn)}$qs"
+    }
+
+    fun authorize(builder: Request.Builder, url: String): Request.Builder {
+        val sid = sessionId ?: return builder
+        if (!url.contains("/stream/") && !url.contains("/download/")) return builder
+        builder.header("x-session-id", sid)
+        if (url.contains("session_id=")) return builder
+        val sep = if (url.contains('?')) '&' else '?'
+        return builder.url("$url${sep}session_id=${enc(sid)}")
     }
 
     fun parseDownload(body: String): DownloadResponse? =
@@ -431,8 +659,8 @@ object Api {
 
     suspend fun streamProbe(urn: String): String = withContext(Dispatchers.IO) {
         runCatching {
-            val req = Request.Builder()
-                .url(streamUrl(urn))
+            val url = streamUrl(urn)
+            val req = authorize(Request.Builder().url(url), url)
                 .header("Range", "bytes=0-15")
                 .cacheControl(CacheControl.FORCE_NETWORK)
                 .build()
@@ -466,35 +694,58 @@ object Api {
     private suspend fun <T> getJson(url: String, strategy: DeserializationStrategy<T>, fresh: Boolean = false): T =
         withContext(Dispatchers.IO) {
             val path = pathOf(url)
-            val n = Endpoints.apiHosts.size
+            val hosts = Endpoints.hostsFor(path)
+            val firstMain = hosts.firstOrNull { it != Endpoints.API_STAR }
             var lastError: Exception? = null
-            for (attempt in 0 until n) {
-                val idx = (Endpoints.apiIndex + attempt) % n
-                val full = Endpoints.apiHostAt(idx) + path
+            for (base in hosts) {
+                val isStar = base == Endpoints.API_STAR
+                val full = base + path
                 try {
                     val req = Request.Builder().url(full).apply {
                         sessionId?.let { header("x-session-id", it) }
                         if (fresh) cacheControl(CacheControl.FORCE_NETWORK)
                     }.build()
-                    return@withContext http.newCall(req).execute().use { res ->
+                    return@withContext apiClient.newCall(req).await().use { res ->
                         val body = res.body?.string() ?: ""
                         if (!res.isSuccessful) {
+                            if (isStar && (res.code == 403 || res.code >= 500)) {
+                                throw IOException("star ${res.code}")
+                            }
+                            if (res.code == 401) SessionState.markExpired()
                             if (res.code in intArrayOf(400, 401, 403, 404)) {
                                 throw ApiHttpException(res.code, body.take(300))
                             }
                             throw IOException("API host ${res.code}")
                         }
-                        if (attempt > 0) Endpoints.commitApi(idx)
+                        if (!isStar && base != firstMain) {
+                            Endpoints.commitApi(Endpoints.apiHosts.indexOf(base))
+                        }
                         json.decodeFromString(strategy, body)
                     }
                 } catch (e: ApiHttpException) {
                     throw e
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
+                    ensureActive()
                     lastError = e
                 }
             }
             throw lastError ?: IOException("all API hosts unavailable")
         }
+
+    private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation { runCatching { cancel() } }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (cont.isActive) cont.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                if (cont.isActive) cont.resume(response) else response.close()
+            }
+        })
+    }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 }
@@ -515,6 +766,7 @@ data class Track(
     val urn: String,
     val title: String = "",
     val duration: Long = 0,
+    val full_duration: Long? = null,
     val artwork_url: String? = null,
     val waveform_url: String? = null,
     val genre: String? = null,
@@ -526,6 +778,9 @@ data class Track(
     @SerialName("_scd_meta") val scdMeta: ScdMeta? = null,
 ) {
     val isPreview: Boolean get() = access == "preview"
+
+    val displayDuration: Long
+        get() = maxOf(duration, full_duration ?: 0L, DurationCache.get(urn))
 
     val goPlus: Boolean
         get() = access == "preview" ||
@@ -605,20 +860,6 @@ data class AuthStatus(
 )
 
 @Serializable
-data class LinkCreate(
-    @SerialName("linkRequestId") val linkRequestId: String = "",
-    @SerialName("claimToken") val claimToken: String = "",
-)
-
-@Serializable
-data class LinkStatus(
-    val status: String = "",
-    val mode: String = "",
-    @SerialName("sessionId") val sessionId: String? = null,
-    val error: String? = null,
-)
-
-@Serializable
 data class LinkClaim(
     @SerialName("sessionId") val sessionId: String? = null,
     val mode: String = "",
@@ -665,6 +906,27 @@ data class ResolveResult(
     val kind: String? = null,
     val title: String? = null,
 )
+
+@Serializable
+data class LyricsResponse(
+    val syncedLrc: String? = null,
+    val plainText: String? = null,
+    val source: String? = null,
+    val language: String? = null,
+)
+
+data class LyricLine(val timeMs: Long, val text: String)
+
+fun parseLrc(lrc: String): List<LyricLine> {
+    val re = Regex("^\\[(\\d{1,2}):(\\d{2})[.:](\\d{2,3})]\\s*(.*)")
+    return lrc.lines().mapNotNull { raw ->
+        val m = re.find(raw.trim()) ?: return@mapNotNull null
+        val (mm, ss, frac, text) = m.destructured
+        if (text.isBlank()) return@mapNotNull null
+        val ms = mm.toLong() * 60_000L + ss.toLong() * 1000L + frac.padEnd(3, '0').take(3).toLong()
+        LyricLine(ms, text.trim())
+    }
+}
 
 @Serializable
 data class DislikeIds(

@@ -15,9 +15,6 @@ object MediaCache {
     @Volatile
     private var cache: SimpleCache? = null
 
-    @Volatile
-    private var builtWithLimit: Long = -1L
-
     private fun dirOf(context: Context) = File(context.applicationContext.cacheDir, "media2")
 
     fun dropLegacy(context: Context) {
@@ -43,17 +40,14 @@ object MediaCache {
                     dir,
                     evictor,
                     StandaloneDatabaseProvider(context.applicationContext),
-                ).also {
-                    cache = it
-                    builtWithLimit = limit
-                }
+                ).also { cache = it }
             }
         }
     }
 
     fun keyOf(url: String): String {
         val urn = urnOf(url)
-        if (urn != null) return urn
+        if (urn != null) return if (url.contains("hq=true")) "$urn|hq" else urn
         val i = url.indexOf('?')
         if (i < 0) return url
         val base = url.substring(0, i)
@@ -78,8 +72,6 @@ object MediaCache {
         return null
     }
 
-    fun sizeBytes(): Long = cache?.cacheSpace ?: 0L
-
     fun prune() {
         val days = Prefs.cacheDays
         if (days == CacheLimits.FOREVER) return
@@ -96,8 +88,20 @@ object MediaCache {
         if (removed > 0) Logs.add("cache", "pruned $removed spans older than ${days}d")
     }
 
-    fun clear() {
+    fun remove(urn: String) {
         val c = cache ?: return
+        for (key in listOf(urn, "$urn|hq")) {
+            runCatching { c.removeResource(key) }
+        }
+    }
+
+    fun clear(context: Context) {
+        val c = synchronized(this) {
+            cache ?: run {
+                runCatching { dirOf(context).deleteRecursively() }
+                null
+            }
+        } ?: return
         for (key in c.keys.toList()) {
             for (span in c.getCachedSpans(key)) {
                 runCatching { c.removeSpan(span) }

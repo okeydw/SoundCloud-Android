@@ -46,10 +46,10 @@ fun ArtistScreen(
     onOpenPlaylist: (Playlist) -> Unit,
     offline: Boolean = false,
 ) {
-    var artist by remember { mutableStateOf<Artist?>(null) }
-    var tracks by remember { mutableStateOf<List<Track>>(emptyList()) }
-    var playlists by remember { mutableStateOf<List<Playlist>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    var artist by remember(urn) { mutableStateOf<Artist?>(null) }
+    var tracks by remember(urn) { mutableStateOf<List<Track>>(emptyList()) }
+    var playlists by remember(urn) { mutableStateOf<List<Playlist>>(emptyList()) }
+    var loading by remember(urn) { mutableStateOf(true) }
 
     BackHandler(onBack = onBack)
 
@@ -153,12 +153,7 @@ fun ArtistScreen(
                             .padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        AsyncImage(
-                            model = Api.artworkUrl(p.artwork_url, "t120x120"),
-                            contentDescription = null,
-                            modifier = Modifier.size(52.dp).clip(RoundedCornerShape(6.dp)),
-                            contentScale = ContentScale.Crop,
-                        )
+                        PlaylistArtwork(p, 52.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(p.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)

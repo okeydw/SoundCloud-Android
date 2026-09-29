@@ -62,6 +62,8 @@ private sealed interface LibView {
     data object Liked : LibView
     data object Downloaded : LibView
     data object HistoryView : LibView
+    data object Disliked : LibView
+    data class LikedGenre(val key: String, val label: String) : LibView
     data class PlaylistView(val urn: String, val title: String, val owned: Boolean = true) : LibView
     data class ArtistTracks(val urn: String, val title: String, val avatar: String?) : LibView
 }
@@ -116,8 +118,12 @@ fun LibraryScreen(
 
     LaunchedEffect(Unit) {
         runCatching { Api.authStatus() }.onSuccess {
-            username = it.username
-            Prefs.saveUsername(it.username)
+            if (!it.authenticated && !offline) {
+                SessionState.markExpired()
+            } else if (!it.username.isNullOrEmpty()) {
+                username = it.username
+                Prefs.saveUsername(it.username)
+            }
         }
         if (!offline) {
             runCatching { Api.subscription() }.onSuccess { Prefs.saveStar(it.premium) }
@@ -128,8 +134,20 @@ fun LibraryScreen(
                 }
                 avatar = it.avatar_url
                 Prefs.saveAvatar(it.avatar_url)
+                it.urn?.takeIf { u -> u.isNotEmpty() }?.let { u -> Prefs.saveUserUrn(u) }
             }
         }
+    }
+
+    var printLikes by remember { mutableStateOf<List<Track>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        val all = mutableListOf<Track>()
+        for (p in 0 until 6) {
+            val res = runCatching { Api.likedTracks(p, 50) }.getOrNull() ?: break
+            all += res.collection
+            if (!res.has_more) break
+        }
+        if (all.isNotEmpty()) printLikes = all.distinctBy { it.urn }
     }
 
     LaunchedEffect(view, PlaylistEvents.version) {
@@ -214,6 +232,18 @@ fun LibraryScreen(
             }
 
             LazyColumn(Modifier.fillMaxSize()) {
+                if (printLikes.isNotEmpty()) {
+                    item {
+                        SoundprintCard(
+                            liked = printLikes,
+                            onGenre = { g -> view = LibView.LikedGenre(g.key, g.label) },
+                            onPlayYourSound = {
+                                val mix = printLikes.filter { !it.starLocked && (!it.unavailable || Prefs.playBlocked) }.shuffled()
+                                if (mix.isNotEmpty()) play(mix, mix.first())
+                            },
+                        )
+                    }
+                }
                 item {
                     LibRow(R.drawable.ic_heart, stringResource(R.string.liked)) { view = LibView.Liked }
                 }
@@ -225,7 +255,7 @@ fun LibraryScreen(
                         R.drawable.ic_music,
                         p.title,
                         subtitle = stringResource(R.string.tracks_count, p.track_count),
-                        artworkUrl = p.artwork_url,
+                        playlist = p,
                     ) {
                         view = LibView.PlaylistView(p.urn, p.title)
                     }
@@ -235,7 +265,7 @@ fun LibraryScreen(
                         R.drawable.ic_music,
                         p.title,
                         subtitle = p.user?.username ?: stringResource(R.string.tracks_count, p.track_count),
-                        artworkUrl = p.artwork_url,
+                        playlist = p,
                     ) {
                         view = LibView.PlaylistView(p.urn, p.title, owned = false)
                     }
@@ -254,6 +284,15 @@ fun LibraryScreen(
                 item {
                     LibRow(R.drawable.ic_history, stringResource(R.string.history)) { view = LibView.HistoryView }
                 }
+                if (!offline) {
+                    item {
+                        LibRow(
+                            R.drawable.ic_thumb_down,
+                            stringResource(R.string.disliked),
+                            subtitle = stringResource(R.string.disliked_sub),
+                        ) { view = LibView.Disliked }
+                    }
+                }
             }
         }
 
@@ -264,8 +303,14 @@ fun LibraryScreen(
             dimUndownloaded = offline,
             downloadAll = !offline,
             loader = { page, fresh ->
-                val res = Api.likedTracks(page, fresh = fresh && !offline)
-                Likes.seed(res.collection)
+                val since = Likes.snapshot()
+                val live = fresh && !offline
+                val res = Api.likedTracks(page, fresh = live)
+                if (page == 0 && live && !res.has_more) {
+                    Likes.replaceAll(res.collection, since)
+                } else {
+                    Likes.seed(res.collection)
+                }
                 res.collection to res.has_more
             },
         )
@@ -289,13 +334,48 @@ fun LibraryScreen(
             },
         )
 
+        is LibView.LikedGenre -> LibTracks(
+            title = v.label,
+            onBack = { view = LibView.Root },
+            play = play,
+            dimUndownloaded = offline,
+            downloadAll = !offline,
+            loader = { page, fresh ->
+                val res = Api.likedTracks(page, fresh = fresh && !offline)
+                Likes.seed(res.collection)
+                res.collection to res.has_more
+            },
+            listKey = "genre:${v.key}",
+            visible = { genresMatch(it, v.key) },
+        )
+
+        LibView.Disliked -> LibTracks(
+            title = stringResource(R.string.disliked),
+            onBack = { view = LibView.Root },
+            play = play,
+            loader = { page, fresh -> if (fresh) emptyList<Track>() to false else Dislikes.page(page) },
+            emptyText = stringResource(R.string.disliked_empty),
+            visible = { Dislikes.isDisliked(it.urn) },
+            rowTrailing = { track ->
+                val scope = rememberCoroutineScope()
+                TextButton(onClick = { scope.launch { Dislikes.toggle(track) } }) {
+                    Text(stringResource(R.string.undislike), style = MaterialTheme.typography.labelMedium)
+                }
+            },
+        )
+
         is LibView.PlaylistView -> LibTracks(
             title = v.title,
             onBack = { view = LibView.Root },
             play = play,
             dimUndownloaded = offline,
             loader = { page, fresh ->
-                val res = Api.playlistTracks(v.urn, page, fresh = fresh && !offline)
+                val res = if (page > 0 && !offline) {
+                    runCatching { Api.playlistTracks(v.urn, page, fresh = true) }
+                        .getOrElse { Api.playlistTracks(v.urn, page) }
+                } else {
+                    Api.playlistTracks(v.urn, page, fresh = fresh && !offline)
+                }
                 res.collection to res.has_more
             },
             downloadAll = !offline,
@@ -306,12 +386,22 @@ fun LibraryScreen(
             },
             onDelete = if (offline || !v.owned) null else {
                 {
-                    runCatching { Api.deletePlaylist(v.urn) }
-                    playlists = playlists.filterNot { it.urn == v.urn }
-                    view = LibView.Root
+                    val ok = runCatching { Api.deletePlaylist(v.urn) }.isSuccess
+                    if (ok) {
+                        playlists = playlists.filterNot { it.urn == v.urn }
+                        PlaylistEvents.bump()
+                        view = LibView.Root
+                    } else {
+                        android.widget.Toast.makeText(
+                            context,
+                            context.getString(R.string.error_network),
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                 }
             },
             likedPlaylistUrn = if (v.owned) null else v.urn,
+            listKey = v.urn,
         )
 
         is LibView.ArtistTracks -> LibTracks(
@@ -325,6 +415,7 @@ fun LibraryScreen(
                 res.collection to res.has_more
             },
             likedArtist = Artist(urn = v.urn, username = v.title, avatar_url = v.avatar),
+            listKey = v.urn,
         )
     }
 
@@ -402,6 +493,7 @@ private fun LibRow(
     title: String,
     subtitle: String? = null,
     artworkUrl: String? = null,
+    playlist: Playlist? = null,
     circle: Boolean = false,
     onClick: () -> Unit,
 ) {
@@ -412,6 +504,9 @@ private fun LibRow(
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (playlist != null) {
+            PlaylistArtwork(playlist, 48.dp, 8.dp)
+        } else {
         Box(
             Modifier
                 .size(48.dp)
@@ -434,6 +529,7 @@ private fun LibRow(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -461,6 +557,10 @@ private fun LibTracks(
     onDelete: (suspend () -> Unit)? = null,
     likedPlaylistUrn: String? = null,
     likedArtist: Artist? = null,
+    emptyText: String? = null,
+    listKey: String? = null,
+    visible: (Track) -> Boolean = { true },
+    rowTrailing: (@Composable (Track) -> Unit)? = null,
 ) {
     var items by remember { mutableStateOf<List<Track>>(emptyList()) }
     var page by remember { mutableStateOf(0) }
@@ -503,6 +603,15 @@ private fun LibTracks(
     }
 
     LaunchedEffect(Unit) { load(0) }
+
+    LaunchedEffect(hasMore, page, loading) {
+        if (!hasMore || loading || items.isEmpty() || items.size >= 1000) return@LaunchedEffect
+        val next = page + 1
+        val (batch, more) = runCatching { loader(next, false) }.getOrNull() ?: return@LaunchedEffect
+        items = (items + batch).distinctBy { it.urn }
+        page = next
+        hasMore = more
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -583,14 +692,16 @@ private fun LibTracks(
                     }
                 }
             }
-            val allDownloaded = items.isNotEmpty() && !hasMore &&
-                items.all { Downloads.isDownloaded(it.urn) }
-            val downloading = paginating || items.any { it.urn in Downloads.inProgress }
+            val visibleItems = items.filter(visible)
+            val allDownloaded = visibleItems.isNotEmpty() && !hasMore &&
+                visibleItems.all { Downloads.isDownloaded(it.urn) }
+            val key = listKey ?: title
+            val downloading = paginating || key in Downloads.activeLists
             if (downloadAll) {
                 if (downloading) {
                     IconButton(onClick = {
                         downloadJob?.cancel()
-                        Downloads.cancelAll(context)
+                        Downloads.cancelList(context, key)
                     }) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     }
@@ -619,7 +730,7 @@ private fun LibTracks(
                                 items = full
                                 page = p
                                 hasMore = false
-                                Downloads.enqueue(context, full)
+                                Downloads.enqueue(context, full.filter(visible), listKey = key)
                             } finally {
                                 paginating = false
                             }
@@ -653,8 +764,15 @@ private fun LibTracks(
                                 enabled = newTitle.isNotBlank(),
                                 onClick = {
                                     scope.launch {
-                                        runCatching { onRename(newTitle.trim()) }
+                                        val ok = runCatching { onRename(newTitle.trim()) }.isSuccess
                                         showRename = false
+                                        if (!ok) {
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                context.getString(R.string.error_network),
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
                                     }
                                 },
                             ) { Text(stringResource(R.string.save)) }
@@ -697,15 +815,17 @@ private fun LibTracks(
             }
         }
 
+        val shown = items.filter(visible)
         TrackList(
-            tracks = items,
+            tracks = shown,
             loading = loading,
             error = error,
-            emptyText = stringResource(R.string.search_empty),
+            emptyText = emptyText ?: stringResource(R.string.search_empty),
             canLoadMore = hasMore,
             onLoadMore = { load(page + 1) },
-            onPlay = { play(items, it) },
+            onPlay = { play(shown, it) },
             dimUndownloaded = dimUndownloaded,
+            rowTrailing = rowTrailing,
         )
     }
 }
@@ -741,6 +861,7 @@ fun SettingsScreen(
                         4 -> R.string.tab_about
                         5 -> R.string.tab_logs
                         6 -> R.string.tab_advanced
+                        7 -> R.string.equalizer
                         else -> R.string.settings
                     },
                 ),
@@ -758,6 +879,7 @@ fun SettingsScreen(
             ) {
                 SettingsRow(R.drawable.ic_user, stringResource(R.string.tab_account), username ?: stringResource(R.string.account_signed_in)) { section = 0 }
                 SettingsRow(R.drawable.ic_music, stringResource(R.string.tab_visual), stringResource(R.string.settings_visual_sub)) { section = 1 }
+                SettingsRow(R.drawable.ic_equalizer, stringResource(R.string.equalizer), stringResource(R.string.eq_sub)) { section = 7 }
                 SettingsRow(R.drawable.ic_download, stringResource(R.string.tab_storage), stringResource(R.string.settings_storage_sub)) { section = 2 }
                 SettingsRow(R.drawable.ic_share, stringResource(R.string.tab_star), stringResource(R.string.settings_links_sub)) { section = 3 }
                 SettingsRow(R.drawable.ic_settings, stringResource(R.string.tab_about), stringResource(R.string.settings_system_sub)) { section = 4 }
@@ -893,6 +1015,34 @@ fun SettingsScreen(
                             fontWeight = FontWeight.Medium,
                         )
                     }
+                    Spacer(Modifier.height(16.dp))
+                    Text(stringResource(R.string.api_server), fontWeight = FontWeight.Medium)
+                    Text(
+                        stringResource(if (Prefs.star) R.string.api_server_hint else R.string.api_server_locked),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    listOf(
+                        false to stringResource(R.string.api_server_main) + "  ·  api.scnative.space",
+                        true to stringResource(R.string.api_server_star) + "  ·  api-star.scnative.space",
+                    ).forEach { (star, label) ->
+                        val selected = if (Prefs.star) Prefs.apiStar == star else !star
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .alpha(if (Prefs.star || !star) 1f else 0.5f)
+                                .clickable(enabled = Prefs.star) { Prefs.changeApiStar(star) },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = selected,
+                                enabled = Prefs.star,
+                                onClick = { Prefs.changeApiStar(star) },
+                            )
+                            Text(label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+
                     Spacer(Modifier.height(24.dp))
                     Button(
                         onClick = onLogout,
@@ -1010,9 +1160,19 @@ fun SettingsScreen(
                 2 -> {
                     val downloadedSet = Downloads.downloaded
                     val tracks = Downloads.tracks()
-                    val usedTracks = remember(downloadedSet) { tracks.sumOf { Downloads.fileFor(it.urn).length() } }
+                    var usedTracks by remember { mutableStateOf(0L) }
+                    LaunchedEffect(downloadedSet) {
+                        usedTracks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            tracks.sumOf { Downloads.fileFor(it.urn).length() }
+                        }
+                    }
                     var cacheBump by remember { mutableStateOf(0) }
-                    val cacheBytes = remember(cacheBump) { CacheTools.sizeBytes(ctx) }
+                    var cacheBytes by remember { mutableStateOf(0L) }
+                    LaunchedEffect(cacheBump) {
+                        cacheBytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            CacheTools.sizeBytes(ctx)
+                        }
+                    }
                     val stat = remember { runCatching { android.os.StatFs(ctx.filesDir.path) }.getOrNull() }
                     val total = stat?.totalBytes ?: 0L
                     val free = stat?.availableBytes ?: 0L
@@ -1116,12 +1276,91 @@ fun SettingsScreen(
                         enabled = Prefs.star,
                     ) { Prefs.changeHqStreaming(it) }
 
+                    Spacer(Modifier.height(12.dp))
+                    Text(stringResource(R.string.download_quality), fontWeight = FontWeight.Medium)
+                    Text(
+                        stringResource(if (Prefs.star) R.string.download_quality_hint else R.string.download_quality_locked),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    listOf(
+                        true to stringResource(R.string.download_quality_hq),
+                        false to stringResource(R.string.download_quality_sq),
+                    ).forEach { (hq, label) ->
+                        val selected = if (Prefs.star) Prefs.downloadHq == hq else !hq
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .alpha(if (Prefs.star || !hq) 1f else 0.5f)
+                                .clickable(enabled = Prefs.star) { Prefs.changeDownloadHq(hq) },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = selected,
+                                enabled = Prefs.star,
+                                onClick = { Prefs.changeDownloadHq(hq) },
+                            )
+                            Text(label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+
+                    if (tracks.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        val upgrading = Downloads.UPGRADE_KEY in Downloads.activeLists
+                        androidx.compose.material3.OutlinedButton(
+                            enabled = Prefs.star || upgrading,
+                            onClick = {
+                                if (upgrading) {
+                                    Downloads.cancelList(ctx, Downloads.UPGRADE_KEY)
+                                } else {
+                                    Downloads.upgradeAll(ctx) { n ->
+                                        android.widget.Toast.makeText(
+                                            ctx,
+                                            if (n == 0) ctx.getString(R.string.upgrade_quality_none)
+                                            else ctx.getString(R.string.upgrade_quality_started, n),
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            if (upgrading) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(stringResource(if (upgrading) R.string.upgrade_quality_stop else R.string.upgrade_quality))
+                        }
+                        Text(
+                            stringResource(if (Prefs.star) R.string.upgrade_quality_hint else R.string.download_quality_locked),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+
                     Spacer(Modifier.height(8.dp))
                     SettingSwitch(
                         stringResource(R.string.play_blocked),
                         stringResource(R.string.play_blocked_hint),
                         Prefs.playBlocked,
                     ) { Prefs.changePlayBlocked(it) }
+
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitch(
+                        stringResource(R.string.anon_fallback),
+                        stringResource(R.string.anon_fallback_hint),
+                        Prefs.anonFallback,
+                    ) { Prefs.changeAnonFallback(it) }
+
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitch(
+                        stringResource(R.string.auto_cache_likes),
+                        stringResource(R.string.auto_cache_likes_hint),
+                        Prefs.autoCacheLikes,
+                    ) { on ->
+                        Prefs.changeAutoCacheLikes(on)
+                        if (on) LikesAutoCache.run(ctx)
+                    }
 
                     Spacer(Modifier.height(16.dp))
                     Button(
@@ -1144,10 +1383,28 @@ fun SettingsScreen(
                         ),
                     ) { Text(stringResource(R.string.storage_cache_clear)) }
 
+                    var confirmWipe by remember { mutableStateOf(false) }
+                    if (confirmWipe) {
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = { confirmWipe = false },
+                            text = { Text(stringResource(R.string.clear_downloads_q, tracks.size)) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    confirmWipe = false
+                                    scope.launch { tracks.forEach { runCatching { Downloads.remove(it.urn) } } }
+                                }) {
+                                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmWipe = false }) { Text(stringResource(R.string.cancel)) }
+                            },
+                        )
+                    }
                     if (tracks.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
                         Button(
-                            onClick = { scope.launch { tracks.forEach { runCatching { Downloads.remove(it.urn) } } } },
+                            onClick = { confirmWipe = true },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.error,
@@ -1344,6 +1601,8 @@ fun SettingsScreen(
                     )
                 }
 
+                7 -> EqualizerPanel()
+
                 5 -> {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -1395,7 +1654,7 @@ fun SettingsScreen(
                     InfoRow(stringResource(R.string.about_device), "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
                     InfoRow("Android", "${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
                     InfoRow("ABI", android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "-")
-                    InfoRow("API", Endpoints.apiBase.removePrefix("https://"))
+                    InfoRow("API", Api.API_BASE.removePrefix("https://"))
                     InfoRow("Stream", Endpoints.streamBase.removePrefix("https://"))
                     Spacer(Modifier.height(12.dp))
                     SettingSwitch(

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
     <string name="app_name">SoundCloud</string>
     <string name="tab_search">Search</string>
     <string name="tab_wave">Wave</string>
@@ -29,8 +29,6 @@
     <string name="theme_dark">Dark</string>
     <string name="theme_light">Light</string>
     <string name="offline_mode">Offline mode</string>
-    <string name="vibe_search">Vibe search</string>
-    <string name="vibe_preparing">Reading the vibe of your query…</string>
     <string name="rename">Rename</string>
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
@@ -139,6 +137,54 @@
     <string name="crop_hint">Drag and pinch to choose the visible area</string>
     <string name="crop_apply">Apply</string>
     <string name="saving">Saving…</string>
+    <string name="link_confirm_title">Sign in from another device?</string>
+    <string name="link_confirm_text">A link asks to sign this app in. Continue only if you just scanned the code from your own desktop app.</string>
+    <string name="link_confirm_replace">A link asks to sign this app in. The current account will be signed out. Continue only if you just scanned the code from your own desktop app.</string>
+    <string name="link_confirm_yes">Sign in</string>
+    <string name="link_pull_title">Sign in on another device?</string>
+    <string name="link_pull_text">The device showing this QR code will get access to your account %1$s. Confirm only if you opened this code yourself on your own computer just now.</string>
+    <string name="link_pull_yes">Give access</string>
+    <string name="link_pull_done">Done, the other device is signed in</string>
+    <string name="link_pull_need_login">Sign in on this phone first, then scan the code again</string>
+    <string name="anon_fallback">Direct SoundCloud fallback</string>
+    <string name="anon_fallback_hint">If our servers do not give a track, fetch the regular version straight from SoundCloud. Works only where soundcloud.com opens</string>
+    <string name="auto_cache_likes">Keep likes offline</string>
+    <string name="auto_cache_likes_hint">Download every liked track, and each new like right away. Clearing the cache does not touch them</string>
+    <string name="lyrics_loading">Looking for lyrics… this can take up to a minute</string>
+    <string name="lyrics_none">No lyrics for this track</string>
+    <string name="equalizer">Equalizer</string>
+    <string name="eq_sub">Presets and bands</string>
+    <string name="eq_custom">Custom</string>
+    <string name="eq_unavailable">Start any track once, the equalizer attaches to the player</string>
+    <string name="link_failed">Could not open this link</string>
+    <string name="wave_refresh">Refresh</string>
+    <string name="soundprint">Your soundprint</string>
+    <string name="soundprint_play">Play your sound</string>
+    <string name="soundprint_hot">energetic</string>
+    <string name="soundprint_mid">balanced</string>
+    <string name="soundprint_calm">calm</string>
+    <string name="radio_starting">Building a radio from this track…</string>
+    <string name="radio_failed">Could not find anything similar</string>
+    <string name="upgrade_quality">Upgrade downloaded tracks to HQ</string>
+    <string name="upgrade_quality_stop">Stop upgrading</string>
+    <string name="upgrade_quality_hint">Re-downloads tracks saved below HQ. A file is replaced only if the new one is really better</string>
+    <string name="upgrade_quality_none">Nothing to upgrade: the rest is already HQ or has no HQ version</string>
+    <string name="upgrade_quality_started">Upgrading %1$d track(s)</string>
+    <string name="download_quality">Download quality</string>
+    <string name="download_quality_hq">High (HQ)</string>
+    <string name="download_quality_sq">Standard (SQ, ~128 kbps)</string>
+    <string name="download_quality_hint">HQ files are about twice as big. If a track has no HQ version, the standard one is saved</string>
+    <string name="download_quality_locked">High quality downloads need a Star subscription</string>
+    <string name="disliked">Disliked</string>
+    <string name="disliked_sub">Tracks the queue skips</string>
+    <string name="disliked_empty">No disliked tracks</string>
+    <string name="undislike">Remove</string>
+    <string name="api_server">API server</string>
+    <string name="api_server_main">Main</string>
+    <string name="api_server_star">Star</string>
+    <string name="api_server_hint">Star is a separate server for subscribers, usually faster and less busy. If something fails, the other one is used as a backup</string>
+    <string name="api_server_locked">The Star server is available with a Star subscription</string>
+    <string name="link_expired">The code has expired or was already used. Generate a new one</string>
     <string name="theme_share">Themes</string>
     <string name="theme_share_hint">Colors, background, opacity, blur and dim in one file</string>
     <string name="theme_export">Export</string>
@@ -158,4 +204,5 @@
     <string name="no_internet">No internet connection</string>
     <string name="delete">Delete</string>
     <string name="delete_playlist_q">Delete playlist «%1$s»?</string>
+    <string name="clear_downloads_q">Delete all downloaded tracks (%1$d)? They will have to be downloaded again</string>
 </resources>

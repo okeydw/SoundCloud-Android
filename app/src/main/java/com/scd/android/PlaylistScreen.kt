@@ -35,10 +35,10 @@ fun PlaylistScreen(
     onBack: () -> Unit,
     onPlay: (List<Track>, Track) -> Unit,
 ) {
-    var tracks by remember { mutableStateOf<List<Track>>(emptyList()) }
-    var page by remember { mutableStateOf(0) }
-    var hasMore by remember { mutableStateOf(false) }
-    var loading by remember { mutableStateOf(false) }
+    var tracks by remember(playlist.urn) { mutableStateOf<List<Track>>(emptyList()) }
+    var page by remember(playlist.urn) { mutableStateOf(0) }
+    var hasMore by remember(playlist.urn) { mutableStateOf(false) }
+    var loading by remember(playlist.urn) { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val liked = LikedPlaylists.isLiked(playlist.urn)
@@ -64,6 +64,16 @@ fun PlaylistScreen(
 
     LaunchedEffect(playlist.urn) { load(0) }
 
+    LaunchedEffect(playlist.urn, hasMore, page, loading) {
+        if (!hasMore || loading || tracks.isEmpty() || tracks.size >= 1000) return@LaunchedEffect
+        val next = page + 1
+        val res = runCatching { Api.playlistTracks(playlist.urn, next, fresh = false) }.getOrNull()
+            ?: return@LaunchedEffect
+        tracks = (tracks + res.collection).distinctBy { it.urn }
+        page = next
+        hasMore = res.has_more
+    }
+
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
@@ -87,9 +97,9 @@ fun PlaylistScreen(
             }
             val allDownloaded = tracks.isNotEmpty() && !hasMore &&
                 tracks.all { Downloads.isDownloaded(it.urn) }
-            val downloading = tracks.any { it.urn in Downloads.inProgress }
+            val downloading = playlist.urn in Downloads.activeLists
             when {
-                downloading -> IconButton(onClick = { Downloads.cancelAll(context) }) {
+                downloading -> IconButton(onClick = { Downloads.cancelList(context, playlist.urn) }) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
                 allDownloaded -> Icon(

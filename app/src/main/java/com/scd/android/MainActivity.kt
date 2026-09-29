@@ -1168,7 +1168,7 @@ fun MainScreen(controller: MediaController?, onSessionExpired: () -> Unit) {
             MaterialTheme.colorScheme.background
         },
         topBar = {
-            if (Prefs.headerAlpha < 1f) {
+            if (Prefs.headerAlpha < 1f || Prefs.backgroundImage != null) {
                 Box(
                     Modifier
                         .fillMaxWidth()

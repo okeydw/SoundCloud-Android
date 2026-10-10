@@ -81,6 +81,14 @@ object Api {
             .addInterceptor(NetMonitor.offlineInterceptor(context))
             .addNetworkInterceptor { chain ->
                 val req = chain.request()
+                if (Endpoints.trustedHost(req.url.host)) return@addNetworkInterceptor chain.proceed(req)
+                val hasSession = req.header("x-session-id") != null || req.url.queryParameter("session_id") != null
+                if (!hasSession) return@addNetworkInterceptor chain.proceed(req)
+                val cleanUrl = req.url.newBuilder().removeAllQueryParameters("session_id").build()
+                chain.proceed(req.newBuilder().url(cleanUrl).removeHeader("x-session-id").build())
+            }
+            .addNetworkInterceptor { chain ->
+                val req = chain.request()
                 val res = chain.proceed(req)
                 val host = req.url.host
                 val path = req.url.encodedPath
@@ -268,6 +276,31 @@ object Api {
     suspend fun relatedTracks(urn: String, limit: Int = 40, page: Int = 0): PagedTracks =
         getJson("$API_BASE/tracks/${enc(urn)}/related?limit=$limit&page=$page", PagedTracks.serializer())
 
+    suspend fun tracksByIds(ids: List<String>): List<Track>? {
+        if (ids.isEmpty()) return emptyList()
+        val out = LinkedHashMap<String, Track>()
+        for (chunk in ids.distinct().chunked(50)) {
+            val body = runCatching {
+                getJson("$API_BASE/tracks?ids=${chunk.joinToString(",")}", kotlinx.serialization.json.JsonElement.serializer(), fresh = true)
+            }.getOrNull() ?: return null
+            val list = when (body) {
+                is kotlinx.serialization.json.JsonArray -> body
+                is kotlinx.serialization.json.JsonObject -> body["collection"] as? kotlinx.serialization.json.JsonArray
+                else -> null
+            } ?: return null
+            list.forEach { el ->
+                runCatching { json.decodeFromJsonElement(Track.serializer(), el) }.getOrNull()?.let {
+                    DurationCache.record(it.urn, maxOf(it.duration, it.full_duration ?: 0L))
+                    out[it.urn.substringAfterLast(':')] = it
+                }
+            }
+        }
+        val result = ids.mapNotNull { out[it] }
+        if (result.isEmpty()) return null
+        if (result.size < ids.size) Logs.add("wave", "batch: ${result.size}/${ids.size} tracks")
+        return result
+    }
+
     @Volatile
     private var waveSeed: String? = null
 
@@ -287,11 +320,11 @@ object Api {
             hideListened?.let { append("&hide_listened=${if (it) 1 else 0}") }
         }
         val payload = getJson(url, WavePayload.serializer(), fresh = true)
-        val tracks = coroutineScope {
-            payload.tracks.map { rec ->
+        val ids = payload.tracks.map { it.id.content.removePrefix("soundcloud:tracks:") }
+        val tracks = tracksByIds(ids) ?: coroutineScope {
+            ids.map { id ->
                 async {
                     kotlinx.coroutines.withTimeoutOrNull(20_000) {
-                        val id = rec.id.content.removePrefix("soundcloud:tracks:")
                         runCatching { trackByUrn("soundcloud:tracks:$id") }.getOrNull()
                     }
                 }
@@ -346,6 +379,14 @@ object Api {
         }
     }
 
+    suspend fun waveFromArtist(artistUrn: String, limit: Int = 30): List<Track> = runCatching {
+        val id = enc(artistUrn.substringAfterLast(':'))
+        val payload = getJson("$API_BASE/recommendations/wave/from-artist/$id?limit=$limit", WavePayload.serializer(), fresh = true)
+        val ids = payload.tracks.map { it.id.content.removePrefix("soundcloud:tracks:") }
+        Logs.add("wave", "from-artist ids=${ids.size}")
+        tracksByIds(ids) ?: emptyList()
+    }.getOrDefault(emptyList())
+
     suspend fun waveFromTrack(urn: String, limit: Int = 20): List<Track> =
         runCatching { waveBatch(null, limit, urn, null).first }.getOrDefault(emptyList())
 
@@ -397,8 +438,27 @@ object Api {
         return LocalRadio.batch(limit) to LocalRadio.CURSOR
     }
 
-    suspend fun history(offset: Int = 0, limit: Int = 50): HistoryPage =
-        getJson("$API_BASE/history?limit=$limit&offset=$offset", HistoryPage.serializer())
+    suspend fun history(offset: Int = 0, limit: Int = 50, fresh: Boolean = false): HistoryPage =
+        getJson("$API_BASE/history?limit=$limit&offset=$offset", HistoryPage.serializer(), fresh)
+
+    suspend fun clearHistory() {
+        mutate("DELETE", "/history", null)
+    }
+
+    suspend fun logout(sid: String): Unit = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder()
+                .url("$CONTROL_BASE/auth/logout")
+                .header("x-session-id", sid)
+                .post(ByteArray(0).toRequestBody(null))
+                .cacheControl(CacheControl.FORCE_NETWORK)
+                .build()
+            http.newBuilder().callTimeout(15, TimeUnit.SECONDS).build()
+                .newCall(req).execute().use { res ->
+                    Logs.add("auth", "logout → ${res.code}")
+                }
+        }.onFailure { Logs.add("auth", "logout failed: ${it.javaClass.simpleName}") }
+    }
 
     suspend fun likedTracks(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedTracks =
         getJson("$API_BASE/me/likes/tracks?limit=$limit&page=$page", PagedTracks.serializer(), fresh)
@@ -475,6 +535,36 @@ object Api {
                 throw ApiHttpException(400, "link mode ${claim.mode}, expected $expected")
             }
             claim
+        }
+    }
+
+    suspend fun linkCreate(push: Boolean): LinkCreate = withContext(Dispatchers.IO) {
+        val sid = sessionId
+        if (push && sid == null) throw ApiHttpException(401, "not signed in")
+        val payload = buildJsonObject { put("mode", if (push) "push" else "pull") }
+            .toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("$CONTROL_BASE/auth/link/create")
+            .post(payload)
+            .apply { if (push && sid != null) header("x-session-id", sid) }
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .build()
+        http.newCall(req).execute().use { res ->
+            val body = res.body?.string() ?: ""
+            if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
+            json.decodeFromString(LinkCreate.serializer(), body)
+        }
+    }
+
+    suspend fun linkStatus(id: String): LinkStatus = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$CONTROL_BASE/auth/link/status?id=${enc(id)}")
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .build()
+        http.newCall(req).execute().use { res ->
+            val body = res.body?.string() ?: ""
+            if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
+            json.decodeFromString(LinkStatus.serializer(), body)
         }
     }
 
@@ -647,7 +737,9 @@ object Api {
 
     fun authorize(builder: Request.Builder, url: String): Request.Builder {
         val sid = sessionId ?: return builder
-        if (!url.contains("/stream/") && !url.contains("/download/")) return builder
+        if (!Endpoints.trustedUrl(url)) return builder
+        val path = "/" + url.substringAfter("://").substringAfter('/', "")
+        if (!path.startsWith("/stream/") && !path.startsWith("/download/")) return builder
         builder.header("x-session-id", sid)
         if (url.contains("session_id=")) return builder
         val sep = if (url.contains('?')) '&' else '?'
@@ -857,6 +949,21 @@ data class Playlist(
 data class AuthStatus(
     val authenticated: Boolean = false,
     val username: String? = null,
+)
+
+@Serializable
+data class LinkCreate(
+    val linkRequestId: String = "",
+    val claimToken: String = "",
+    val expiresAt: String? = null,
+)
+
+@Serializable
+data class LinkStatus(
+    val status: String = "",
+    val mode: String = "",
+    val sessionId: String? = null,
+    val error: String? = null,
 )
 
 @Serializable

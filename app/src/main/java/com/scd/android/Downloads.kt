@@ -136,20 +136,34 @@ object Downloads {
         appContext = context.applicationContext
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL_ID, context.getString(R.string.downloads), NotificationManager.IMPORTANCE_LOW)
         )
         dir = File(context.filesDir, "tracks").apply { mkdirs() }
         indexFile = File(dir, "index.json")
         runCatching {
-            if (indexFile.exists()) {
+            val atomic = android.util.AtomicFile(indexFile)
+            if (indexFile.exists() || File(indexFile.path + ".bak").exists()) {
                 val tracks = json.decodeFromString(
                     ListSerializer(Track.serializer()),
-                    indexFile.readText(),
+                    String(atomic.readFully(), Charsets.UTF_8),
                 )
-                for (t in tracks) if (fileFor(t.urn).exists()) index[t.urn] = t
+                synchronized(index) {
+                    for (t in tracks) index[t.urn] = t
+                }
             }
         }
-        downloaded = index.keys.toSet()
+        downloaded = synchronized(index) { index.keys.toSet() }
+        App.scope.launch {
+            val snapshot = synchronized(index) { index.keys.toList() }
+            val missing = snapshot.filter { !fileFor(it).exists() }
+            if (missing.isEmpty()) return@launch
+            synchronized(index) {
+                missing.forEach { index.remove(it) }
+                saveIndex()
+            }
+            downloaded = downloaded - missing.toSet()
+            Logs.add("download", "index: dropped ${missing.size} missing files")
+        }
     }
 
     private val audioExts = listOf("m4a", "mp3", "ogg", "aac")
@@ -341,7 +355,7 @@ object Downloads {
 
     fun isDownloaded(urn: String) = urn in downloaded
 
-    fun tracks(): List<Track> = index.values.toList().reversed()
+    fun tracks(): List<Track> = synchronized(index) { index.values.toList() }.reversed()
 
     suspend fun download(track: Track): Boolean = withContext(Dispatchers.IO) {
         if (isDownloaded(track.urn) || track.urn in inProgress) {
@@ -525,16 +539,21 @@ object Downloads {
         )
     }
 
-    suspend fun remove(urn: String): Unit = withContext(Dispatchers.IO) {
-        val base = baseName(urn)
-        audioExts.forEach { File(dir, "$base.$it").delete() }
-        qualityLabels.remove(urn)
-        artFor(urn).delete()
+    suspend fun remove(urn: String): Unit = removeAll(listOf(urn))
+
+    suspend fun removeAll(urns: Collection<String>): Unit = withContext(Dispatchers.IO) {
+        if (urns.isEmpty()) return@withContext
+        for (urn in urns) {
+            val base = baseName(urn)
+            audioExts.forEach { File(dir, "$base.$it").delete() }
+            artFor(urn).delete()
+        }
+        withContext(Dispatchers.Main) { urns.forEach { qualityLabels.remove(it) } }
         synchronized(index) {
-            index.remove(urn)
+            urns.forEach { index.remove(it) }
             saveIndex()
         }
-        downloaded = downloaded - urn
+        downloaded = downloaded - urns.toSet()
     }
 
     @SuppressLint("MissingPermission")
@@ -580,10 +599,17 @@ object Downloads {
     }
 
     private fun saveIndex() {
-        runCatching {
-            indexFile.writeText(
-                json.encodeToString(ListSerializer(Track.serializer()), index.values.toList())
-            )
+        val atomic = android.util.AtomicFile(indexFile)
+        var out: java.io.FileOutputStream? = null
+        try {
+            val bytes = json.encodeToString(ListSerializer(Track.serializer()), index.values.toList())
+                .toByteArray(Charsets.UTF_8)
+            out = atomic.startWrite()
+            out.write(bytes)
+            atomic.finishWrite(out)
+        } catch (e: Exception) {
+            out?.let { runCatching { atomic.failWrite(it) } }
+            Logs.add("download", "index save failed: ${e.javaClass.simpleName}")
         }
     }
 }

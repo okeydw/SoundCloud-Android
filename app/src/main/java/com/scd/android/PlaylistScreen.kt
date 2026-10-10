@@ -77,7 +77,7 @@ fun PlaylistScreen(
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Icon(painterResource(R.drawable.ic_arrow_back), null)
+                Icon(painterResource(R.drawable.ic_arrow_back), iconLabel(R.drawable.ic_arrow_back))
             }
             Text(
                 playlist.title,
@@ -90,7 +90,7 @@ fun PlaylistScreen(
             IconButton(onClick = { scope.launch { LikedPlaylists.toggle(playlist) } }) {
                 Icon(
                     painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                    null,
+                    iconLabel(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
                     tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
@@ -111,7 +111,7 @@ fun PlaylistScreen(
                 else -> IconButton(onClick = {
                     Downloads.enqueue(context, tracks, playlist.urn, playlist.title)
                 }) {
-                    Icon(painterResource(R.drawable.ic_download), null, modifier = Modifier.size(20.dp))
+                    Icon(painterResource(R.drawable.ic_download), iconLabel(R.drawable.ic_download), modifier = Modifier.size(20.dp))
                 }
             }
         }

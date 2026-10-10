@@ -49,15 +49,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
-    applicationVariants.all {
-        outputs.all {
-            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
-                "SoundCloud-Android-$appVersionName-${buildType.name}.apk"
-        }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 
     buildFeatures {
@@ -71,15 +65,26 @@ android {
     }
 
     lint {
-        abortOnError = false
+        abortOnError = true
         checkReleaseBuilds = false
+        baseline = file("lint-baseline.xml")
         htmlReport = true
         textReport = true
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 base {
     archivesName = "SoundCloud-Android-$appVersionName"
+}
+
+tasks.register("printVersionName") {
+    doLast { println(appVersionName) }
 }
 
 dependencies {
@@ -105,4 +110,7 @@ dependencies {
     implementation("androidx.palette:palette-ktx:1.0.0")
 
     implementation("com.google.guava:guava:33.3.1-android")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

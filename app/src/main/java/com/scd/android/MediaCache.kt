@@ -2,20 +2,76 @@ package com.scd.android
 
 import android.content.Context
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
-import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
-import androidx.media3.datasource.cache.NoOpCacheEvictor
+import androidx.media3.datasource.cache.Cache
+import androidx.media3.datasource.cache.CacheEvictor
+import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.SimpleCache
+import kotlinx.coroutines.launch
 import java.io.File
+import java.util.TreeSet
+
+@OptIn(UnstableApi::class)
+private class DynamicLruEvictor(private val maxBytes: () -> Long) : CacheEvictor {
+    private val spans = TreeSet<CacheSpan> { a, b ->
+        when {
+            a.lastTouchTimestamp < b.lastTouchTimestamp -> -1
+            a.lastTouchTimestamp > b.lastTouchTimestamp -> 1
+            else -> a.compareTo(b)
+        }
+    }
+    private var size = 0L
+
+    override fun requiresCacheSpanTouches(): Boolean = true
+
+    override fun onCacheInitialized() {}
+
+    override fun onStartFile(cache: Cache, key: String, position: Long, length: Long) {
+        if (length != C.LENGTH_UNSET.toLong()) evict(cache, length)
+    }
+
+    override fun onSpanAdded(cache: Cache, span: CacheSpan) {
+        spans.add(span)
+        size += span.length
+        evict(cache, 0L)
+    }
+
+    override fun onSpanRemoved(cache: Cache, span: CacheSpan) {
+        if (spans.remove(span)) size -= span.length
+    }
+
+    override fun onSpanTouched(cache: Cache, oldSpan: CacheSpan, newSpan: CacheSpan) {
+        onSpanRemoved(cache, oldSpan)
+        onSpanAdded(cache, newSpan)
+    }
+
+    fun evict(cache: Cache, required: Long) {
+        val max = maxBytes()
+        if (max <= 0L) return
+        while (size + required > max && spans.isNotEmpty()) {
+            val oldest = spans.first()
+            runCatching { cache.removeSpan(oldest) }
+            if (spans.remove(oldest)) size -= oldest.length
+        }
+    }
+}
 
 @OptIn(UnstableApi::class)
 object MediaCache {
 
     @Volatile
     private var cache: SimpleCache? = null
+    private var evictor: DynamicLruEvictor? = null
 
     private fun dirOf(context: Context) = File(context.applicationContext.cacheDir, "media2")
+
+    fun mediaBudget(): Long {
+        val limit = Prefs.cacheLimit
+        if (limit == CacheLimits.UNLIMITED) return 0L
+        return (limit * 0.6).toLong().coerceAtLeast(256L * 1024 * 1024)
+    }
 
     fun dropLegacy(context: Context) {
         val legacy = File(context.applicationContext.cacheDir, "media")
@@ -29,19 +85,23 @@ object MediaCache {
         cache?.let { return it }
         return synchronized(this) {
             cache ?: run {
-                val limit = Prefs.cacheLimit
-                val evictor = if (limit == CacheLimits.UNLIMITED) {
-                    NoOpCacheEvictor()
-                } else {
-                    LeastRecentlyUsedCacheEvictor(limit)
-                }
+                val ev = DynamicLruEvictor(::mediaBudget)
+                evictor = ev
                 val dir = dirOf(context).apply { mkdirs() }
                 SimpleCache(
                     dir,
-                    evictor,
+                    ev,
                     StandaloneDatabaseProvider(context.applicationContext),
                 ).also { cache = it }
             }
+        }
+    }
+
+    fun applyLimit() {
+        val c = cache ?: return
+        val ev = evictor ?: return
+        App.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { synchronized(c) { ev.evict(c, 0L) } }
         }
     }
 

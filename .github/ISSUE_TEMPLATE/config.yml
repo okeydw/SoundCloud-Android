@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Десктоп-версия / Desktop app
+    url: https://github.com/zxcloli666/SoundCloud-Desktop/issues
+    about: Проблемы десктопного клиента и бэкенда / Desktop client and backend issues

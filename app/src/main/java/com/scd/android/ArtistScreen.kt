@@ -26,7 +26,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +53,9 @@ fun ArtistScreen(
     var tracks by remember(urn) { mutableStateOf<List<Track>>(emptyList()) }
     var playlists by remember(urn) { mutableStateOf<List<Playlist>>(emptyList()) }
     var loading by remember(urn) { mutableStateOf(true) }
+    var radioBusy by remember(urn) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     BackHandler(onBack = onBack)
 
@@ -74,7 +80,7 @@ fun ArtistScreen(
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
-                Icon(painterResource(R.drawable.ic_arrow_back), null)
+                Icon(painterResource(R.drawable.ic_arrow_back), stringResource(R.string.cd_back))
             }
             Text(
                 artist?.username ?: "…",
@@ -84,12 +90,38 @@ fun ArtistScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            if (!offline) {
+                IconButton(
+                    enabled = !radioBusy,
+                    onClick = {
+                        radioBusy = true
+                        scope.launch {
+                            val radio = Api.waveFromArtist(urn)
+                                .filter { !it.starLocked && (!it.unavailable || Prefs.playBlocked) && !Dislikes.isDisliked(it.urn) }
+                                .ifEmpty { tracks.filter { !it.starLocked }.shuffled() }
+                            radioBusy = false
+                            if (radio.isNotEmpty()) {
+                                onPlay(radio, radio.first())
+                            } else {
+                                android.widget.Toast.makeText(context, context.getString(R.string.radio_failed), android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_wave),
+                        stringResource(R.string.artist_radio),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
             artist?.let { a ->
                 val liked = LikedArtists.isLiked(a.urn)
                 IconButton(onClick = { LikedArtists.toggle(a) }) {
                     Icon(
                         painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                        null,
+                        stringResource(if (liked) R.string.notif_unlike else R.string.notif_like),
                         tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
@@ -145,7 +177,7 @@ fun ArtistScreen(
                         modifier = Modifier.padding(vertical = 8.dp),
                     )
                 }
-                items(playlists) { p ->
+                items(playlists.distinctBy { it.urn }, key = { "p:" + it.urn }) { p ->
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -177,7 +209,7 @@ fun ArtistScreen(
                         modifier = Modifier.padding(vertical = 8.dp),
                     )
                 }
-                items(tracks) { track ->
+                items(tracks.distinctBy { it.urn }, key = { "t:" + it.urn }) { track ->
                     TrackRow(track = track, onClick = { onPlay(tracks, track) })
                 }
             }

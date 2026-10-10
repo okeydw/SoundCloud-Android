@@ -86,15 +86,7 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
     val artworkUri = NowPlaying.artworkUri
     val currentUrn = NowPlaying.urn
     val isPlaying = NowPlaying.isPlaying
-    val progress = if (NowPlaying.duration > 0)
-        (NowPlaying.position.toFloat() / NowPlaying.duration).coerceIn(0f, 1f) else 0f
     if (NowPlaying.title.isEmpty()) return
-
-    val animatedProgress by animateFloatAsState(
-        targetValue = progress,
-        animationSpec = tween(durationMillis = 260, easing = LinearEasing),
-        label = "miniProgress",
-    )
 
     val surface = MaterialTheme.colorScheme.surfaceVariant
     val tintTarget = rememberArtworkColor(artworkUri)
@@ -211,24 +203,86 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
                 }) {
                     Icon(
                         painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                        null,
+                        iconLabel(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
                         tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 IconButton(onClick = {
                     controller?.let { if (it.isPlaying) it.pause() else it.play() }
                 }) {
-                    Icon(painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play), null)
+                    Icon(
+                        painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                        iconLabel(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                    )
                 }
             }
-            LinearProgressIndicator(
-                progress = { animatedProgress },
-                modifier = Modifier.fillMaxWidth().height(2.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f),
-                drawStopIndicator = {},
-            )
+            MiniProgress()
         }
+    }
+}
+
+@Composable
+private fun MiniProgress() {
+    val dur = NowPlaying.duration
+    val progress = if (dur > 0) (NowPlaying.position.toFloat() / dur).coerceIn(0f, 1f) else 0f
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = tween(durationMillis = 260, easing = LinearEasing),
+        label = "miniProgress",
+    )
+    LinearProgressIndicator(
+        progress = { animatedProgress },
+        modifier = Modifier.fillMaxWidth().height(2.dp),
+        color = MaterialTheme.colorScheme.primary,
+        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f),
+        drawStopIndicator = {},
+    )
+}
+
+@Composable
+private fun SeekSection(
+    waveform: List<Float>?,
+    duration: Long,
+    isPlaying: Boolean,
+    subColor: Color,
+    onSeek: (Float) -> Unit,
+) {
+    val position = NowPlaying.position
+    var dragging by remember { mutableStateOf(false) }
+    var dragValue by remember { mutableStateOf(0f) }
+    if (waveform != null) {
+        WaveformSeekBar(
+            samples = waveform,
+            progress = if (duration > 0) position.toFloat() / duration else 0f,
+            isPlaying = isPlaying,
+            onSeek = onSeek,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+        )
+    } else {
+        Slider(
+            value = if (dragging) dragValue else if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
+            onValueChange = {
+                dragging = true
+                dragValue = it
+            },
+            onValueChangeFinished = {
+                onSeek(dragValue)
+                dragging = false
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(
+            formatDuration(if (dragging && duration > 0) (dragValue * duration).toLong() else position),
+            color = subColor,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            formatDuration(duration),
+            color = subColor,
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -309,10 +363,7 @@ fun NowPlayingScreen(
     val isPlaying = NowPlaying.isPlaying
     val shuffle = NowPlaying.shuffle
     val repeatMode = NowPlaying.repeatMode
-    val position = NowPlaying.position
 
-    var dragging by remember { mutableStateOf(false) }
-    var dragValue by remember { mutableStateOf(0f) }
     var showLyrics by remember { mutableStateOf(false) }
     var showEq by remember { mutableStateOf(false) }
 
@@ -464,7 +515,7 @@ fun NowPlayingScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(onClick = onClose) {
-                            Icon(painterResource(R.drawable.ic_chevron_down), null, tint = titleColor)
+                            Icon(painterResource(R.drawable.ic_chevron_down), iconLabel(R.drawable.ic_chevron_down), tint = titleColor)
                         }
                         Spacer(Modifier.weight(1f))
                         if (hasTrack) {
@@ -483,7 +534,7 @@ fun NowPlayingScreen(
                                     ).show()
                                 }
                             }) {
-                                Icon(painterResource(R.drawable.ic_share), null, tint = titleColor, modifier = Modifier.size(20.dp))
+                                Icon(painterResource(R.drawable.ic_share), iconLabel(R.drawable.ic_share), tint = titleColor, modifier = Modifier.size(20.dp))
                             }
                             IconButton(onClick = {
                                 val seed = fullTrack?.takeIf { it.urn == currentUrn }
@@ -525,12 +576,12 @@ fun NowPlayingScreen(
                                     }
                                 }
                             }) {
-                                Icon(painterResource(R.drawable.ic_mix), null, tint = titleColor, modifier = Modifier.size(22.dp))
+                                Icon(painterResource(R.drawable.ic_mix), iconLabel(R.drawable.ic_mix), tint = titleColor, modifier = Modifier.size(22.dp))
                             }
                             Box {
                                 var menuOpen by remember { mutableStateOf(false) }
                                 IconButton(onClick = { menuOpen = true }) {
-                                    Icon(painterResource(R.drawable.ic_plus), null, tint = titleColor)
+                                    Icon(painterResource(R.drawable.ic_plus), iconLabel(R.drawable.ic_plus), tint = titleColor)
                                 }
                                 controller.currentMediaItem?.toTrackOrNull()?.let { track ->
                                     AddToPlaylistMenu(
@@ -659,7 +710,7 @@ fun NowPlayingScreen(
                             }) {
                                 Icon(
                                     painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                                    null,
+                                    iconLabel(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
                                     tint = if (liked) MaterialTheme.colorScheme.primary else subColor,
                                 )
                             }
@@ -670,7 +721,7 @@ fun NowPlayingScreen(
                             }) {
                                 Icon(
                                     painterResource(R.drawable.ic_thumb_down),
-                                    null,
+                                    iconLabel(R.drawable.ic_thumb_down),
                                     tint = if (disliked) MaterialTheme.colorScheme.error else subColor,
                                     modifier = Modifier.size(20.dp),
                                 )
@@ -682,7 +733,7 @@ fun NowPlayingScreen(
                                     IconButton(onClick = { scope.launch { Downloads.remove(currentUrn) } }) {
                                         Icon(
                                             painterResource(R.drawable.ic_check),
-                                            null,
+                                            iconLabel(R.drawable.ic_check),
                                             tint = MaterialTheme.colorScheme.primary,
                                         )
                                     }
@@ -694,7 +745,7 @@ fun NowPlayingScreen(
                                     }) {
                                         Icon(
                                             painterResource(R.drawable.ic_download),
-                                            null,
+                                            iconLabel(R.drawable.ic_download),
                                             tint = subColor,
                                         )
                                     }
@@ -702,13 +753,13 @@ fun NowPlayingScreen(
                             Spacer(Modifier.weight(1f))
                             if (!Prefs.offline) {
                                 IconButton(onClick = { showLyrics = true }) {
-                                    Icon(painterResource(R.drawable.ic_lyrics), null, tint = subColor, modifier = Modifier.size(22.dp))
+                                    Icon(painterResource(R.drawable.ic_lyrics), iconLabel(R.drawable.ic_lyrics), tint = subColor, modifier = Modifier.size(22.dp))
                                 }
                             }
                             IconButton(onClick = { showEq = true }) {
                                 Icon(
                                     painterResource(R.drawable.ic_equalizer),
-                                    null,
+                                    iconLabel(R.drawable.ic_equalizer),
                                     tint = if (Prefs.eqEnabled) MaterialTheme.colorScheme.primary else subColor,
                                     modifier = Modifier.size(21.dp),
                                 )
@@ -718,41 +769,13 @@ fun NowPlayingScreen(
 
                     Spacer(Modifier.height(12.dp))
 
-                    val wf = waveform
-                    if (wf != null) {
-                        WaveformSeekBar(
-                            samples = wf,
-                            progress = if (duration > 0) position.toFloat() / duration else 0f,
-                            isPlaying = isPlaying,
-                            onSeek = { frac -> seekFraction(frac) },
-                            modifier = Modifier.fillMaxWidth().height(56.dp),
-                        )
-                    } else {
-                        Slider(
-                            value = if (dragging) dragValue else if (duration > 0) position.toFloat() / duration else 0f,
-                            onValueChange = {
-                                dragging = true
-                                dragValue = it
-                            },
-                            onValueChangeFinished = {
-                                seekFraction(dragValue)
-                                dragging = false
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(
-                            formatDuration(if (dragging && duration > 0) (dragValue * duration).toLong() else position),
-                            color = subColor,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Text(
-                            formatDuration(duration),
-                            color = subColor,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
+                    SeekSection(
+                        waveform = waveform,
+                        duration = duration,
+                        isPlaying = isPlaying,
+                        subColor = subColor,
+                        onSeek = { frac -> seekFraction(frac) },
+                    )
 
                     Spacer(Modifier.height(8.dp))
 
@@ -764,14 +787,14 @@ fun NowPlayingScreen(
                         IconButton(onClick = { controller.shuffleModeEnabled = !shuffle }) {
                             Icon(
                                 painterResource(R.drawable.ic_shuffle),
-                                null,
+                                iconLabel(R.drawable.ic_shuffle),
                                 tint = if (shuffle) MaterialTheme.colorScheme.primary else subColor,
                                 modifier = Modifier.size(22.dp),
                             )
                         }
                         Spacer(Modifier.width(12.dp))
                         IconButton(onClick = { controller.seekToPrevious() }, modifier = Modifier.size(56.dp)) {
-                            Icon(painterResource(R.drawable.ic_prev), null, modifier = Modifier.size(36.dp), tint = titleColor)
+                            Icon(painterResource(R.drawable.ic_prev), iconLabel(R.drawable.ic_prev), modifier = Modifier.size(36.dp), tint = titleColor)
                         }
                         Spacer(Modifier.width(12.dp))
                         Surface(
@@ -784,7 +807,7 @@ fun NowPlayingScreen(
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
-                                    null,
+                                    iconLabel(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
                                     tint = MaterialTheme.colorScheme.background,
                                     modifier = Modifier.size(40.dp),
                                 )
@@ -792,7 +815,7 @@ fun NowPlayingScreen(
                         }
                         Spacer(Modifier.width(12.dp))
                         IconButton(onClick = { controller.seekToNext() }, modifier = Modifier.size(56.dp)) {
-                            Icon(painterResource(R.drawable.ic_next), null, modifier = Modifier.size(36.dp), tint = titleColor)
+                            Icon(painterResource(R.drawable.ic_next), iconLabel(R.drawable.ic_next), modifier = Modifier.size(36.dp), tint = titleColor)
                         }
                         Spacer(Modifier.width(12.dp))
                         Box {
@@ -805,7 +828,7 @@ fun NowPlayingScreen(
                             }) {
                                 Icon(
                                     painterResource(R.drawable.ic_repeat),
-                                    null,
+                                    iconLabel(R.drawable.ic_repeat),
                                     tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else subColor,
                                     modifier = Modifier.size(22.dp),
                                 )
@@ -984,12 +1007,16 @@ fun WaveformSeekBar(
     val played = MaterialTheme.colorScheme.primary
     val rest = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
 
-    val pulse by rememberInfiniteTransition(label = "wfPulse").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(520), RepeatMode.Reverse),
-        label = "wfPulseValue",
-    )
+    val pulseState = if (isPlaying) {
+        rememberInfiniteTransition(label = "wfPulse").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(520), RepeatMode.Reverse),
+            label = "wfPulseValue",
+        )
+    } else {
+        null
+    }
 
     Canvas(
         modifier
@@ -1016,6 +1043,7 @@ fun WaveformSeekBar(
         if (n == 0) return@Canvas
         val bw = size.width / n
         val prog = dragFrac ?: progress
+        val pulse = pulseState?.value ?: 0f
         samples.forEachIndexed { i, v ->
             val frac = i.toFloat() / n
             var h = v * size.height

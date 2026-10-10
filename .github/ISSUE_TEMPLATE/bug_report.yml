@@ -1,0 +1,43 @@
+name: Баг / Bug report
+description: Что-то работает не так / Something is broken
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Что случилось / What happened
+      description: Что делал, что ожидал и что получил / Steps, expected and actual result
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Версия приложения / App version
+      description: Настройки → О системе / Settings → About
+      placeholder: 0.4.4
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Устройство и Android / Device and Android version
+      placeholder: Xiaomi Redmi Note 12, Android 14
+    validations:
+      required: true
+  - type: dropdown
+    id: star
+    attributes:
+      label: Подписка Star / Star subscription
+      options:
+        - "Нет / No"
+        - "Да / Yes"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи / Logs
+      description: Настройки → Логи → Поделиться, вставь сюда / Settings → Logs → Share, paste here
+      render: text
+  - type: textarea
+    id: screens
+    attributes:
+      label: Скриншоты / Screenshots

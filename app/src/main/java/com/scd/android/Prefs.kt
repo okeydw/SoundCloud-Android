@@ -90,6 +90,8 @@ object Prefs {
         private set
     var streamDebug by mutableStateOf(false)
         private set
+    var prefetchWifiOnly by mutableStateOf(false)
+        private set
     var streamTags by mutableStateOf(false)
         private set
     var accent by mutableStateOf(AccentPalette.DEFAULT)
@@ -128,6 +130,7 @@ object Prefs {
         eqPreset = sp.getInt("eq_preset", -1)
         eqBands = sp.getString("eq_bands", "") ?: ""
         streamDebug = sp.getBoolean("stream_debug", false)
+        prefetchWifiOnly = sp.getBoolean("prefetch_wifi_only", false)
         streamTags = sp.getBoolean("stream_tags", false)
         accent = sp.getInt("accent", AccentPalette.DEFAULT)
         cacheLimit = sp.getLong("cache_limit", CacheLimits.DEFAULT_BYTES)
@@ -137,6 +140,7 @@ object Prefs {
     fun changeCacheLimit(value: Long) {
         cacheLimit = value
         sp.edit().putLong("cache_limit", value).apply()
+        MediaCache.applyLimit()
     }
 
     fun changeCacheDays(value: Int) {
@@ -152,6 +156,11 @@ object Prefs {
     fun changeStreamDebug(value: Boolean) {
         streamDebug = value
         sp.edit().putBoolean("stream_debug", value).apply()
+    }
+
+    fun changePrefetchWifiOnly(value: Boolean) {
+        prefetchWifiOnly = value
+        sp.edit().putBoolean("prefetch_wifi_only", value).apply()
     }
 
     fun changeStreamTags(value: Boolean) {

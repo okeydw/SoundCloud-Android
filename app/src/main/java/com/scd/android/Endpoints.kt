@@ -3,8 +3,8 @@ package com.scd.android
 import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.CacheControl
 import okhttp3.Request
 
@@ -22,13 +22,27 @@ object Endpoints {
     private fun relayHosts(service: String) = relayNodes.map { "https://$service.$it.$RELAY_ZONE" }
 
     val apiHosts: List<String>
-        get() = listOf("https://api.scnative.space", "https://api.scdinternal.site") + relayHosts("api")
+        get() = listOf("https://api.scnative.space") + relayHosts("api")
 
     val streamHosts: List<String>
         get() = listOf("https://stream.scnative.space") + relayHosts("stream")
 
     val imageHosts: List<String>
-        get() = listOf("https://images.scnative.space", "https://images.scdinternal.site") + relayHosts("images")
+        get() = listOf("https://images.scnative.space") + relayHosts("images")
+
+    private const val TRUSTED_ZONE = "scnative.space"
+
+    fun trustedHost(host: String): Boolean {
+        val h = host.lowercase().trimEnd('.')
+        return h == TRUSTED_ZONE || h.endsWith(".$TRUSTED_ZONE")
+    }
+
+    fun trustedUrl(url: String): Boolean {
+        val u = url.trim()
+        if (!u.startsWith("https://", ignoreCase = true)) return false
+        val host = u.substring(8).substringBefore('/').substringBefore('?').substringBefore(':').substringAfterLast('@')
+        return trustedHost(host)
+    }
 
     const val API_STAR = "https://api-star.scnative.space"
     const val STREAM_STAR = "https://stream-star.scnative.space"
@@ -94,24 +108,58 @@ object Endpoints {
         if (::sp.isInitialized) sp.edit().putInt(key, value).apply()
     }
 
-    private suspend fun relayAlive(n: Int): Boolean =
-        withTimeoutOrNull(6_000) { healthy("https://api.r$n.$RELAY_ZONE") } ?: false
+    private val quickClient by lazy {
+        Api.http.newBuilder()
+            .cache(null)
+            .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    private val TOPOLOGY_URLS = listOf(
+        "https://health.scnative.space/topology",
+        "https://health.r1.relay.scnative.space/topology",
+        "https://health.r2.relay.scnative.space/topology",
+    )
+
+    private suspend fun topologyRelays(): List<String>? = withContext(Dispatchers.IO) {
+        for (url in TOPOLOGY_URLS) {
+            val nodes = runCatching {
+                val req = Request.Builder().url(url).cacheControl(CacheControl.FORCE_NETWORK).build()
+                quickClient.newCall(req).execute().use { res ->
+                    if (!res.isSuccessful) return@use null
+                    val root = kotlinx.serialization.json.Json.parseToJsonElement(res.body?.string() ?: "")
+                    val arr = (root as? kotlinx.serialization.json.JsonObject)?.get("relays") as? kotlinx.serialization.json.JsonArray
+                    arr?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                        ?.filter { it.matches(Regex("r\\d{1,2}")) }
+                }
+            }.getOrNull()
+            if (!nodes.isNullOrEmpty()) return@withContext nodes
+        }
+        null
+    }
+
+    private suspend fun relayAlive(n: Int): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder().url("https://api.r$n.$RELAY_ZONE/health").cacheControl(CacheControl.FORCE_NETWORK).build()
+            quickClient.newCall(req).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
+    }
 
     private suspend fun discoverRelays() {
-        val base = DEFAULT_RELAYS.mapNotNull { it.removePrefix("r").toIntOrNull() }.toSet()
-        val found = base.toMutableSet()
-        var misses = 0
-        var n = (base.maxOrNull() ?: 0) + 1
-        while (n <= MAX_RELAY && misses < 2) {
-            if (relayAlive(n)) {
-                found += n
-                misses = 0
-            } else {
-                misses++
+        val fromTopology = topologyRelays()
+        val nodes = if (fromTopology != null) {
+            fromTopology.distinct().sortedBy { it.removePrefix("r").toIntOrNull() ?: 0 }
+        } else {
+            val base = DEFAULT_RELAYS.mapNotNull { it.removePrefix("r").toIntOrNull() }.toSet()
+            val probed = kotlinx.coroutines.coroutineScope {
+                ((base.maxOrNull() ?: 0) + 1..MAX_RELAY).map { n ->
+                    async { n to relayAlive(n) }
+                }.map { it.await() }
             }
-            n++
+            (base + probed.filter { it.second }.map { it.first }).sorted().map { "r$it" }
         }
-        val nodes = found.sorted().map { "r$it" }
         if (nodes != relayNodes) {
             relayNodes = nodes
             Logs.add("host", "relays: ${nodes.joinToString(", ")}")
@@ -125,7 +173,7 @@ object Endpoints {
     private suspend fun healthy(base: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             val req = Request.Builder().url("$base/health").cacheControl(CacheControl.FORCE_NETWORK).build()
-            ScDataSource.probeClient(Api.http).newCall(req).execute().use { it.isSuccessful }
+            quickClient.newCall(req).execute().use { it.isSuccessful }
         }.getOrDefault(false)
     }
 

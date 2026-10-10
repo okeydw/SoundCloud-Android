@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -22,6 +22,15 @@ jobs:
 
       - name: Make gradlew executable
         run: chmod +x gradlew
+
+      - name: Check tag matches versionName
+        run: |
+          VERSION="$(./gradlew -q :app:printVersionName | tail -n 1)"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match versionName $VERSION"
+            exit 1
+          fi
 
       - name: Decode keystore
         env:
@@ -34,7 +43,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew assembleRelease bundleRelease
+        run: ./gradlew assembleRelease
 
       - name: Extract changelog section
         run: |
@@ -46,12 +55,32 @@ jobs:
           ' CHANGELOG.md > release_notes.md
           if [ ! -s release_notes.md ]; then echo "Release $GITHUB_REF_NAME" > release_notes.md; fi
 
+      - name: Checksums and signing certificate
+        run: |
+          cd app/build/outputs/apk/release
+          sha256sum *.apk > SHA256SUMS.txt
+          cd - > /dev/null
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)apksigner"
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "**SHA-256 APK:**"
+            echo '```'
+            cat app/build/outputs/apk/release/SHA256SUMS.txt
+            echo '```'
+            echo "**Signing certificate:**"
+            echo '```'
+            "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/*.apk | grep -E "SHA-256" || true
+            echo '```'
+          } >> release_notes.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             app/build/outputs/apk/release/*.apk
-            app/build/outputs/bundle/release/*.aab
+            app/build/outputs/apk/release/SHA256SUMS.txt
           body_path: release_notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true

@@ -50,12 +50,26 @@ import androidx.activity.compose.LocalActivity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
+
+private object Sec {
+    const val ROOT = -1
+    const val ACCOUNT = 0
+    const val VISUAL = 1
+    const val STORAGE = 2
+    const val LINKS = 3
+    const val ABOUT = 4
+    const val LOGS = 5
+    const val ADVANCED = 6
+    const val EQUALIZER = 7
+}
 
 private sealed interface LibView {
     data object Root : LibView
@@ -170,6 +184,8 @@ fun LibraryScreen(
             onBack = { showSettings = false },
             onLogout = {
                 showSettings = false
+                val sid = Api.sessionId
+                if (sid != null) App.scope.launch { Api.logout(sid) }
                 Prefs.saveUsername(null)
                 Api.storeSession(context, null)
                 onSessionExpired()
@@ -224,10 +240,10 @@ fun LibraryScreen(
                     }
                 }
                 IconButton(onClick = { showCreate = true }) {
-                    Icon(painterResource(R.drawable.ic_plus), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(painterResource(R.drawable.ic_plus), stringResource(R.string.new_playlist), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { showSettings = true }) {
-                    Icon(painterResource(R.drawable.ic_settings), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(painterResource(R.drawable.ic_settings), iconLabel(R.drawable.ic_settings), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
@@ -250,7 +266,7 @@ fun LibraryScreen(
                 item {
                     LibRow(R.drawable.ic_download, stringResource(R.string.downloads)) { view = LibView.Downloaded }
                 }
-                items(playlists) { p ->
+                items(playlists.distinctBy { it.urn }, key = { "own:" + it.urn }) { p ->
                     LibRow(
                         R.drawable.ic_music,
                         p.title,
@@ -260,7 +276,7 @@ fun LibraryScreen(
                         view = LibView.PlaylistView(p.urn, p.title)
                     }
                 }
-                items(likedPls) { p ->
+                items(likedPls.distinctBy { it.urn }, key = { "liked:" + it.urn }) { p ->
                     LibRow(
                         R.drawable.ic_music,
                         p.title,
@@ -270,7 +286,7 @@ fun LibraryScreen(
                         view = LibView.PlaylistView(p.urn, p.title, owned = false)
                     }
                 }
-                items(LikedArtists.artists) { a ->
+                items(LikedArtists.artists.distinctBy { it.urn }, key = { "artist:" + it.urn }) { a ->
                     LibRow(
                         R.drawable.ic_user,
                         a.username,
@@ -327,11 +343,12 @@ fun LibraryScreen(
             onBack = { view = LibView.Root },
             play = play,
             dimUndownloaded = offline,
-            loader = { page, _ ->
-                val res = Api.history(offset = page * 50, limit = 50)
+            loader = { page, fresh ->
+                val res = Api.history(offset = page * 50, limit = 50, fresh = fresh && !offline)
                 val batch = res.collection.map { it.toTrack() }.distinctBy { it.urn }
                 batch to (page * 50 + res.collection.size < res.total)
             },
+            onClear = if (offline) null else { { Api.clearHistory() } },
         )
 
         is LibView.LikedGenre -> LibTracks(
@@ -561,8 +578,10 @@ private fun LibTracks(
     listKey: String? = null,
     visible: (Track) -> Boolean = { true },
     rowTrailing: (@Composable (Track) -> Unit)? = null,
+    onClear: (suspend () -> Unit)? = null,
 ) {
     var items by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var confirmClear by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf(0) }
     var hasMore by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
@@ -619,7 +638,7 @@ private fun LibTracks(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
-                Icon(painterResource(R.drawable.ic_arrow_back), null)
+                Icon(painterResource(R.drawable.ic_arrow_back), iconLabel(R.drawable.ic_arrow_back))
             }
             Text(
                 title,
@@ -629,12 +648,45 @@ private fun LibTracks(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            if (onClear != null && items.isNotEmpty()) {
+                IconButton(onClick = { confirmClear = true }) {
+                    Icon(
+                        painterResource(R.drawable.ic_trash),
+                        stringResource(R.string.history_clear),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+            if (confirmClear && onClear != null) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { confirmClear = false },
+                    text = { Text(stringResource(R.string.history_clear_q)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmClear = false
+                            scope.launch {
+                                val ok = runCatching { onClear() }.isSuccess
+                                if (ok) {
+                                    items = emptyList()
+                                    hasMore = false
+                                } else {
+                                    android.widget.Toast.makeText(context, context.getString(R.string.error_network), android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmClear = false }) { Text(stringResource(R.string.cancel)) }
+                    },
+                )
+            }
             likedPlaylistUrn?.let { urn ->
                 val plLiked = LikedPlaylists.isLiked(urn)
                 IconButton(onClick = { scope.launch { LikedPlaylists.toggle(Playlist(urn = urn, title = title)) } }) {
                     Icon(
                         painterResource(if (plLiked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                        null,
+                        iconLabel(if (plLiked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
                         tint = if (plLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
@@ -645,7 +697,7 @@ private fun LibTracks(
                 IconButton(onClick = { LikedArtists.toggle(a) }) {
                     Icon(
                         painterResource(if (arLiked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                        null,
+                        iconLabel(if (arLiked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
                         tint = if (arLiked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
@@ -655,7 +707,7 @@ private fun LibTracks(
                 var menuOpen by remember { mutableStateOf(false) }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
-                        Icon(painterResource(R.drawable.ic_more_vert), null, modifier = Modifier.size(20.dp))
+                        Icon(painterResource(R.drawable.ic_more_vert), iconLabel(R.drawable.ic_more_vert), modifier = Modifier.size(20.dp))
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         if (onRename != null) {
@@ -699,10 +751,14 @@ private fun LibTracks(
             val downloading = paginating || key in Downloads.activeLists
             if (downloadAll) {
                 if (downloading) {
-                    IconButton(onClick = {
-                        downloadJob?.cancel()
-                        Downloads.cancelList(context, key)
-                    }) {
+                    val cancelLabel = stringResource(R.string.cd_cancel_download)
+                    IconButton(
+                        onClick = {
+                            downloadJob?.cancel()
+                            Downloads.cancelList(context, key)
+                        },
+                        modifier = Modifier.semantics { contentDescription = cancelLabel },
+                    ) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     }
                 } else if (allDownloaded) {
@@ -736,7 +792,7 @@ private fun LibTracks(
                             }
                         }
                     }) {
-                        Icon(painterResource(R.drawable.ic_download), null, modifier = Modifier.size(20.dp))
+                        Icon(painterResource(R.drawable.ic_download), iconLabel(R.drawable.ic_download), modifier = Modifier.size(20.dp))
                     }
                 }
             }
@@ -839,29 +895,42 @@ fun SettingsScreen(
 ) {
     val activity = LocalActivity.current
     val ctx = LocalContext.current
-    var section by remember { mutableStateOf(-1) }
+    var section by remember { mutableStateOf(Sec.ROOT) }
     val scope = rememberCoroutineScope()
-    BackHandler { if (section == 6) section = 1 else if (section >= 0) section = -1 else onBack() }
+    val scanQr = rememberQrScanner()
+    var showPushQr by remember { mutableStateOf(false) }
+    if (showPushQr) LinkQrDialog(push = true, onDismiss = { showPushQr = false })
+    fun goBack() {
+        section = when (section) {
+            Sec.ADVANCED -> Sec.VISUAL
+            Sec.ROOT -> {
+                onBack()
+                Sec.ROOT
+            }
+            else -> Sec.ROOT
+        }
+    }
+    BackHandler { goBack() }
 
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { if (section == 6) section = 1 else if (section >= 0) section = -1 else onBack() }) {
-                Icon(painterResource(R.drawable.ic_arrow_back), null)
+            IconButton(onClick = { goBack() }) {
+                Icon(painterResource(R.drawable.ic_arrow_back), iconLabel(R.drawable.ic_arrow_back))
             }
             Text(
                 stringResource(
                     when (section) {
-                        0 -> R.string.tab_account
-                        1 -> R.string.tab_visual
-                        2 -> R.string.tab_storage
-                        3 -> R.string.tab_star
-                        4 -> R.string.tab_about
-                        5 -> R.string.tab_logs
-                        6 -> R.string.tab_advanced
-                        7 -> R.string.equalizer
+                        Sec.ACCOUNT -> R.string.tab_account
+                        Sec.VISUAL -> R.string.tab_visual
+                        Sec.STORAGE -> R.string.tab_storage
+                        Sec.LINKS -> R.string.tab_star
+                        Sec.ABOUT -> R.string.tab_about
+                        Sec.LOGS -> R.string.tab_logs
+                        Sec.ADVANCED -> R.string.tab_advanced
+                        Sec.EQUALIZER -> R.string.equalizer
                         else -> R.string.settings
                     },
                 ),
@@ -870,20 +939,20 @@ fun SettingsScreen(
             )
         }
 
-        if (section == -1) {
+        if (section == Sec.ROOT) {
             Column(
                 Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 8.dp),
             ) {
-                SettingsRow(R.drawable.ic_user, stringResource(R.string.tab_account), username ?: stringResource(R.string.account_signed_in)) { section = 0 }
-                SettingsRow(R.drawable.ic_music, stringResource(R.string.tab_visual), stringResource(R.string.settings_visual_sub)) { section = 1 }
-                SettingsRow(R.drawable.ic_equalizer, stringResource(R.string.equalizer), stringResource(R.string.eq_sub)) { section = 7 }
-                SettingsRow(R.drawable.ic_download, stringResource(R.string.tab_storage), stringResource(R.string.settings_storage_sub)) { section = 2 }
-                SettingsRow(R.drawable.ic_share, stringResource(R.string.tab_star), stringResource(R.string.settings_links_sub)) { section = 3 }
-                SettingsRow(R.drawable.ic_settings, stringResource(R.string.tab_about), stringResource(R.string.settings_system_sub)) { section = 4 }
-                SettingsRow(R.drawable.ic_history, stringResource(R.string.tab_logs), stringResource(R.string.settings_logs_sub)) { section = 5 }
+                SettingsRow(R.drawable.ic_user, stringResource(R.string.tab_account), username ?: stringResource(R.string.account_signed_in)) { section = Sec.ACCOUNT }
+                SettingsRow(R.drawable.ic_music, stringResource(R.string.tab_visual), stringResource(R.string.settings_visual_sub)) { section = Sec.VISUAL }
+                SettingsRow(R.drawable.ic_equalizer, stringResource(R.string.equalizer), stringResource(R.string.eq_sub)) { section = Sec.EQUALIZER }
+                SettingsRow(R.drawable.ic_download, stringResource(R.string.tab_storage), stringResource(R.string.settings_storage_sub)) { section = Sec.STORAGE }
+                SettingsRow(R.drawable.ic_share, stringResource(R.string.tab_star), stringResource(R.string.settings_links_sub)) { section = Sec.LINKS }
+                SettingsRow(R.drawable.ic_settings, stringResource(R.string.tab_about), stringResource(R.string.settings_system_sub)) { section = Sec.ABOUT }
+                SettingsRow(R.drawable.ic_history, stringResource(R.string.tab_logs), stringResource(R.string.settings_logs_sub)) { section = Sec.LOGS }
             }
             return@Column
         }
@@ -895,7 +964,7 @@ fun SettingsScreen(
                 .padding(horizontal = 8.dp, vertical = 8.dp),
         ) {
             when (section) {
-                3 -> {
+                Sec.LINKS -> {
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -979,7 +1048,7 @@ fun SettingsScreen(
                     }
                 }
 
-                0 -> {
+                Sec.ACCOUNT -> {
                     Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
@@ -1015,6 +1084,9 @@ fun SettingsScreen(
                             fontWeight = FontWeight.Medium,
                         )
                     }
+                    Spacer(Modifier.height(16.dp))
+                    SettingsRow(R.drawable.ic_share, stringResource(R.string.link_share_title), stringResource(R.string.link_share_sub)) { showPushQr = true }
+                    SettingsRow(R.drawable.ic_user, stringResource(R.string.link_scan_title), stringResource(R.string.link_scan_sub)) { scanQr() }
                     Spacer(Modifier.height(16.dp))
                     Text(stringResource(R.string.api_server), fontWeight = FontWeight.Medium)
                     Text(
@@ -1054,7 +1126,7 @@ fun SettingsScreen(
                     ) { Text(stringResource(R.string.logout)) }
                 }
 
-                1 -> {
+                Sec.VISUAL -> {
                     Text(stringResource(R.string.theme), fontWeight = FontWeight.Medium)
                     listOf(
                         "system" to stringResource(R.string.theme_system),
@@ -1114,7 +1186,7 @@ fun SettingsScreen(
                         R.drawable.ic_settings,
                         stringResource(R.string.tab_advanced),
                         stringResource(R.string.settings_advanced_sub),
-                    ) { section = 6 }
+                    ) { section = Sec.ADVANCED }
 
                     Spacer(Modifier.height(8.dp))
                     SettingSwitch(
@@ -1157,7 +1229,7 @@ fun SettingsScreen(
                     }
                 }
 
-                2 -> {
+                Sec.STORAGE -> {
                     val downloadedSet = Downloads.downloaded
                     val tracks = Downloads.tracks()
                     var usedTracks by remember { mutableStateOf(0L) }
@@ -1361,6 +1433,11 @@ fun SettingsScreen(
                         Prefs.changeAutoCacheLikes(on)
                         if (on) LikesAutoCache.run(ctx)
                     }
+                    SettingSwitch(
+                        stringResource(R.string.prefetch_wifi_only),
+                        stringResource(R.string.prefetch_wifi_only_hint),
+                        Prefs.prefetchWifiOnly,
+                    ) { Prefs.changePrefetchWifiOnly(it) }
 
                     Spacer(Modifier.height(16.dp))
                     Button(
@@ -1391,7 +1468,7 @@ fun SettingsScreen(
                             confirmButton = {
                                 TextButton(onClick = {
                                     confirmWipe = false
-                                    scope.launch { tracks.forEach { runCatching { Downloads.remove(it.urn) } } }
+                                    scope.launch { runCatching { Downloads.removeAll(tracks.map { it.urn }) } }
                                 }) {
                                     Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
                                 }
@@ -1414,7 +1491,7 @@ fun SettingsScreen(
                     }
                 }
 
-                6 -> {
+                Sec.ADVANCED -> {
                     var cropSource by remember { mutableStateOf<android.net.Uri?>(null) }
                     val pickImage = androidx.activity.compose.rememberLauncherForActivityResult(
                         androidx.activity.result.contract.ActivityResultContracts.GetContent(),
@@ -1597,13 +1674,13 @@ fun SettingsScreen(
                         stringResource(R.string.theme_discord),
                         color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.clickable { section = 3 },
+                        modifier = Modifier.clickable { section = Sec.LINKS },
                     )
                 }
 
-                7 -> EqualizerPanel()
+                Sec.EQUALIZER -> EqualizerPanel()
 
-                5 -> {
+                Sec.LOGS -> {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "${Logs.lines.size}",
@@ -1618,10 +1695,10 @@ fun SettingsScreen(
                             }
                             ctx.startActivity(android.content.Intent.createChooser(send, null))
                         }) {
-                            Icon(painterResource(R.drawable.ic_share), null, modifier = Modifier.size(20.dp))
+                            Icon(painterResource(R.drawable.ic_share), stringResource(R.string.cd_share), modifier = Modifier.size(20.dp))
                         }
                         IconButton(onClick = { Logs.clear() }) {
-                            Icon(painterResource(R.drawable.ic_trash), null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+                            Icon(painterResource(R.drawable.ic_trash), stringResource(R.string.logs_clear), modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -1658,8 +1735,8 @@ fun SettingsScreen(
                     InfoRow("Stream", Endpoints.streamBase.removePrefix("https://"))
                     Spacer(Modifier.height(12.dp))
                     SettingSwitch(
-                        "Stream debug",
-                        "Показывать ответ стрим-сервера при открытии трека",
+                        stringResource(R.string.stream_debug),
+                        stringResource(R.string.stream_debug_hint),
                         Prefs.streamDebug,
                     ) { Prefs.changeStreamDebug(it) }
                     Spacer(Modifier.height(20.dp))

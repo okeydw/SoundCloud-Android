@@ -80,6 +80,29 @@ Go to the [releases page](https://github.com/okeydw/SoundCloud-Android/releases/
 
 **Requirements:** Android 8.0 (Oreo) or newer.
 
+**Verify the file:** every release ships `SHA256SUMS.txt`, and the release notes list the APK SHA-256 and the signing certificate fingerprint. If the fingerprint differs from earlier releases, do not install it.
+
+---
+
+## How to sign in
+
+The app does not go past the login screen until you sign in:
+
+1. **QR from the desktop app (recommended).** In [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) open "Transfer session to another device", then tap "Open camera" in the app and scan the code with the built-in scanner.
+2. **QR from the phone.** On the login screen tap "Show a QR code to sign in" and scan it where you are already signed in.
+3. **Browser.** "Sign in with SoundCloud" is the regular SoundCloud login. That session may drop if you sign in somewhere else later.
+
+Already signed in and want to sign in another device — Settings → Account → Sign in another device.
+
+---
+
+## Data and trust
+
+- The app talks to the `*.scnative.space` backend (the same one the desktop app uses). **Your session and SoundCloud tokens are stored on that backend**; the phone keeps only the session id.
+- The session id is sent only to `*.scnative.space` hosts, never to third-party addresses.
+- "Log out" deletes the session on the backend (`POST /auth/logout`) and all data on the phone.
+- The direct SoundCloud fallback (can be turned off in settings) talks to soundcloud.com without your session.
+
 ---
 
 ## Screenshots
@@ -103,7 +126,7 @@ Go to the [releases page](https://github.com/okeydw/SoundCloud-Android/releases/
 
 ## Feedback
 
-Found a bug or have an idea? — [open an issue](https://github.com/okeydw/SoundCloud-Android/issues/new/choose).
+Found a bug or have an idea? — [open an issue](https://github.com/okeydw/SoundCloud-Android/issues/new/choose). For bugs, attach logs: Settings → Logs → Share.
 
 ---
 
@@ -120,11 +143,33 @@ Found a bug or have an idea? — [open an issue](https://github.com/okeydw/Sound
 
 Same backend as [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) — the app acts as another client to it.
 
-**Compatibility:** `minSdk 26` (Android 8.0) … `targetSdk 35`, `compileSdk 35`.
+**Compatibility:** `minSdk 26` (Android 8.0), `targetSdk 35`, `compileSdk 35`.
+
+Full changelog is in [CHANGELOG.md](../CHANGELOG.md).
 
 ---
 
-Full changelog is in [CHANGELOG.md](../CHANGELOG.md).
+## For developers
+
+**Build:** JDK 17, Android SDK 35.
+
+```bash
+./gradlew assembleDebug        # APK in app/build/outputs/apk/debug/
+./gradlew test                 # unit tests
+./gradlew lint                 # lint (baseline: ./gradlew updateLintBaseline)
+```
+
+**Backend:**
+
+| Purpose | Hosts |
+| --- | --- |
+| API | `api.scnative.space`, `api-star.scnative.space` (Star) |
+| Streaming | `stream.scnative.space`, `stream-star.scnative.space` |
+| Storage | `storage.scnative.space`, `storage-star.scnative.space` |
+| Images | `images.scnative.space` |
+| Relays | `*.rN.relay.scnative.space`, list at `health.scnative.space/topology` |
+
+QR sign-in protocol: [qr-link-protocol.md](https://github.com/zxcloli666/SoundCloud-Desktop/blob/main/docs/qr-link-protocol.md) in the desktop repository.
 
 ---
 
@@ -135,10 +180,6 @@ MIT. Details in the [LICENSE](../LICENSE) file.
 _SoundCloud is a trademark of SoundCloud Ltd. This app is not affiliated with SoundCloud._
 
 ---
-
-<p align="center">
-<code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud client</code> · <code>soundcloud for android</code> · <code>soundcloud without ads</code> · <code>soundcloud no ads</code> · <code>soundcloud blocked</code> · <code>soundcloud not working</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>free soundcloud player</code> · <code>soundcloud music player</code> · <code>soundcloud mobile client</code>
-</p>
 
 <p align="center">
 <a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">

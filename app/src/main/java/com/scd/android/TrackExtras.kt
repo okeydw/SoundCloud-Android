@@ -58,7 +58,7 @@ private fun SheetFrame(title: String, onClose: () -> Unit, content: @Composable 
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = onClose) {
-                        Icon(painterResource(R.drawable.ic_chevron_down), null)
+                        Icon(painterResource(R.drawable.ic_chevron_down), iconLabel(R.drawable.ic_chevron_down))
                     }
                     Text(
                         title,

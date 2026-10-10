@@ -31,6 +31,7 @@ private const val CMD_SHUFFLE = "com.scd.android.SHUFFLE"
 class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
+    private var brain: PlayerBrain? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var lastReportedUrn: String? = null
 
@@ -75,6 +76,7 @@ class PlaybackService : MediaSessionService() {
                 true,
             )
             .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
         runCatching {
@@ -118,6 +120,8 @@ class PlaybackService : MediaSessionService() {
                 updateCustomLayout()
             }
         })
+
+        brain = PlayerBrain(this, player, scope).also { it.start() }
 
         val openIntent = Intent(this, MainActivity::class.java).apply {
             putExtra("open_player", true)
@@ -218,7 +222,7 @@ class PlaybackService : MediaSessionService() {
         return CommandButton.Builder(
             if (liked) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED,
         )
-            .setDisplayName(if (liked) "Unlike" else "Like")
+            .setDisplayName(getString(if (liked) R.string.notif_unlike else R.string.notif_like))
             .setCustomIconResId(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart)
             .setSessionCommand(SessionCommand(CMD_LIKE, Bundle.EMPTY))
             .setEnabled(true)
@@ -229,7 +233,7 @@ class PlaybackService : MediaSessionService() {
     private fun shuffleButton(): CommandButton {
         val on = mediaSession?.player?.shuffleModeEnabled == true
         return CommandButton.Builder(CommandButton.ICON_UNDEFINED)
-            .setDisplayName(if (on) "Перемешивание включено" else "Перемешать")
+            .setDisplayName(getString(if (on) R.string.notif_shuffle_on else R.string.notif_shuffle))
             .setCustomIconResId(if (on) R.drawable.ic_shuffle_on else R.drawable.ic_shuffle)
             .setSessionCommand(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
             .setEnabled(true)
@@ -293,6 +297,7 @@ class PlaybackService : MediaSessionService() {
     private fun prefetchNext(player: Player) {
         val factory = prefetchFactory ?: return
         if (Prefs.offline) return
+        if (Prefs.prefetchWifiOnly && NetMonitor.isMetered(this)) return
         val idx = player.nextMediaItemIndex
         if (idx == C.INDEX_UNSET) return
         val item = player.getMediaItemAt(idx)
@@ -372,6 +377,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         prefetchWriter?.cancel()
+        brain?.stop()
+        brain = null
         AudioFx.release()
         scope.cancel()
         mediaSession?.run {

@@ -54,22 +54,22 @@
 
 На данный момент сделана лёгковесная версия без излишеств, дизайн прикручу, когда пойму что багов нет и функционал в полном объёме, после разделю на две версии: 
 
-> `Full` - много красивых блестяшек и дизайн схожий с декстопной версией.
+> `Full` - много красивых блестяшек и дизайн схожий с десктопной версией.
 
 > `Lite` - упрощённый дизайн, кто ценит минимализм и слабые телефоны. 
 
-### Для IOS порта не будет!
+### Для iOS порта не будет! (от меня, мб кто-то другой сделает)
 
 
 ---
 
 ## Возможности
 
-- **Поиск и Волна** - поиск треков/артистов/плейлистов и персональная лента рекомендаций
+- **Поиск** - поиск треков/артистов/плейлистов и персональная лента рекомендаций
 - **Плеер** - фоновое воспроизведение, управление из уведомления, waveform, shuffle/repeat, жесты
 - **Библиотека** - лайки/дизлайки, плейлисты, история, профили артистов
 - **Оффлайн** - скачивание треков и автономный режим с кэшем
-- **Оформление** - тёмная/светлая тема, иммерсивный режим и 9 языков
+- **Оформление** - 9 языков и также полная кастомизация приложения
 
 ---
 
@@ -80,6 +80,29 @@
 **Установка:** открой скачанный файл на телефоне и разреши установку из неизвестных источников.
 
 **Требования:** Android 8.0 (Oreo) или новее.
+
+**Проверка файла:** в каждом релизе лежит `SHA256SUMS.txt`, а в описании релиза — SHA-256 APK и отпечаток сертификата подписи. Если отпечаток не совпадает с прошлыми релизами — не ставь.
+
+---
+
+## Как войти
+
+Без входа приложение дальше экрана логина не пустит. Способы:
+
+1. **QR с десктопа (рекомендую).** В [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) открой «Передать сессию на другое устройство», в приложении на телефоне нажми «Открыть камеру» и отсканируй код встроенным сканером.
+2. **QR с телефона.** На экране входа нажми «Показать QR для входа» и отсканируй его там, где ты уже вошёл.
+3. **Через браузер.** Кнопка «Войти через браузер» — обычный вход SoundCloud. Такая сессия может слетать, если потом войти где-то ещё.
+
+Уже вошёл и хочешь залогинить другое устройство — «Настройки → Аккаунт → Войти на другом устройстве».
+
+---
+
+## Данные и доверие
+
+- Приложение работает через бэкенд `*.scnative.space` (тот же, что у десктопа). **Сессия и токены SoundCloud хранятся на этом бэкенде**, на телефоне лежит только идентификатор сессии.
+- Идентификатор сессии отправляется только на хосты `*.scnative.space`, на сторонние адреса он не уходит.
+- «Выйти» удаляет сессию и на бэкенде (`POST /auth/logout`), и все данные на телефоне.
+- Прямой запасной путь к SoundCloud (можно выключить в настройках) ходит на soundcloud.com без твоей сессии.
 
 ---
 
@@ -104,7 +127,7 @@
 
 ## Обратная связь
 
-Нашёл баг или есть идея? - [открой issue](https://github.com/okeydw/SoundCloud-Android/issues/new/choose).
+Нашёл баг или есть идея? - [открой issue](https://github.com/okeydw/SoundCloud-Android/issues/new/choose). К багу приложи логи: «Настройки → Логи → Поделиться».
 
 
 ---
@@ -124,11 +147,33 @@
 
 Тот же бэкенд, что и у [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) - приложение работает как ещё один клиент к нему.
 
-**Совместимость:** `minSdk 26` (Android 8.0) … (Android `targetSdk 35`, `compileSdk 35` .
-
-
+**Совместимость:** `minSdk 26` (Android 8.0), `targetSdk 35`, `compileSdk 35`.
 
 Полный список изменений - в [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## Для разработчиков
+
+**Сборка:** JDK 17, Android SDK 35.
+
+```bash
+./gradlew assembleDebug        # APK в app/build/outputs/apk/debug/
+./gradlew test                 # юнит-тесты
+./gradlew lint                 # lint (с baseline: ./gradlew updateLintBaseline)
+```
+
+**Бэкенд:**
+
+| Назначение | Хосты |
+| --- | --- |
+| API | `api.scnative.space`, `api-star.scnative.space` (Star) |
+| Стриминг | `stream.scnative.space`, `stream-star.scnative.space` |
+| Хранилище | `storage.scnative.space`, `storage-star.scnative.space` |
+| Картинки | `images.scnative.space` |
+| Relay-узлы | `*.rN.relay.scnative.space`, список — `health.scnative.space/topology` |
+
+Протокол входа по QR — [qr-link-protocol.md](https://github.com/zxcloli666/SoundCloud-Desktop/blob/main/docs/qr-link-protocol.md) в репозитории десктопа.
 
 ---
 
@@ -139,10 +184,6 @@ MIT. Подробности - в файле [LICENSE](LICENSE).
 _SoundCloud - торговая марка SoundCloud Ltd. Это приложение не аффилировано с SoundCloud._
 
 ---
-
-<p align="center">
-<code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud для андроид</code> · <code>soundcloud клиент</code> · <code>soundcloud на телефон</code> · <code>soundcloud без рекламы</code> · <code>soundcloud россия</code> · <code>soundcloud в россии</code> · <code>soundcloud не работает</code> · <code>soundcloud заблокирован</code> · <code>soundcloud blocked russia</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud без капчи</code> · <code>скачать soundcloud на телефон</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>музыкальный плеер soundcloud</code>
-</p>
 
 <p align="center">
 <a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">

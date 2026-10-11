@@ -142,7 +142,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.palette:palette-ktx:1.0.0")
 
-    implementation("com.google.guava:guava:33.3.1-android")
+    implementation("com.google.guava:guava:33.7.2-android")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("sh.calvin.reorderable:reorderable:2.4.3")
 

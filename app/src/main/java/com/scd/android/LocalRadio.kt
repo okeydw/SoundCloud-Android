@@ -81,7 +81,7 @@ class RadioEngine(private val tag: String) {
     }
 
     private fun usable(t: Track) =
-        t.urn !in seen && !t.starLocked && (!t.unavailable || Prefs.playBlocked) && !Dislikes.isDisliked(t.urn)
+        t.urn !in seen && !t.starLocked && (!t.unavailable || Prefs.playBlocked) && !t.hidden
 
     suspend fun batch(limit: Int = 20): List<Track> {
         if (seeds.isEmpty() && seedHint == null) loadPersonalSeeds()

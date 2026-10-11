@@ -18,14 +18,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
 
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
-          language: java-kotlin
+          languages: java-kotlin
+          build-mode: manual
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -35,4 +36,4 @@ jobs:
       - name: Build
         run: ./gradlew assembleDebug
 
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4

@@ -66,6 +66,7 @@ object Likes {
     }
 
     suspend fun toggle(track: Track): Boolean = withContext(NonCancellable) {
+        if (track.external) return@withContext isLiked(track.urn)
         val nowLiked = !isLiked(track.urn)
         version++
         if (nowLiked) {

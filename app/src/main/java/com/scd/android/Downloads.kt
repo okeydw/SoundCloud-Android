@@ -136,23 +136,37 @@ object Downloads {
         appContext = context.applicationContext
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Downloads", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL_ID, context.getString(R.string.downloads), NotificationManager.IMPORTANCE_LOW)
         )
         dir = File(context.filesDir, "tracks").apply { mkdirs() }
         indexFile = File(dir, "index.json")
         runCatching {
-            if (indexFile.exists()) {
+            val atomic = android.util.AtomicFile(indexFile)
+            if (indexFile.exists() || File(indexFile.path + ".bak").exists()) {
                 val tracks = json.decodeFromString(
                     ListSerializer(Track.serializer()),
-                    indexFile.readText(),
+                    String(atomic.readFully(), Charsets.UTF_8),
                 )
-                for (t in tracks) if (fileFor(t.urn).exists()) index[t.urn] = t
+                synchronized(index) {
+                    for (t in tracks) index[t.urn] = t
+                }
             }
         }
-        downloaded = index.keys.toSet()
+        downloaded = synchronized(index) { index.keys.toSet() }
+        App.scope.launch {
+            val snapshot = synchronized(index) { index.keys.toList() }
+            val missing = snapshot.filter { !fileFor(it).exists() }
+            if (missing.isEmpty()) return@launch
+            synchronized(index) {
+                missing.forEach { index.remove(it) }
+                saveIndex()
+            }
+            downloaded = downloaded - missing.toSet()
+            Logs.add("download", "index: dropped ${missing.size} missing files")
+        }
     }
 
-    private val audioExts = listOf("m4a", "mp3", "ogg", "aac")
+    private val audioExts = listOf("m4a", "mp3", "ogg", "aac", "webm")
 
     private fun baseName(urn: String) = urn.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
@@ -168,6 +182,7 @@ object Downloads {
         if (n < 12) return "m4a"
         fun at(i: Int, s: String) = s.indices.all { head[i + it] == s[it].code.toByte() }
         return when {
+            (head[0].toInt() and 0xFF) == 0x1A && (head[1].toInt() and 0xFF) == 0x45 && (head[2].toInt() and 0xFF) == 0xDF -> "webm"
             at(4, "ftyp") -> "m4a"
             at(0, "OggS") -> "ogg"
             at(0, "ID3") -> "mp3"
@@ -281,6 +296,7 @@ object Downloads {
         val b0 = head[0].toInt() and 0xFF
         val b1 = head[1].toInt() and 0xFF
         return at(4, "ftyp") || at(0, "ID3") || at(0, "OggS") || at(0, "RIFF") || at(0, "fLaC") ||
+            (b0 == 0x1A && b1 == 0x45 && (head[2].toInt() and 0xFF) == 0xDF) ||
             (b0 == 0xFF && (b1 and 0xE0) == 0xE0)
     }
 
@@ -316,32 +332,93 @@ object Downloads {
         }
     }
 
-    private suspend fun downloadArt(track: Track) = withContext(Dispatchers.IO) {
-        val raw = Api.artworkUrl(track.artwork_url, "t500x500") ?: return@withContext
+    private suspend fun downloadArt(track: Track): Boolean = withContext(Dispatchers.IO) {
         val target = artFor(track.urn)
-        if (target.exists() && target.length() > 0) return@withContext
-        runCatching {
-            val request = if (raw.contains("sndcdn.com")) {
+        if (target.exists() && target.length() > 0) return@withContext true
+        val raw = Api.artworkUrl(track.artwork_url, "t500x500")
+            ?: Api.artworkUrl(track.user?.avatar_url, "t500x500")
+            ?: return@withContext false
+        val requests = buildList {
+            if (raw.contains("sndcdn.com")) {
                 val (name, value) = Api.imageProxyTarget(raw)
-                Request.Builder()
-                    .url("${Api.IMAGES_BASE}/?t=${android.net.Uri.encode(value)}")
-                    .header(name, value)
-                    .build()
-            } else {
-                Request.Builder().url(raw).build()
+                Endpoints.imageHosts.forEach { host ->
+                    add(Request.Builder().url("$host/?t=${android.net.Uri.encode(value)}").header(name, value).build())
+                }
             }
-            Api.http.newCall(request).execute().use { res ->
-                val body = res.body ?: return@use
-                if (!res.isSuccessful) return@use
-                target.outputStream().use { out -> body.byteStream().copyTo(out) }
-            }
+            add(Request.Builder().url(raw).build())
         }
-        if (target.exists() && target.length() <= 0L) target.delete()
+        val tmp = File(target.path + ".part")
+        for (req in requests) {
+            val ok = runCatching {
+                client.newCall(req).execute().use { res ->
+                    val body = res.body
+                    if (!res.isSuccessful || body == null) return@use false
+                    tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeFile(tmp.path, bounds)
+                    bounds.outWidth > 0
+                }
+            }.getOrDefault(false)
+            if (ok && tmp.renameTo(target)) return@withContext true
+            tmp.delete()
+        }
+        false
+    }
+
+    suspend fun backfillArt() {
+        if (Prefs.offline) return
+        val missing = tracks().filter { artPathOrNull(it.urn) == null && (it.artwork_url != null || it.user?.avatar_url != null) }
+        if (missing.isEmpty()) return
+        var got = 0
+        for (t in missing) {
+            if (Prefs.offline) break
+            if (runCatching { downloadArt(t) }.getOrDefault(false)) got++
+        }
+        Logs.add("download", "обложки для офлайна: $got из ${missing.size}")
     }
 
     fun isDownloaded(urn: String) = urn in downloaded
 
-    fun tracks(): List<Track> = index.values.toList().reversed()
+    val ready: Boolean get() = ::dir.isInitialized
+
+    fun localFile(urn: String): File? = if (ready && isDownloaded(urn)) fileFor(urn).takeIf { it.exists() } else null
+
+    suspend fun importFrom(track: Track, audio: java.io.InputStream, art: java.io.InputStream?): Boolean = withContext(Dispatchers.IO) {
+        if (isDownloaded(track.urn) || track.urn in inProgress) {
+            audio.close()
+            art?.close()
+            return@withContext isDownloaded(track.urn)
+        }
+        inProgress = inProgress + track.urn
+        val base = baseName(track.urn)
+        val tmp = File(dir, "$base.import.part")
+        try {
+            tmp.delete()
+            audio.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+            if (!looksLikeAudio(tmp)) {
+                tmp.delete()
+                return@withContext false
+            }
+            val target = File(dir, "$base.${audioExt(tmp)}")
+            audioExts.forEach { File(dir, "$base.$it").delete() }
+            if (!tmp.renameTo(target)) return@withContext false
+            art?.use { input -> runCatching { artFor(track.urn).outputStream().use { input.copyTo(it) } } }
+            synchronized(index) {
+                index[track.urn] = track
+                saveIndex()
+            }
+            downloaded = downloaded + track.urn
+            true
+        } catch (_: Exception) {
+            tmp.delete()
+            false
+        } finally {
+            art?.let { runCatching { it.close() } }
+            inProgress = inProgress - track.urn
+        }
+    }
+
+    fun tracks(): List<Track> = synchronized(index) { index.values.toList() }.reversed()
 
     suspend fun download(track: Track): Boolean = withContext(Dispatchers.IO) {
         if (isDownloaded(track.urn) || track.urn in inProgress) {
@@ -357,7 +434,18 @@ object Downloads {
             var quality = ""
             var sawTruncated = false
             val tried = mutableSetOf<String>()
-            for ((url, q) in candidates(track)) {
+            if (YouTubeImport.isYouTube(track.urn)) {
+                val ok = runCatching { YouTubeImport.downloadTo(track, tmp) }
+                    .onFailure { Logs.add("download", "${track.title.take(24)} → YouTube: ${it.message?.take(80)}") }
+                    .getOrDefault(false)
+                if (ok && looksLikeAudio(tmp)) {
+                    picked = "youtube"
+                    quality = "YT"
+                } else {
+                    tmp.delete()
+                }
+            }
+            for ((url, q) in if (picked != null || YouTubeImport.isYouTube(track.urn)) emptySequence() else candidates(track)) {
                 if (!tried.add(url)) continue
                 val ok = runCatching { fetchTo(url, tmp) }.getOrDefault(false)
                 if (ok && !truncated(tmp, track.displayDuration, track.urn, track.goPlus)) {
@@ -369,9 +457,11 @@ object Downloads {
                 tmp.delete()
             }
             if (picked == null) {
+                DownloadFailures.record(track.urn)
                 Logs.add(
                     "download",
-                    "${track.title.take(24)} → " + if (sawTruncated) "обрезан, не сохраняю" else "не скачался",
+                    "${track.title.take(24)} → " + (if (sawTruncated) "обрезан, не сохраняю" else "не скачался") +
+                        " (попытка ${DownloadFailures.failures(track.urn)})",
                 )
                 return@withContext false
             }
@@ -384,6 +474,7 @@ object Downloads {
                 "${track.title.take(24)} → $quality $ext ${target.length() / 1024} KB " +
                     "@${picked.substringAfter("://").substringBefore('/')}",
             )
+            DownloadFailures.clear(track.urn)
             runCatching { downloadArt(track) }
             synchronized(index) {
                 index[track.urn] = track
@@ -438,15 +529,18 @@ object Downloads {
         }
         val single = total == 1
         var done = 0
+        var saved = 0
+        var failed = 0
         try {
             notifyProgress(done, total, job.playlistUrn, job.playlistTitle, single)
             for (t in pending) {
                 if (job.key != null && job.key in cancelledKeys) break
-                if (job.upgrade) upgradeOne(t) else download(t)
+                val ok = if (job.upgrade) upgradeOne(t) else download(t)
                 done++
+                if (ok) saved++ else failed++
                 notifyProgress(done, total, job.playlistUrn, job.playlistTitle, single)
             }
-            notifyComplete(done, total, job.playlistUrn, job.playlistTitle, single)
+            notifyComplete(saved, failed, job.upgrade, job.playlistUrn, job.playlistTitle, single)
         } catch (e: kotlinx.coroutines.CancellationException) {
             jobQueue.clear()
             queued = emptySet()
@@ -525,16 +619,21 @@ object Downloads {
         )
     }
 
-    suspend fun remove(urn: String): Unit = withContext(Dispatchers.IO) {
-        val base = baseName(urn)
-        audioExts.forEach { File(dir, "$base.$it").delete() }
-        qualityLabels.remove(urn)
-        artFor(urn).delete()
+    suspend fun remove(urn: String): Unit = removeAll(listOf(urn))
+
+    suspend fun removeAll(urns: Collection<String>): Unit = withContext(Dispatchers.IO) {
+        if (urns.isEmpty()) return@withContext
+        for (urn in urns) {
+            val base = baseName(urn)
+            audioExts.forEach { File(dir, "$base.$it").delete() }
+            artFor(urn).delete()
+        }
+        withContext(Dispatchers.Main) { urns.forEach { qualityLabels.remove(it) } }
         synchronized(index) {
-            index.remove(urn)
+            urns.forEach { index.remove(it) }
             saveIndex()
         }
-        downloaded = downloaded - urn
+        downloaded = downloaded - urns.toSet()
     }
 
     @SuppressLint("MissingPermission")
@@ -560,30 +659,50 @@ object Downloads {
 
     @SuppressLint("MissingPermission")
     private fun notifyComplete(
-        done: Int,
-        total: Int,
+        saved: Int,
+        failed: Int,
+        upgrade: Boolean,
         playlistUrn: String?,
         playlistTitle: String?,
         single: Boolean,
     ) {
         if (!::appContext.isInitialized) return
-        val notif = NotificationCompat.Builder(appContext, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_check)
-            .setContentTitle(appContext.getString(R.string.download_done))
-            .setContentText(appContext.getString(R.string.download_done_count, done))
+        val ctx = appContext
+        val title = when {
+            upgrade -> ctx.getString(R.string.upgrade_quality)
+            saved == 0 && failed > 0 -> ctx.getString(R.string.download_failed)
+            else -> ctx.getString(R.string.download_done)
+        }
+        val text = when {
+            upgrade -> ctx.getString(R.string.upgrade_done_count, saved)
+            failed == 0 -> ctx.getString(R.string.download_done_count, saved)
+            saved == 0 -> ctx.getString(R.string.download_failed_count, failed)
+            else -> ctx.getString(R.string.download_partial_count, saved, failed)
+        }
+        val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
+            .setSmallIcon(if (saved == 0 && failed > 0 && !upgrade) R.drawable.ic_clear else R.drawable.ic_check)
+            .setContentTitle(title)
+            .setContentText(text)
             .setOngoing(false)
             .setAutoCancel(true)
             .setSilent(true)
             .setContentIntent(contentIntent(playlistUrn, playlistTitle, single))
             .build()
-        runCatching { NotificationManagerCompat.from(appContext).notify(NOTIF_ID, notif) }
+        runCatching { NotificationManagerCompat.from(ctx).notify(NOTIF_ID, notif) }
     }
 
     private fun saveIndex() {
-        runCatching {
-            indexFile.writeText(
-                json.encodeToString(ListSerializer(Track.serializer()), index.values.toList())
-            )
+        val atomic = android.util.AtomicFile(indexFile)
+        var out: java.io.FileOutputStream? = null
+        try {
+            val bytes = json.encodeToString(ListSerializer(Track.serializer()), index.values.toList())
+                .toByteArray(Charsets.UTF_8)
+            out = atomic.startWrite()
+            out.write(bytes)
+            atomic.finishWrite(out)
+        } catch (e: Exception) {
+            out?.let { runCatching { atomic.failWrite(it) } }
+            Logs.add("download", "index save failed: ${e.javaClass.simpleName}")
         }
     }
 }

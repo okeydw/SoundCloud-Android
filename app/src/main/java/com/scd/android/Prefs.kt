@@ -18,6 +18,21 @@ object AccentPalette {
     )
 }
 
+object BackgroundPalette {
+    val solids = listOf(
+        0xFF14101F.toInt(),
+        0xFF0B1A2A.toInt(),
+        0xFF0F1F17.toInt(),
+        0xFF221012.toInt(),
+    )
+    val gradients = listOf(
+        0xFF1A0F33.toInt() to 0xFF0B2233.toInt(),
+        0xFF2A0F1F.toInt() to 0xFF120B26.toInt(),
+        0xFF0B2A26.toInt() to 0xFF0A1022.toInt(),
+        0xFF2B1A0A.toInt() to 0xFF200B1E.toInt(),
+    )
+}
+
 object CacheLimits {
     const val UNLIMITED = 0L
     val DEFAULT_BYTES = 5L * 1024 * 1024 * 1024
@@ -90,13 +105,53 @@ object Prefs {
         private set
     var streamDebug by mutableStateOf(false)
         private set
+    var prefetchWifiOnly by mutableStateOf(false)
+        private set
     var streamTags by mutableStateOf(false)
         private set
     var accent by mutableStateOf(AccentPalette.DEFAULT)
         private set
+    var accent2 by mutableStateOf(0)
+        private set
+    var bgColor1 by mutableStateOf(0)
+        private set
+    var bgColor2 by mutableStateOf(0)
+        private set
     var cacheLimit by mutableStateOf(CacheLimits.DEFAULT_BYTES)
         private set
     var cacheDays by mutableStateOf(CacheLimits.DEFAULT_DAYS)
+        private set
+    var carAutoplay by mutableStateOf(false)
+        private set
+    var carSource by mutableStateOf(CarAutoplay.LIKED)
+        private set
+    var carSourceTitle by mutableStateOf("")
+        private set
+    var carDevices by mutableStateOf<Set<String>>(emptySet())
+        private set
+    var carShuffle by mutableStateOf(false)
+        private set
+    var carAutostart by mutableStateOf(true)
+        private set
+    var carEq by mutableStateOf("")
+        private set
+    var eqUser by mutableStateOf("")
+        private set
+    var eqHidden by mutableStateOf<Set<Int>>(emptySet())
+        private set
+    var crossfadeSeconds by mutableStateOf(3)
+        private set
+    var launcherIcon by mutableStateOf("")
+        private set
+    var ymToken by mutableStateOf("")
+        private set
+    var audioOutput by mutableStateOf("auto")
+        private set
+    var siblingShare by mutableStateOf(true)
+        private set
+    var effects by mutableStateOf("auto")
+        private set
+    var waveFresh by mutableStateOf(true)
         private set
 
     fun init(context: Context) {
@@ -128,15 +183,120 @@ object Prefs {
         eqPreset = sp.getInt("eq_preset", -1)
         eqBands = sp.getString("eq_bands", "") ?: ""
         streamDebug = sp.getBoolean("stream_debug", false)
+        prefetchWifiOnly = sp.getBoolean("prefetch_wifi_only", false)
         streamTags = sp.getBoolean("stream_tags", false)
         accent = sp.getInt("accent", AccentPalette.DEFAULT)
+        accent2 = 0
+        bgColor1 = sp.getInt("bg_color1", 0)
+        bgColor2 = sp.getInt("bg_color2", 0)
         cacheLimit = sp.getLong("cache_limit", CacheLimits.DEFAULT_BYTES)
         cacheDays = sp.getInt("cache_days", CacheLimits.DEFAULT_DAYS)
+        carAutoplay = sp.getBoolean("car_autoplay", false)
+        carSource = sp.getString("car_source", CarAutoplay.LIKED) ?: CarAutoplay.LIKED
+        carSourceTitle = sp.getString("car_source_title", "") ?: ""
+        carDevices = sp.getStringSet("car_devices", emptySet())?.toSet() ?: emptySet()
+        carShuffle = sp.getBoolean("car_shuffle", false)
+        carAutostart = sp.getBoolean("car_autostart", true)
+        carEq = sp.getString("car_eq", "") ?: ""
+        eqUser = sp.getString("eq_user", "") ?: ""
+        eqHidden = (sp.getString("eq_hidden", "") ?: "").split(',').mapNotNull { it.trim().toIntOrNull() }.toSet()
+        crossfadeSeconds = sp.getInt("crossfade_seconds", 3).coerceIn(1, 30)
+        launcherIcon = sp.getString("launcher_icon", "") ?: ""
+        ymToken = sp.getString("ym_token", "") ?: ""
+        audioOutput = sp.getString("audio_output", "auto") ?: "auto"
+        siblingShare = sp.getBoolean("sibling_share", true)
+        effects = sp.getString("effects", "auto") ?: "auto"
+        waveFresh = sp.getBoolean("wave_fresh", true)
+    }
+
+    fun changeEffects(value: String) {
+        effects = value
+        sp.edit().putString("effects", value).apply()
+    }
+
+    fun changeWaveFresh(value: Boolean) {
+        waveFresh = value
+        sp.edit().putBoolean("wave_fresh", value).apply()
+    }
+
+    fun changeCarAutoplay(value: Boolean) {
+        carAutoplay = value
+        sp.edit().putBoolean("car_autoplay", value).apply()
+    }
+
+    fun changeCarSource(source: String, title: String) {
+        carSource = source
+        carSourceTitle = title
+        sp.edit().putString("car_source", source).putString("car_source_title", title).apply()
+    }
+
+    fun changeCarDevices(value: Set<String>) {
+        carDevices = value
+        sp.edit().putStringSet("car_devices", value).apply()
+    }
+
+    fun changeCarEq(value: String) {
+        carEq = value
+        sp.edit().putString("car_eq", value).apply()
+    }
+
+    fun changeEqUser(value: String) {
+        eqUser = value
+        sp.edit().putString("eq_user", value).apply()
+    }
+
+    fun changeEqHidden(value: Set<Int>) {
+        eqHidden = value
+        sp.edit().putString("eq_hidden", value.sorted().joinToString(",")).apply()
+    }
+
+    fun changeCrossfadeSeconds(value: Int) {
+        val v = value.coerceIn(1, 30)
+        if (v == crossfadeSeconds) return
+        crossfadeSeconds = v
+        sp.edit().putInt("crossfade_seconds", v).apply()
+    }
+
+    fun changeYmToken(value: String) {
+        ymToken = value.trim()
+        sp.edit().putString("ym_token", ymToken).apply()
+    }
+
+    fun changeLauncherIcon(value: String) {
+        launcherIcon = value
+        sp.edit().putString("launcher_icon", value).apply()
+    }
+
+    fun changeAudioOutput(value: String) {
+        audioOutput = value
+        sp.edit().putString("audio_output", value).apply()
+    }
+
+    fun changeSiblingShare(value: Boolean) {
+        siblingShare = value
+        sp.edit().putBoolean("sibling_share", value).apply()
+    }
+
+    fun carEqBackup(): String? = sp.getString("car_eq_backup", null)
+
+    fun setCarEqBackup(value: String?) {
+        sp.edit().apply { if (value == null) remove("car_eq_backup") else putString("car_eq_backup", value) }.apply()
+    }
+
+    fun changeCarShuffle(value: Boolean) {
+        carShuffle = value
+        sp.edit().putBoolean("car_shuffle", value).apply()
+    }
+
+    fun changeCarAutostart(value: Boolean) {
+        carAutostart = value
+        sp.edit().putBoolean("car_autostart", value).apply()
     }
 
     fun changeCacheLimit(value: Long) {
         cacheLimit = value
         sp.edit().putLong("cache_limit", value).apply()
+        MediaCache.applyLimit()
     }
 
     fun changeCacheDays(value: Int) {
@@ -146,12 +306,40 @@ object Prefs {
 
     fun changeAccent(value: Int) {
         accent = value
+        accent2 = 0
+        sp.edit().putInt("accent", value).putInt("accent2", 0).apply()
+    }
+
+    fun changeAccentGradient(first: Int, second: Int) {
+        accent = first
+        accent2 = second
+        sp.edit().putInt("accent", first).putInt("accent2", second).apply()
+    }
+
+    fun changeAccentFirst(value: Int) {
+        accent = value
         sp.edit().putInt("accent", value).apply()
+    }
+
+    fun changeAccentSecond(value: Int) {
+        accent2 = value
+        sp.edit().putInt("accent2", value).apply()
+    }
+
+    fun changeBackgroundColors(first: Int, second: Int) {
+        bgColor1 = first
+        bgColor2 = second
+        sp.edit().putInt("bg_color1", first).putInt("bg_color2", second).apply()
     }
 
     fun changeStreamDebug(value: Boolean) {
         streamDebug = value
         sp.edit().putBoolean("stream_debug", value).apply()
+    }
+
+    fun changePrefetchWifiOnly(value: Boolean) {
+        prefetchWifiOnly = value
+        sp.edit().putBoolean("prefetch_wifi_only", value).apply()
     }
 
     fun changeStreamTags(value: Boolean) {

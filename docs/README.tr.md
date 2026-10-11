@@ -12,7 +12,7 @@
 
 <p align="center">
 <a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
-<img src="../app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="160px" style="border-radius: 50%;" />
+<img src="icon.png" width="160px" />
 </a>
 </p>
 
@@ -48,43 +48,65 @@ Reklamsız · Captcha yok · Sansürsüz
 
 ## Bu nedir?
 
-**SoundCloud Android**, telefon için yerel bir SoundCloud istemcisidir. [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) ile aynı arka ucu kullanır, bu yüzden tüm katalog doğrudan erişilebilir.
+**SoundCloud Android**, telefon için yerel bir SoundCloud istemcisidir. [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) ile aynı backend'i kullanır, bu yüzden tüm katalog doğrudan erişilebilir.
 
-**Kotlin + Jetpack Compose + Media3** ile yazıldı; yerel çalışır ve minimum kaynak tüketir.
+**Kotlin + Jetpack Compose + Media3** ile yazıldı, yerel çalışır ve çok az kaynak harcar.
 
-Şimdilik süslemesiz, hafif bir sürüm; hata olmadığından ve işlevlerin tam olduğundan emin olunca tasarımı bitireceğim, ardından iki sürüme ayıracağım:
+İstemcinin aynı özelliklere sahip iki sürümü var, sadece görünüm farklı:
 
-> `Full` — bir sürü güzel efekt ve masaüstü sürümüne yakın bir tasarım.
+> `SoundCloud Full` - masaüstü sürümü tarzında Glass tasarım: cam efekti, auralar, animasyonlar, kendine ait ekranlar ve oynatıcı.
 
-> `Lite` — sadeliği ve zayıf telefonları önemseyenler için basitleştirilmiş tasarım.
+> `SoundCloud Lite` - alışılmış sade arayüz, minimalizmi ve zayıf telefonları sevenler için.
 
-### iOS portu olmayacak!
-
----
-
-## Özellikler
-
-- **Arama & Wave** — parça/sanatçı/çalma listesi araması ve kişisel öneri akışı
-- **Oynatıcı** — arka planda oynatma, bildirimden kontrol, waveform, karıştır/tekrarla, hareketler
-- **Kitaplık** — beğeni/beğenmeme, çalma listeleri, geçmiş, sanatçı profilleri
-- **Çevrimdışı** — parça indirme ve önbellekli çevrimdışı mod
-- **Görünüm** — koyu/açık tema, sürükleyici mod ve 9 dil
+### iOS planlanmaya başlandı, belki yakında yaparız
 
 ---
 
 ## İndir
 
-[Sürümler sayfasına](https://github.com/okeydw/SoundCloud-Android/releases/latest) git ve `.apk` dosyasını indir.
+[Sürümler sayfasına](https://github.com/okeydw/SoundCloud-Android/releases/latest) git ve ihtiyacın olan `.apk` dosyasını indir:
 
-**Kurulum:** indirilen dosyayı telefonunda aç ve bilinmeyen kaynaklardan kuruluma izin ver.
+| Dosya | Sürüm |
+| --- | --- |
+| `SoundCloud-Full-vX.Y.Z.apk` | SoundCloud, Glass tasarım |
+| `SoundCloud-Lite-vX.Y.Z.apk` | SoundCloud Lite, sade arayüz |
 
-**Gereksinimler:** Android 8.0 (Oreo) veya üzeri.
+**Kurulum:** indirilen dosyayı telefonda aç ve bilinmeyen kaynaklardan kuruluma izin ver. Sonrasında güncellemeler uygulamanın içinden kurulur.
+
+**Gereksinimler:** Android 8.0 (Oreo) veya daha yeni.
+
+---
+
+## Nasıl giriş yapılır
+
+Giriş yapmadan uygulama giriş ekranından öteye geçmez (önceden indirilmiş parçalarla çevrimdışı mod hariç). Seçenekler:
+
+1. **Masaüstünden QR (önerilen).** [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) içinde "Oturumu başka cihaza aktar" seçeneğini aç, telefonda "Kamerayı aç" düğmesine dokun ve kodu yerleşik tarayıcıyla okut.
+2. **Telefondan QR.** Giriş ekranında "Giriş için QR göster" düğmesine dokun ve zaten giriş yapılmış bir yerde okut.
+3. **Tarayıcıda.** "Tarayıcıyla giriş yap" düğmesi normal SoundCloud girişini açar. Sonra başka bir yerde giriş yaparsan bu oturum düşebilir.
 
 ---
 
 ## Ekran görüntüleri
 
-> Arka plan, metin rengi ve tema değiştirilebilir — kendi arka plan görseliniz, RGB paleti ve hazır temalar.
+> Arka plan, metin rengi ve tema özelleştirilebilir: kendi arka plan görselin, RGB paleti ve hazır temalar.
+
+### SoundCloud (Full)
+
+<p align="center">
+<img src="screenshots/full/wave.png" width="24%" />
+<img src="screenshots/full/player.png" width="24%" />
+<img src="screenshots/full/equalizer.png" width="24%" />
+<img src="screenshots/full/search.png" width="24%" />
+</p>
+<p align="center">
+<img src="screenshots/full/suggestions.png" width="24%" />
+<img src="screenshots/full/library.png" width="24%" />
+<img src="screenshots/full/playlists.png" width="24%" />
+<img src="screenshots/full/settings.png" width="24%" />
+</p>
+
+### SoundCloud Lite
 
 <p align="center">
 <img src="screenshots/wave.png" width="24%" />
@@ -101,30 +123,138 @@ Reklamsız · Captcha yok · Sansürsüz
 
 ---
 
+## Özellikler
+
+Aksi belirtilmedikçe aşağıdakilerin hepsi iki sürümde de var.
+
+### Müzik
+
+- **Dalga ve öneriler** - kişisel akış, raflar ve seçkiler, bir parçadan veya sanatçıdan radyo
+- **Arama** - parçalar, sanatçılar, çalma listeleri, albümler ve vibe araması (ruh halini kelimelerle anlat, beta)
+- **Oynatıcı** - arka planda çalma, bildirimden kontrol, waveform, karıştır/tekrarla, hareketler, şarkı sözleri (varsa senkronize)
+- **Yumuşak geçişler** - parçalar arasında, 1 ile 30 saniye arası
+- **Ekolayzer** - sistem ve özel ön ayarlar, gereksiz standart ön ayarlar gizlenebilir
+- **Ses çıkışı** - hoparlör, kablolu kulaklık, Bluetooth veya USB seçilebilir
+- **Sıra** - her parçanın menüsünden "sıradaki olarak çal"
+
+### Kitaplık
+
+- **Beğeniler ve beğenmemeler** - beğenilmeyen parçalar atlanır, ayrı bir listesi var
+- **Çalma listeleri** - SoundCloud ile senkronize kendi yerel listelerin, herkese açık veya gizli, özel kapaklar, sıra sürükleyerek değişir ve kaydedilir
+- **Geçmiş ve istatistik** - dinleme süresi, en çok dinlenen parçalar ve sanatçılar, güne ve saate göre grafikler
+- **Sanatçı kartları** - biyografi, sosyal ağlar, albümler ve benzer sanatçılar
+- **Profiller** - takip etme ve takibi bırakma, SoundCloud profilindeki bağlantılar
+- **Sanatçı engelleme** - beğenmeme gibi, ama tüm sanatçı için: dalgada, radyoda ve önerilerde çıkmaz, liste Desktop ile ortak
+
+### Çevrimdışı ve indirmeler
+
+- Parçaları ve tüm çalma listelerini indirme, önbellekli çevrimdışı mod
+- Önbellek boyutu ve saklama süresi sınırı, indirilenlerin kalitesini yükseltme (Star için)
+- İkisi de kuruluysa Full ve Lite arasında ortak indirmeler ve listeler (beta, seçici çalışıyor)
+
+### İçe aktarma (beta)
+
+- **YouTube / YouTube Music** - bağlantıyla parça veya çalma listesi, ses ve kapak doğrudan YouTube'dan alınır, hemen bir liste oluşturulabilir (Rusya'da VPN gerekir)
+- **Yandex Music** - token ile veya uygulama içinde Yandex'e giriş yaparak beğeniler, listeler ve albümler
+- **Spotify** - bağlantıyla çalma listeleri, albümler ve parçalar
+
+Yandex Music ve Spotify için uygulama **SoundCloud'da benzer parçaları arar, orijinalleri aktarmaz**. Bulunanlar hemen indirmeye gönderilebilir.
+(ama sansürü yener, fck censoor)
+### SoundCloud Auto (beta)
+
+- Telefon arabaya Bluetooth ile bağlanınca müzik kendiliğinden başlar
+- Kaynak (beğeniler, dalga, indirilenler, liste), cihazlar ve karıştırma seçilebilir
+- Araba için ayrı bir ekolayzer ön ayarı, bağlantı kesilince öncekine döner
+
+### Ağ
+
+- Birkaç host ve relay düğümü, düğümler otomatik bulunur
+- Ping ve 64 KB testiyle elle düğüm seçimi: sağlayıcının bağlantıyı 13 KB'den sonra kesip kesmediği görünür, otomatik mod böyle bir düğümü seçmez
+- "Ağ yok/sunucu kapalı" uyarısı ancak 15 saniye bağlantısızlıktan sonra çıkar
+
+### Görünüm
+
+- 9 dil
+- Temalar, özel arka plan (bulanıklık ve karartmalı görsel), vurgu ve metin renkleri, RGB paleti, tema dışa ve içe aktarma
+- Uygulama simgesi: mor, mavi veya turuncu (özel bir görsel ayrı bir kısayol olarak eklenir, Android kısıtlaması)
+- **Sadece Full:** Glass arayüz, Star için profil aurası (Desktop ile senkronize), sürükleyici oynatıcı, ayarların yumuşak açılması
+
+### Diğer
+
+- Otomatik güncelleme: yeni sürüm uyarısına dokun, APK iner ve yükleyici açılır
+- QR ile giriş (kamera doğrudan uygulamada), bağlantıyla veya tarayıcıda
+- Bağlı Discord hesabın hesapta görünür
+- "Hakkında" bölümünde destek: GitHub issue veya Discord bileti, cihaz metrikleri otomatik doldurulur
+
+---
+
 ## Geri bildirim
 
-Hata mı buldun ya da fikrin mi var? — [issue aç](https://github.com/okeydw/SoundCloud-Android/issues/new/choose).
+Bir hata mı buldun ya da bir fikrin mi var? En kolayı "Ayarlar -> Hakkında -> Destek": metriklerle birlikte bir GitHub issue veya Discord bileti açılır. Ya da elle [issue aç](https://github.com/okeydw/SoundCloud-Android/issues/new/choose) ve logları ekle: "Ayarlar -> Loglar -> Paylaş".
 
 ---
 
-## Teknoloji
+## Teknolojiler
 
-| Katman | Teknoloji |
+| Katman | Teknolojiler |
 | --- | --- |
 | Dil | Kotlin |
-| Arayüz | Jetpack Compose, Material 3 |
-| Ses | Media3 (ExoPlayer + MediaSession), bildirimli ön plan servisi |
+| UI | Jetpack Compose, Material 3, Haze (Full'da cam efekti) |
+| Ses | Media3 (ExoPlayer + MediaSession), bildirimli arka plan servisi |
 | Ağ | OkHttp (+ disk önbelleği), kotlinx.serialization |
 | Görseller | Coil (+ kapağa göre renklendirme için Palette) |
-| Depolama | SharedPreferences (ayarlar, oturum), indirilen parçaların JSON dizini |
+| Kamera | CameraX + ML Kit (Full'da QR tarayıcı), ZXing |
+| Depolama | SharedPreferences (ayarlar, oturum), indirmeler ve listeler için JSON indeksleri |
 
-[SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) ile aynı arka uç — uygulama ona bir başka istemci olarak çalışır.
+[SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop) ile aynı backend: uygulama onun için bir istemci daha.
 
-**Uyumluluk:** `minSdk 26` (Android 8.0) … `targetSdk 35`, `compileSdk 35`.
+**Uyumluluk:** `minSdk 26` (Android 8.0), `targetSdk 35`, `compileSdk 35`.
+
+Değişikliklerin tam listesi [CHANGELOG.md](../CHANGELOG.md) dosyasında.
 
 ---
 
-Tam değişiklik günlüğü [CHANGELOG.md](../CHANGELOG.md) dosyasında.
+## Geliştiriciler için
+
+**Derleme:** JDK 17, Android SDK 35.
+
+```bash
+./gradlew assembleLiteDebug assembleFullDebug   # APK: app/build/outputs/apk/<flavor>/debug/
+./gradlew testLiteDebugUnitTest                 # birim testleri
+./gradlew lintLiteDebug                         # lint (baseline: ./gradlew updateLintBaseline)
+```
+
+**Kaynak kod:**
+
+| Klasör | İçerik |
+| --- | --- |
+| `app/src/main` | mantık: API, oynatıcı, indirmeler, listeler, içe aktarma |
+| `app/src/shared` | ortak ekranlar ve diyaloglar (ayarlar vb.) |
+| `app/src/lite` | Lite arayüzü |
+| `app/src/full` | Full'un Glass arayüzü |
+
+**Sürüm:** `vX.Y.Z` etiketi (`versionName` ile aynı olmalı) iki sürümü tek anahtarla derleyip imzalar ve `CHANGELOG.md` metniyle yayınlar.
+
+**Backend:**
+
+| Amaç | Hostlar |
+| --- | --- |
+| API | `api.scnative.space`, `api-star.scnative.space` (Star) |
+| Akış | `stream.scnative.space`, `stream-star.scnative.space` |
+| Depolama | `storage.scnative.space`, `storage-star.scnative.space` |
+| Görseller | `images.scnative.space` |
+| Relay düğümleri | `*.rN.relay.scnative.space`, liste: `health.scnative.space/topology` |
+
+QR giriş protokolü: masaüstü deposundaki [qr-link-protocol.md](https://github.com/zxcloli666/SoundCloud-Desktop/blob/main/docs/qr-link-protocol.md).
+
+---
+
+## Veriler ve güven
+
+- Uygulama `*.scnative.space` backend'i üzerinden çalışır (masaüstüyle aynı). **SoundCloud oturumu ve token'lar bu backend'de saklanır**, telefonda sadece oturum kimliği kalır.
+- "Çıkış yap" backend'deki oturumu (`POST /auth/logout`) ve telefondaki tüm verileri siler.
+- SoundCloud'a doğrudan yedek yol (ayarlardan kapatılabilir) soundcloud.com'a oturumun olmadan gider.
+- İçe aktarma için Yandex Music token'ı sadece telefonda saklanır. Uygulama Yandex şifreni asla görmez: giriş Yandex'in kendi sayfasında yapılır.
 
 ---
 
@@ -132,7 +262,7 @@ Tam değişiklik günlüğü [CHANGELOG.md](../CHANGELOG.md) dosyasında.
 
 MIT. Ayrıntılar [LICENSE](../LICENSE) dosyasında.
 
-_SoundCloud, SoundCloud Ltd.'nin ticari markasıdır. Bu uygulama SoundCloud ile bağlantılı değildir._
+_SoundCloud, SoundCloud Ltd.'nin ticari markasıdır. Bu uygulamanın SoundCloud ile bir bağlantısı yoktur._
 
 ---
 

@@ -17,6 +17,7 @@ object LikesAutoCache {
     fun onLiked(track: Track) {
         val ctx = appContext ?: return
         if (!Prefs.autoCacheLikes || Prefs.offline || Downloads.isDownloaded(track.urn)) return
+        if (DownloadFailures.backingOff(track.urn)) return
         Downloads.enqueue(ctx, listOf(track))
     }
 
@@ -33,8 +34,13 @@ object LikesAutoCache {
                 if (!res.has_more) break
                 page++
             }
-            val todo = pending.distinctBy { it.urn }
-            Logs.add("download", "автокэш лайков: ${todo.size} к загрузке")
+            val candidates = pending.distinctBy { it.urn }
+            val todo = candidates.filter { !DownloadFailures.backingOff(it.urn) }
+            val waiting = candidates.size - todo.size
+            Logs.add(
+                "download",
+                "автокэш лайков: ${todo.size} к загрузке" + if (waiting > 0) ", $waiting отложено после неудачи" else "",
+            )
             if (todo.isNotEmpty()) {
                 val label = ctx.getString(R.string.liked)
                 Downloads.enqueue(ctx, todo, null, label, listKey = label)

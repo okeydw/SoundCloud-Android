@@ -2,6 +2,7 @@ package com.scd.android
 
 import android.app.Application
 import android.content.Context
+import android.content.res.Resources
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import kotlinx.coroutines.CoroutineScope
@@ -12,10 +13,15 @@ import okhttp3.Request
 
 class App : Application(), ImageLoaderFactory {
 
+    private var localized: Resources? = null
+
     override fun attachBaseContext(base: Context) {
         Prefs.init(base)
-        super.attachBaseContext(LocaleHelper.wrap(base, Prefs.language))
+        super.attachBaseContext(base)
+        localized = LocaleHelper.wrap(base, Prefs.language).takeIf { it !== base }?.resources
     }
+
+    override fun getResources(): Resources = localized ?: super.getResources()
 
     override fun onCreate() {
         super.onCreate()
@@ -23,12 +29,20 @@ class App : Application(), ImageLoaderFactory {
         Endpoints.init(this)
         Api.initHttp(this)
         Api.loadSession(this)
+        SessionGuard.init()
         DurationCache.init(this)
         Downloads.init(this)
         FeedCache.init(this)
         LikedArtists.init(this)
         Likes.init(this)
         Dislikes.init(this)
+        BlockedArtists.init(this)
+        Auras.init(this)
+        LocalPlaylists.init(this)
+        PlaylistCovers.init(this)
+        PlaylistOrder.init(this)
+        Recommendations.init(this)
+        DownloadFailures.init(this)
         LikesAutoCache.init(this)
         ScAnon.init(this)
         scope.launch { kotlinx.coroutines.delay(3_000); ScAnon.warmUp() }

@@ -21,7 +21,18 @@ object AccountData {
         Dislikes.reset()
         LikedPlaylists.reset()
         LikedArtists.reset()
+        BlockedArtists.reset()
+        Auras.reset()
+        Support.reset()
+        DiscordInfo.reset()
         LocalRadio.reset()
+        WaveState.reset()
+        Tiles.reset()
+        Search.clear()
+        Library.reset()
+        Recommendations.reset()
+        LocalPlaylists.reset()
+        Startup.reset()
         FeedCache.clear()
         PlaylistArt.clear()
         WaveCache.clear()
@@ -34,15 +45,18 @@ object AccountData {
 object PendingLink {
     var token by mutableStateOf<String?>(null)
     var pull by mutableStateOf(false)
+    var fromScanner by mutableStateOf(false)
 
-    fun set(token: String, pull: Boolean) {
+    fun set(token: String, pull: Boolean, fromScanner: Boolean = false) {
         this.pull = pull
+        this.fromScanner = fromScanner
         this.token = token
     }
 
     fun clear() {
         token = null
         pull = false
+        fromScanner = false
     }
 }
 

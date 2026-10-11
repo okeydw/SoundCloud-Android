@@ -17,6 +17,12 @@ object NetMonitor {
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
+    fun isMetered(context: Context): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return false
+        return cm.isActiveNetworkMetered
+    }
+
     fun isOnline(context: Context): Boolean {
         if (Prefs.offline) return false
         return hasTransport(context)

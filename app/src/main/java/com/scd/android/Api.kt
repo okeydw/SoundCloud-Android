@@ -81,6 +81,14 @@ object Api {
             .addInterceptor(NetMonitor.offlineInterceptor(context))
             .addNetworkInterceptor { chain ->
                 val req = chain.request()
+                if (Endpoints.trustedHost(req.url.host)) return@addNetworkInterceptor chain.proceed(req)
+                val hasSession = req.header("x-session-id") != null || req.url.queryParameter("session_id") != null
+                if (!hasSession) return@addNetworkInterceptor chain.proceed(req)
+                val cleanUrl = req.url.newBuilder().removeAllQueryParameters("session_id").build()
+                chain.proceed(req.newBuilder().url(cleanUrl).removeHeader("x-session-id").build())
+            }
+            .addNetworkInterceptor { chain ->
+                val req = chain.request()
                 val res = chain.proceed(req)
                 val host = req.url.host
                 val path = req.url.encodedPath
@@ -172,6 +180,9 @@ object Api {
             throw last ?: IOException("mutation failed")
         }
 
+    suspend fun vibeSearch(q: String, limit: Int = 48): VibeSearchResponse =
+        getJson("$API_BASE/search/vibe?q=${enc(q)}&limit=$limit", VibeSearchResponse.serializer())
+
     suspend fun searchTracks(q: String, page: Int = 0, limit: Int = 20): PagedTracks =
         getJson("$API_BASE/tracks?limit=$limit&page=$page&q=${enc(q)}", PagedTracks.serializer())
 
@@ -218,8 +229,28 @@ object Api {
         }.getOrDefault(url).also { Logs.add("link", "short → ${it.substringAfter("://").substringBefore('?')}") }
     }
 
-    suspend fun resolve(url: String): ResolveResult? = withContext(Dispatchers.IO) {
-        val clean = shareUrl(expandShortLink(url))
+    private val profileTabs = setOf(
+        "tracks", "albums", "sets", "reposts", "likes", "popular-tracks", "followers", "following",
+        "comments", "spotlight", "playlists", "toptracks",
+    )
+
+    fun normalizeLink(url: String): String {
+        val scheme = url.substringBefore("://", "https")
+        val rest = url.substringAfter("://")
+        val host = rest.substringBefore('/').lowercase().removePrefix("www.").removePrefix("m.")
+        val query = rest.substringAfter('?', "").let { if (it.isEmpty()) "" else "?$it" }
+        val segs = rest.substringAfter('/', "").substringBefore('?').split('/').filter { it.isNotEmpty() }
+        val path = if (segs.size == 2 && segs[1].lowercase() in profileTabs) listOf(segs[0]) else segs
+        return "$scheme://$host/" + path.joinToString("/") + query
+    }
+
+    private fun looksLikeTrack(url: String): Boolean {
+        val segs = url.substringAfter("://").substringAfter('/', "").substringBefore('?')
+            .split('/').filter { it.isNotEmpty() }
+        return segs.size == 2 && segs[1].lowercase() !in profileTabs
+    }
+
+    private fun resolveOnStream(clean: String): ResolveResult? {
         val bases = listOf(Endpoints.STREAM_STAR, STREAM_BASE) + Endpoints.streamHosts
         for (base in bases.distinct()) {
             val body = runCatching {
@@ -236,16 +267,28 @@ object Api {
             }.getOrNull() ?: continue
             val parsed = runCatching { json.decodeFromString(ResolveResult.serializer(), body) }.getOrNull()
                 ?.takeIf { it.urn.isNotEmpty() } ?: continue
-            if (parsed.kind == "track") {
+            if (parsed.type == "track") {
                 lastResolvedTrack = runCatching { json.decodeFromString(Track.serializer(), body) }.getOrNull()
             }
-            Logs.add("link", "resolved ${parsed.kind} via ${base.removePrefix("https://")}")
-            return@withContext parsed
+            Logs.add("link", "resolved ${parsed.type} via ${base.removePrefix("https://")}")
+            return parsed
         }
-        runCatching { getJson("$API_BASE/resolve?url=${enc(clean)}", ResolveResult.serializer()) }
+        return null
+    }
+
+    suspend fun resolve(url: String): ResolveResult? = withContext(Dispatchers.IO) {
+        val clean = normalizeLink(shareUrl(expandShortLink(url)))
+        val track = looksLikeTrack(clean)
+        if (track) resolveOnStream(clean)?.let { return@withContext it }
+        val viaApi = runCatching { getJson("$API_BASE/resolve?url=${enc(clean)}", ResolveResult.serializer()) }
             .onFailure { Logs.add("link", "resolve failed: ${it.message?.take(120)}") }
             .getOrNull()
             ?.takeIf { it.urn.isNotEmpty() }
+        if (viaApi != null) {
+            Logs.add("link", "resolved ${viaApi.type} via api")
+            return@withContext viaApi
+        }
+        if (!track) resolveOnStream(clean) else null
     }
 
     fun shareUrl(url: String): String {
@@ -268,6 +311,31 @@ object Api {
     suspend fun relatedTracks(urn: String, limit: Int = 40, page: Int = 0): PagedTracks =
         getJson("$API_BASE/tracks/${enc(urn)}/related?limit=$limit&page=$page", PagedTracks.serializer())
 
+    suspend fun tracksByIds(ids: List<String>): List<Track>? {
+        if (ids.isEmpty()) return emptyList()
+        val out = LinkedHashMap<String, Track>()
+        for (chunk in ids.distinct().chunked(50)) {
+            val body = runCatching {
+                getJson("$API_BASE/tracks?ids=${chunk.joinToString(",")}", kotlinx.serialization.json.JsonElement.serializer(), fresh = true)
+            }.getOrNull() ?: return null
+            val list = when (body) {
+                is kotlinx.serialization.json.JsonArray -> body
+                is kotlinx.serialization.json.JsonObject -> body["collection"] as? kotlinx.serialization.json.JsonArray
+                else -> null
+            } ?: return null
+            list.forEach { el ->
+                runCatching { json.decodeFromJsonElement(Track.serializer(), el) }.getOrNull()?.let {
+                    DurationCache.record(it.urn, maxOf(it.duration, it.full_duration ?: 0L))
+                    out[it.urn.substringAfterLast(':')] = it
+                }
+            }
+        }
+        val result = ids.mapNotNull { out[it] }
+        if (result.isEmpty()) return null
+        if (result.size < ids.size) Logs.add("wave", "batch: ${result.size}/${ids.size} tracks")
+        return result
+    }
+
     @Volatile
     private var waveSeed: String? = null
 
@@ -287,11 +355,11 @@ object Api {
             hideListened?.let { append("&hide_listened=${if (it) 1 else 0}") }
         }
         val payload = getJson(url, WavePayload.serializer(), fresh = true)
-        val tracks = coroutineScope {
-            payload.tracks.map { rec ->
+        val ids = payload.tracks.map { it.id.content.removePrefix("soundcloud:tracks:") }
+        val tracks = tracksByIds(ids) ?: coroutineScope {
+            ids.map { id ->
                 async {
                     kotlinx.coroutines.withTimeoutOrNull(20_000) {
-                        val id = rec.id.content.removePrefix("soundcloud:tracks:")
                         runCatching { trackByUrn("soundcloud:tracks:$id") }.getOrNull()
                     }
                 }
@@ -326,6 +394,13 @@ object Api {
         null
     }
 
+    suspend fun recommendations(hideListened: Boolean): kotlinx.serialization.json.JsonElement =
+        getJson(
+            "$API_BASE/recommendations?hide_listened=${if (hideListened) 1 else 0}",
+            kotlinx.serialization.json.JsonElement.serializer(),
+            fresh = true,
+        )
+
     suspend fun waveFeedback(cursor: String, negatives: Int, positives: Int): String? = withContext(Dispatchers.IO) {
         val payload = buildJsonObject {
             put("cursor", cursor)
@@ -346,8 +421,26 @@ object Api {
         }
     }
 
-    suspend fun waveFromTrack(urn: String, limit: Int = 20): List<Track> =
-        runCatching { waveBatch(null, limit, urn, null).first }.getOrDefault(emptyList())
+    suspend fun waveFromArtist(artistUrn: String, limit: Int = 30): List<Track> = runCatching {
+        val id = enc(artistUrn.substringAfterLast(':'))
+        val payload = getJson("$API_BASE/recommendations/wave/from-artist/$id?limit=$limit", WavePayload.serializer(), fresh = true)
+        val ids = payload.tracks.map { it.id.content.removePrefix("soundcloud:tracks:") }
+        Logs.add("wave", "from-artist ids=${ids.size}")
+        tracksByIds(ids) ?: emptyList()
+    }.getOrDefault(emptyList())
+
+    suspend fun waveFromTrack(urn: String, limit: Int = 20, budgetMs: Long = 15_000): List<Track> {
+        val res = runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(budgetMs) { waveBatch(null, limit, urn, null).first }
+        }
+        res.exceptionOrNull()?.let {
+            if (it is kotlinx.coroutines.CancellationException) throw it
+            Logs.add("wave", "from-track failed: ${it.javaClass.simpleName} ${it.message?.take(80) ?: ""}")
+        }
+        val list = res.getOrNull()
+        if (res.isSuccess && list == null) Logs.add("wave", "from-track: no answer in ${budgetMs / 1000}s")
+        return list ?: emptyList()
+    }
 
     suspend fun waveTracks(cursor: String? = null, limit: Int = 20): Pair<List<Track>, String> {
         if (cursor == LocalRadio.CURSOR) return LocalRadio.batch(limit) to LocalRadio.CURSOR
@@ -359,7 +452,8 @@ object Api {
         }
 
         waveSeed = null
-        val first = runCatching { waveBatch(null, limit, null, null) }
+        val fresh = if (Prefs.waveFresh) null else false
+        val first = runCatching { waveBatch(null, limit, null, fresh) }
         first.exceptionOrNull()?.let {
             if (it is kotlinx.coroutines.CancellationException) throw it
             Logs.add("wave", "failed: ${it.javaClass.simpleName}: ${it.message?.take(120)} → local radio")
@@ -375,7 +469,7 @@ object Api {
             if (code in 200..299) {
                 SessionState.lastRefreshAt = System.currentTimeMillis()
                 Logs.add("wave", "empty → session refreshed, retrying")
-                runCatching { waveBatch(null, limit, null, null) }.getOrNull()
+                runCatching { waveBatch(null, limit, null, fresh) }.getOrNull()
                     ?.takeIf { it.first.isNotEmpty() }?.let { return it }
             }
         }
@@ -397,8 +491,27 @@ object Api {
         return LocalRadio.batch(limit) to LocalRadio.CURSOR
     }
 
-    suspend fun history(offset: Int = 0, limit: Int = 50): HistoryPage =
-        getJson("$API_BASE/history?limit=$limit&offset=$offset", HistoryPage.serializer())
+    suspend fun history(offset: Int = 0, limit: Int = 50, fresh: Boolean = false): HistoryPage =
+        getJson("$API_BASE/history?limit=$limit&offset=$offset", HistoryPage.serializer(), fresh)
+
+    suspend fun clearHistory() {
+        mutate("DELETE", "/history", null)
+    }
+
+    suspend fun logout(sid: String): Unit = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder()
+                .url("$CONTROL_BASE/auth/logout")
+                .header("x-session-id", sid)
+                .post(ByteArray(0).toRequestBody(null))
+                .cacheControl(CacheControl.FORCE_NETWORK)
+                .build()
+            http.newBuilder().callTimeout(15, TimeUnit.SECONDS).build()
+                .newCall(req).execute().use { res ->
+                    Logs.add("auth", "logout → ${res.code}")
+                }
+        }.onFailure { Logs.add("auth", "logout failed: ${it.javaClass.simpleName}") }
+    }
 
     suspend fun likedTracks(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedTracks =
         getJson("$API_BASE/me/likes/tracks?limit=$limit&page=$page", PagedTracks.serializer(), fresh)
@@ -438,7 +551,7 @@ object Api {
     suspend fun me(fresh: Boolean = false): MeProfile =
         getJson("$API_BASE/me", MeProfile.serializer(), fresh)
 
-    suspend fun latestRelease(): Pair<String, String>? = withContext(Dispatchers.IO) {
+    suspend fun latestRelease(): ReleaseInfo? = withContext(Dispatchers.IO) {
         runCatching {
             val req = Request.Builder()
                 .url("https://api.github.com/repos/okeydw/SoundCloud-Android/releases/latest")
@@ -450,7 +563,14 @@ object Api {
                 val obj = json.parseToJsonElement(res.body?.string() ?: "").jsonObject
                 val tag = obj["tag_name"]?.jsonPrimitive?.contentOrNull ?: return@use null
                 val url = obj["html_url"]?.jsonPrimitive?.contentOrNull ?: "https://github.com/okeydw/SoundCloud-Android/releases"
-                tag to url
+                val assets = (obj["assets"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { el ->
+                    val a = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                    val name = a["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    val link = a["browser_download_url"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    val size = a["size"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
+                    ApkAsset(name, link, size)
+                }.filter { it.name.endsWith(".apk", ignoreCase = true) }
+                ReleaseInfo(tag, url, assets)
             }
         }.getOrNull()
     }
@@ -475,6 +595,36 @@ object Api {
                 throw ApiHttpException(400, "link mode ${claim.mode}, expected $expected")
             }
             claim
+        }
+    }
+
+    suspend fun linkCreate(push: Boolean): LinkCreate = withContext(Dispatchers.IO) {
+        val sid = sessionId
+        if (push && sid == null) throw ApiHttpException(401, "not signed in")
+        val payload = buildJsonObject { put("mode", if (push) "push" else "pull") }
+            .toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("$CONTROL_BASE/auth/link/create")
+            .post(payload)
+            .apply { if (push && sid != null) header("x-session-id", sid) }
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .build()
+        http.newCall(req).execute().use { res ->
+            val body = res.body?.string() ?: ""
+            if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
+            json.decodeFromString(LinkCreate.serializer(), body)
+        }
+    }
+
+    suspend fun linkStatus(id: String): LinkStatus = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$CONTROL_BASE/auth/link/status?id=${enc(id)}")
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .build()
+        http.newCall(req).execute().use { res ->
+            val body = res.body?.string() ?: ""
+            if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
+            json.decodeFromString(LinkStatus.serializer(), body)
         }
     }
 
@@ -535,6 +685,80 @@ object Api {
         }.getOrDefault(false)
     }
 
+    suspend fun catalogArtist(id: String): CatalogArtist =
+        getJson("$API_BASE/artists/${enc(id)}", CatalogArtist.serializer())
+
+    suspend fun catalogArtistTracks(id: String, role: String, sort: String, page: Int = 0, limit: Int = 30): PagedTracks =
+        getJson("$API_BASE/artists/${enc(id)}/tracks?role=$role&sort=$sort&limit=$limit&page=$page", PagedTracks.serializer())
+
+    suspend fun catalogArtistAlbums(id: String): List<ArtistAlbum> =
+        getJson("$API_BASE/artists/${enc(id)}/albums", kotlinx.serialization.builtins.ListSerializer(ArtistAlbum.serializer()))
+
+    suspend fun catalogAlbum(id: String): CatalogAlbum =
+        getJson("$API_BASE/albums/${enc(id)}", CatalogAlbum.serializer())
+
+    suspend fun listeningStats(period: String, fresh: Boolean = false): ListeningStats {
+        val offset = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000
+        return getJson("$API_BASE/history/stats?period=$period&utcOffset=$offset", ListeningStats.serializer(), fresh)
+    }
+
+    suspend fun userAura(urn: String): AuraInfo =
+        getJson("$API_BASE/users/${enc(urn)}/aura", AuraInfo.serializer(), fresh = true)
+
+    suspend fun setAura(id: String, hex: String?) {
+        val body = buildJsonObject {
+            put("aura_id", id)
+            if (hex != null) put("custom_hex", hex)
+        }
+        mutate("PUT", "/me/aura", jsonBody(body.toString()))
+    }
+
+    suspend fun blockedArtists(): List<BlockedArtist> =
+        getJson("$API_BASE/blocked-artists", BlockedList.serializer(), fresh = true).collection
+
+    suspend fun blockArtist(entry: BlockedArtist) {
+        val input = BlockInput(entry.name, entry.avatar_url, entry.sc_user_ids)
+        mutate("PUT", "/blocked-artists/${entry.kind}/${enc(entry.id)}", jsonBody(json.encodeToString(BlockInput.serializer(), input)))
+    }
+
+    suspend fun unblockArtist(kind: String, id: String) {
+        mutate("DELETE", "/blocked-artists/$kind/${enc(id)}", null)
+    }
+
+    suspend fun paySubscription(): PaySubscription = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("https://pay.scnative.space/api/me/subscription")
+            .apply { sessionId?.let { header("x-session-id", it) } }
+            .cacheControl(CacheControl.FORCE_NETWORK)
+            .build()
+        mutateClient.newCall(req).execute().use { res ->
+            val body = res.body?.string() ?: ""
+            if (!res.isSuccessful) throw ApiHttpException(res.code, body.take(200))
+            json.decodeFromString(PaySubscription.serializer(), body)
+        }
+    }
+
+    suspend fun webProfiles(urn: String): List<WebProfile> {
+        val root = getJson("$API_BASE/users/${enc(urn)}/web-profiles", kotlinx.serialization.json.JsonElement.serializer())
+        val arr = when (root) {
+            is kotlinx.serialization.json.JsonArray -> root
+            is kotlinx.serialization.json.JsonObject -> root["collection"] as? kotlinx.serialization.json.JsonArray
+            else -> null
+        } ?: return emptyList()
+        return arr.mapNotNull { runCatching { json.decodeFromJsonElement(WebProfile.serializer(), it) }.getOrNull() }
+    }
+
+    suspend fun isFollowing(me: String, urn: String): Boolean =
+        getJson("$API_BASE/users/${enc(me)}/followings/${enc(urn)}", kotlinx.serialization.serializer<Boolean>(), fresh = true)
+
+    suspend fun follow(urn: String) {
+        mutate("PUT", "/me/followings/${enc(urn)}", emptyBody)
+    }
+
+    suspend fun unfollow(urn: String) {
+        mutate("DELETE", "/me/followings/${enc(urn)}", null)
+    }
+
     suspend fun dislikedIds(): List<String> =
         getJson("$API_BASE/dislikes/ids", DislikeIds.serializer()).ids
 
@@ -546,27 +770,50 @@ object Api {
         mutate("DELETE", "/dislikes/${enc(urn)}", null)
     }
 
-    suspend fun createPlaylist(title: String): String? {
+    suspend fun createPlaylist(title: String, sharing: String, trackUrns: List<String>): CreatedPlaylist {
         val payload = buildJsonObject {
             put("playlist", buildJsonObject {
                 put("title", title)
-                put("sharing", "public")
+                put("sharing", sharing)
+                if (trackUrns.isNotEmpty()) {
+                    put("tracks", kotlinx.serialization.json.buildJsonArray {
+                        trackUrns.forEach { urn -> add(buildJsonObject { put("urn", urn) }) }
+                    })
+                }
             })
         }.toString()
         val body = mutate("POST", "/playlists", jsonBody(payload))
-        val urn = runCatching { json.decodeFromString(Playlist.serializer(), body).urn }.getOrNull()
-        Logs.add("api", "playlist created: ${urn ?: "no urn in reply"}")
-        return urn
+        val obj = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+        val urn = obj?.get("urn")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() }
+        val status = obj?.get("status")?.jsonPrimitive?.contentOrNull
+        Logs.add("api", "playlist created: ${urn ?: status ?: "no urn in reply"}")
+        return CreatedPlaylist(urn, status == "queued")
+    }
+
+    suspend fun setPlaylistSharing(urn: String, sharing: String) {
+        val payload = buildJsonObject { put("sharing", sharing) }.toString()
+        mutate("PUT", "/playlists/${enc(urn)}/sharing", jsonBody(payload))
+    }
+
+    suspend fun removeFromPlaylist(playlistUrn: String, trackUrn: String) {
+        val payload = buildJsonObject { put("remove", trackUrn) }.toString()
+        mutate("POST", "/playlists/${enc(playlistUrn)}/tracks", jsonBody(payload))
     }
 
     suspend fun deletePlaylist(urn: String) {
         mutate("DELETE", "/playlists/${enc(urn)}", null)
     }
 
+    suspend fun reorderPlaylist(playlistUrn: String, order: List<String>) {
+        val payload = buildJsonObject {
+            put("order", kotlinx.serialization.json.JsonArray(order.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+        }.toString()
+        mutate("POST", "/playlists/${enc(playlistUrn)}/tracks", jsonBody(payload))
+    }
+
     suspend fun addToPlaylist(playlistUrn: String, trackUrn: String) {
         val payload = buildJsonObject { put("add", trackUrn) }.toString()
         mutate("POST", "/playlists/${enc(playlistUrn)}/tracks", jsonBody(payload))
-        Events.playlistAdd(trackUrn)
     }
 
     suspend fun sendEvent(userUrn: String, trackUrn: String, type: String, positionPct: Double?) {
@@ -647,7 +894,9 @@ object Api {
 
     fun authorize(builder: Request.Builder, url: String): Request.Builder {
         val sid = sessionId ?: return builder
-        if (!url.contains("/stream/") && !url.contains("/download/")) return builder
+        if (!Endpoints.trustedUrl(url)) return builder
+        val path = "/" + url.substringAfter("://").substringAfter('/', "")
+        if (!path.startsWith("/stream/") && !path.startsWith("/download/")) return builder
         builder.header("x-session-id", sid)
         if (url.contains("session_id=")) return builder
         val sep = if (url.contains('?')) '&' else '?'
@@ -760,6 +1009,10 @@ data class PagedTracks(
     val has_more: Boolean = false,
 )
 
+data class ApkAsset(val name: String, val url: String, val size: Long)
+
+data class ReleaseInfo(val tag: String, val url: String, val assets: List<ApkAsset>)
+
 @Serializable
 data class Track(
     val id: Long = 0,
@@ -776,7 +1029,10 @@ data class Track(
     val policy: String? = null,
     val monetization_model: String? = null,
     @SerialName("_scd_meta") val scdMeta: ScdMeta? = null,
+    val enrichment: TrackEnrichment? = null,
 ) {
+    val catalogArtist: EnrichmentArtist? get() = enrichment?.primary_artist?.takeIf { it.id.isNotBlank() }
+
     val isPreview: Boolean get() = access == "preview"
 
     val displayDuration: Long
@@ -840,6 +1096,7 @@ data class Playlist(
     val track_count: Int = 0,
     val user: TrackUser? = null,
     val kind: String? = null,
+    val sharing: String? = null,
 ) {
     val isAlbum: Boolean
         get() = kind == "album" || kind == "ep" || kind == "single" || kind == "compilation"
@@ -853,10 +1110,27 @@ data class Playlist(
     }
 }
 
+data class CreatedPlaylist(val urn: String?, val queued: Boolean)
+
 @Serializable
 data class AuthStatus(
     val authenticated: Boolean = false,
     val username: String? = null,
+)
+
+@Serializable
+data class LinkCreate(
+    val linkRequestId: String = "",
+    val claimToken: String = "",
+    val expiresAt: String? = null,
+)
+
+@Serializable
+data class LinkStatus(
+    val status: String = "",
+    val mode: String = "",
+    val sessionId: String? = null,
+    val error: String? = null,
 )
 
 @Serializable
@@ -870,6 +1144,7 @@ data class MeProfile(
     val username: String = "",
     val avatar_url: String? = null,
     val urn: String? = null,
+    val permalink_url: String? = null,
     val followers_count: Int? = null,
     val followings_count: Int? = null,
     val track_count: Int? = null,
@@ -905,7 +1180,16 @@ data class ResolveResult(
     val urn: String = "",
     val kind: String? = null,
     val title: String? = null,
-)
+) {
+    val type: String
+        get() = when {
+            urn.startsWith("soundcloud:tracks:") -> "track"
+            urn.startsWith("soundcloud:playlists:") || urn.startsWith("soundcloud:system-playlists:") -> "playlist"
+            urn.startsWith("soundcloud:users:") -> "user"
+            kind == "system-playlist" -> "playlist"
+            else -> kind.orEmpty()
+        }
+}
 
 @Serializable
 data class LyricsResponse(
@@ -916,6 +1200,12 @@ data class LyricsResponse(
 )
 
 data class LyricLine(val timeMs: Long, val text: String)
+
+@Serializable
+data class VibeSearchResponse(
+    val items: List<Track> = emptyList(),
+    val status: String? = null,
+)
 
 fun parseLrc(lrc: String): List<LyricLine> {
     val re = Regex("^\\[(\\d{1,2}):(\\d{2})[.:](\\d{2,3})]\\s*(.*)")

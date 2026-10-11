@@ -83,6 +83,7 @@ object Dislikes {
     }
 
     suspend fun toggle(track: Track): Boolean = withContext(NonCancellable) {
+        if (track.external) return@withContext isDisliked(track.urn)
         val now = !isDisliked(track.urn)
         urns = if (now) urns + track.urn else urns - track.urn
         if (now) {

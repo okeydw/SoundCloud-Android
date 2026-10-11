@@ -14,6 +14,9 @@ data class ThemePack(
     val version: Int = 1,
     val name: String = "",
     val accent: Int = AccentPalette.DEFAULT,
+    val accent2: Int = 0,
+    val backgroundColor1: Int = 0,
+    val backgroundColor2: Int = 0,
     val textColor: Int = 0,
     val headerAlpha: Float = 1f,
     val footerAlpha: Float = 1f,
@@ -39,6 +42,9 @@ object ThemeIO {
         return ThemePack(
             name = "SCD theme",
             accent = Prefs.accent,
+            accent2 = Prefs.accent2,
+            backgroundColor1 = Prefs.bgColor1,
+            backgroundColor2 = Prefs.bgColor2,
             textColor = Prefs.textColor,
             headerAlpha = Prefs.headerAlpha,
             footerAlpha = Prefs.footerAlpha,
@@ -94,7 +100,11 @@ object ThemeIO {
             val image = pack.image?.takeIf { it.isNotEmpty() }?.let { Base64.decode(it, Base64.DEFAULT) }
             if (image != null && !isImage(image)) return@runCatching false
 
-            Prefs.changeAccent(opaque(pack.accent))
+            if (pack.accent2 != 0) Prefs.changeAccentGradient(opaque(pack.accent), opaque(pack.accent2)) else Prefs.changeAccent(opaque(pack.accent))
+            Prefs.changeBackgroundColors(
+                if (pack.backgroundColor1 == 0) 0 else opaque(pack.backgroundColor1),
+                if (pack.backgroundColor2 == 0) 0 else opaque(pack.backgroundColor2),
+            )
             Prefs.changeTextColor(if (pack.textColor == 0) 0 else opaque(pack.textColor))
             Prefs.changeHeaderAlpha(pack.headerAlpha.coerceIn(0f, 1f))
             Prefs.changeFooterAlpha(pack.footerAlpha.coerceIn(0f, 1f))

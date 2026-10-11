@@ -5,8 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-val appVersionName = "0.4.3"
-val appVersionCode = 8
+val appVersionName = "0.4.4"
+val appVersionCode = 9
 
 android {
     namespace = "com.scd.android"
@@ -33,6 +33,33 @@ android {
         }
     }
 
+    flavorDimensions += "ui"
+    productFlavors {
+        create("lite") {
+            dimension = "ui"
+            isDefault = true
+            manifestPlaceholders["iconViolet"] = "false"
+            manifestPlaceholders["iconBlue"] = "true"
+            manifestPlaceholders["iconOrange"] = "false"
+        }
+        create("full") {
+            dimension = "ui"
+            applicationIdSuffix = ".full"
+            manifestPlaceholders["iconViolet"] = "true"
+            manifestPlaceholders["iconBlue"] = "false"
+            manifestPlaceholders["iconOrange"] = "false"
+        }
+    }
+
+    sourceSets {
+        getByName("lite") {
+            java.srcDir("src/shared/java")
+        }
+        getByName("full") {
+            java.srcDir("src/shared/java")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -49,14 +76,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
-    applicationVariants.all {
-        outputs.all {
-            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
-                "SoundCloud-Android-$appVersionName-${buildType.name}.apk"
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            it.systemProperty("yt.live", (project.findProperty("yt.live") ?: "false").toString())
+            it.testLogging {
+                showStandardStreams = project.findProperty("yt.live") == "true"
+            }
         }
     }
 
@@ -71,15 +98,26 @@ android {
     }
 
     lint {
-        abortOnError = false
+        abortOnError = true
         checkReleaseBuilds = false
+        baseline = file("lint-baseline.xml")
         htmlReport = true
         textReport = true
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 base {
     archivesName = "SoundCloud-Android-$appVersionName"
+}
+
+tasks.register("printVersionName") {
+    doLast { println(appVersionName) }
 }
 
 dependencies {
@@ -105,4 +143,14 @@ dependencies {
     implementation("androidx.palette:palette-ktx:1.0.0")
 
     implementation("com.google.guava:guava:33.3.1-android")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("sh.calvin.reorderable:reorderable:2.4.3")
+
+    "fullImplementation"("dev.chrisbanes.haze:haze:1.6.0")
+    "fullImplementation"("androidx.camera:camera-camera2:1.4.2")
+    "fullImplementation"("androidx.camera:camera-lifecycle:1.4.2")
+    "fullImplementation"("androidx.camera:camera-view:1.4.2")
+    "fullImplementation"("com.google.mlkit:barcode-scanning:17.3.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

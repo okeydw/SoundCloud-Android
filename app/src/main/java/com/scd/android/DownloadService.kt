@@ -18,14 +18,22 @@ class DownloadService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                Downloads.NOTIF_ID,
-                Downloads.startingNotification(this),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-            )
-        } else {
-            startForeground(Downloads.NOTIF_ID, Downloads.startingNotification(this))
+        val started = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    Downloads.NOTIF_ID,
+                    Downloads.startingNotification(this),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                )
+            } else {
+                startForeground(Downloads.NOTIF_ID, Downloads.startingNotification(this))
+            }
+        }
+        if (started.isFailure) {
+            Logs.add("download", "foreground refused: ${started.exceptionOrNull()?.javaClass?.simpleName}")
+            Downloads.cancelAll(this)
+            stopSelf(startId)
+            return START_NOT_STICKY
         }
         scope.launch {
             Downloads.drain()
@@ -33,6 +41,22 @@ class DownloadService : Service() {
             stopSelf(startId)
         }
         return START_NOT_STICKY
+    }
+
+    override fun onTimeout(startId: Int) {
+        stopOnTimeout()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopOnTimeout()
+    }
+
+    private fun stopOnTimeout() {
+        Logs.add("download", "system time limit for background downloads reached, stopping")
+        scope.cancel()
+        Downloads.cancelAll(this)
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        stopSelf()
     }
 
     override fun onDestroy() {

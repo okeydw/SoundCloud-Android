@@ -1,0 +1,280 @@
+package com.scd.android
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+
+@Composable
+fun ArtistScreen(
+    urn: String,
+    onBack: () -> Unit,
+    onPlay: (List<Track>, Track) -> Unit,
+    onOpenPlaylist: (Playlist) -> Unit,
+    offline: Boolean = false,
+) {
+    var artist by remember(urn) { mutableStateOf<Artist?>(null) }
+    var tracks by remember(urn) { mutableStateOf<List<Track>>(emptyList()) }
+    var playlists by remember(urn) { mutableStateOf<List<Playlist>>(emptyList()) }
+    var loading by remember(urn) { mutableStateOf(true) }
+    var radioBusy by remember(urn) { mutableStateOf(false) }
+    var blocking by remember(urn) { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(urn) { Follows.load(urn) }
+    LaunchedEffect(urn) { if (!offline) WebProfiles.load(urn) }
+    val context = LocalContext.current
+
+    BackHandler(onBack = onBack)
+
+    LaunchedEffect(urn) {
+        loading = true
+        if (offline) {
+            val downloaded = Downloads.tracks().filter { it.user?.urn == urn }
+            tracks = downloaded
+            val u = downloaded.firstOrNull()?.user
+            if (u != null) {
+                artist = Artist(urn = urn, username = u.username, avatar_url = u.avatar_url)
+            }
+            playlists = emptyList()
+        } else {
+            runCatching { Api.user(urn) }.onSuccess { artist = it }
+            runCatching { Api.userTracks(urn) }.onSuccess { tracks = it.collection }
+            runCatching { Api.userPlaylists(urn) }.onSuccess { playlists = it.collection }
+        }
+        loading = false
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(painterResource(R.drawable.ic_arrow_back), stringResource(R.string.cd_back))
+            }
+            Text(
+                artist?.username ?: "…",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (!offline) {
+                IconButton(
+                    enabled = !radioBusy,
+                    onClick = {
+                        radioBusy = true
+                        scope.launch {
+                            val radio = Playback.artistRadio(urn, tracks)
+                            radioBusy = false
+                            if (radio.isNotEmpty()) {
+                                onPlay(radio, radio.first())
+                            } else {
+                                android.widget.Toast.makeText(context, context.getString(R.string.radio_failed), android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_wave),
+                        stringResource(R.string.artist_radio),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+            if (Follows.canFollow(urn)) {
+                val following = Follows.isFollowing(urn) == true
+                IconButton(enabled = !Follows.isBusy(urn), onClick = {
+                    scope.launch {
+                        if (!Follows.toggle(urn)) {
+                            android.widget.Toast.makeText(context, context.getString(R.string.follow_failed), android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }) {
+                    Icon(
+                        painterResource(if (following) R.drawable.ic_following else R.drawable.ic_follow),
+                        stringResource(if (following) R.string.unfollow else R.string.follow),
+                        tint = if (following) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+            if (Prefs.userUrn != null && !offline && scIdOf(urn) != scIdOf(Prefs.userUrn)) {
+                val id = scIdOf(urn)
+                val blocked = id != null && BlockedArtists.isBlocked("user", id)
+                IconButton(onClick = {
+                    if (blocked && id != null) scope.launch { BlockedArtists.unblock("user", id) } else blocking = true
+                }) {
+                    Icon(
+                        painterResource(R.drawable.ic_block),
+                        stringResource(if (blocked) R.string.unblock else R.string.block),
+                        tint = if (blocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+            artist?.let { a ->
+                val liked = LikedArtists.isLiked(a.urn)
+                IconButton(onClick = { LikedArtists.toggle(a) }) {
+                    Icon(
+                        painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                        stringResource(if (liked) R.string.notif_unlike else R.string.notif_like),
+                        tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+
+        if (loading && tracks.isEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center) {
+                CircularProgressIndicator()
+            }
+            return@Column
+        }
+
+        LazyColumn(Modifier.fillMaxSize()) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AsyncImage(
+                        model = Api.artworkUrl(artist?.avatar_url, "t120x120"),
+                        contentDescription = null,
+                        modifier = Modifier.size(72.dp).clip(CircleShape),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        artist?.followers_count?.let {
+                            Text(
+                                stringResource(R.string.followers, formatCount(it)),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        artist?.track_count?.let {
+                            Text(
+                                stringResource(R.string.tracks_count, it),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+
+            val catalog = if (offline) null else CatalogRepo.findCatalogFor(urn, tracks)
+            val webs = WebProfiles.of(urn)
+            if (catalog != null || webs.isNotEmpty()) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (catalog != null) {
+                            androidx.compose.material3.AssistChip(
+                                onClick = { NavEvents.openCatalog(catalog.id) },
+                                label = { Text(stringResource(R.string.catalog_card)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_mic), null, modifier = Modifier.size(16.dp)) },
+                            )
+                        }
+                        webs.forEach { w ->
+                            androidx.compose.material3.AssistChip(
+                                onClick = { runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(w.url))) } },
+                                label = { Text(webProfileLabel(w), maxLines = 1) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (playlists.isNotEmpty()) {
+                item {
+                    Text(
+                        stringResource(R.string.playlists),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    )
+                }
+                items(playlists.distinctBy { it.urn }, key = { "p:" + it.urn }) { p ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenPlaylist(p) }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        PlaylistArtwork(p, 52.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(p.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                            Text(
+                                stringResource(p.kindLabelRes()) + " · " +
+                                    stringResource(R.string.tracks_count, p.track_count),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (tracks.isNotEmpty()) {
+                item {
+                    Text(
+                        stringResource(R.string.tracks),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    )
+                }
+                items(tracks.distinctBy { it.urn }, key = { "t:" + it.urn }) { track ->
+                    TrackRow(track = track, onClick = { onPlay(tracks, track) })
+                }
+            }
+        }
+    }
+    if (blocking) {
+        val a = artist
+        val target = BlockedArtists.userTarget(urn, a?.username ?: tracks.firstOrNull()?.user?.username.orEmpty(), a?.avatar_url)
+        if (target != null) BlockConfirmDialog(listOf(target), onDismiss = { blocking = false }) else blocking = false
+    }
+}

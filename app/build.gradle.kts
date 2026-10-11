@@ -146,7 +146,7 @@ dependencies {
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("sh.calvin.reorderable:reorderable:2.4.3")
 
-    "fullImplementation"("dev.chrisbanes.haze:haze:1.6.0")
+    "fullImplementation"("dev.chrisbanes.haze:haze:2.0.1")
     "fullImplementation"("androidx.camera:camera-camera2:1.4.2")
     "fullImplementation"("androidx.camera:camera-lifecycle:1.4.2")
     "fullImplementation"("androidx.camera:camera-view:1.4.2")

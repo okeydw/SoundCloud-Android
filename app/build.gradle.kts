@@ -144,7 +144,7 @@ dependencies {
 
     implementation("com.google.guava:guava:33.3.1-android")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
-    implementation("sh.calvin.reorderable:reorderable:2.4.3")
+    implementation("sh.calvin.reorderable:reorderable:3.1.0")
 
     "fullImplementation"("dev.chrisbanes.haze:haze:1.6.0")
     "fullImplementation"("androidx.camera:camera-camera2:1.4.2")

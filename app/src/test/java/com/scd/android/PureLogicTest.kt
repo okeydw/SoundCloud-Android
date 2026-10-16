@@ -70,5 +70,40 @@ class PureLogicTest {
         assertFalse(Endpoints.trustedUrl("https://scnative.space.evil.com/stream/x"))
         assertFalse(Endpoints.trustedUrl("https://user@evil.com/stream/x"))
         assertFalse(Endpoints.trustedUrl("http://api.scnative.space/me"))
+        assertFalse(Endpoints.trustedUrl("https://evil.com#.scnative.space/stream/x"))
+        assertFalse(Endpoints.trustedUrl("https://evil.com\\.scnative.space/stream/x"))
+        assertFalse(Endpoints.trustedUrl("https://evil.com%2F.scnative.space/stream/x"))
+        assertTrue(Endpoints.trustedUrl("https://api.scnative.space:443/me"))
+    }
+
+    @Test
+    fun linkKindComesFromUrn() {
+        assertEquals("playlist", ResolveResult(urn = "soundcloud:playlists:1").type)
+        assertEquals("user", ResolveResult(urn = "soundcloud:users:5").type)
+        assertEquals("track", ResolveResult(urn = "soundcloud:tracks:7", kind = "track").type)
+        assertEquals("playlist", ResolveResult(urn = "soundcloud:system-playlists:x", kind = "system-playlist").type)
+    }
+
+    @Test
+    fun profileTabsCollapseToProfile() {
+        assertEquals("https://soundcloud.com/artist", Api.normalizeLink("https://m.soundcloud.com/artist/tracks"))
+        assertEquals("https://soundcloud.com/artist/sets/mix", Api.normalizeLink("https://soundcloud.com/artist/sets/mix"))
+        assertEquals(
+            "https://soundcloud.com/artist/song?secret_token=s",
+            Api.normalizeLink("https://www.soundcloud.com/artist/song?secret_token=s"),
+        )
+    }
+
+    @Test
+    fun youTubeTitlesSplitIntoArtistAndTitle() {
+        val a = YouTubeImport.asExt(YtVideo("a", "Daft Punk - Get Lucky (Official Video)", "DaftPunkVEVO", 248_000L, null))
+        assertEquals("Daft Punk", a.artist)
+        assertEquals("Get Lucky", a.title)
+        val b = YouTubeImport.asExt(YtVideo("b", "Get Lucky [HD]", "Daft Punk - Topic", 248_000L, null))
+        assertEquals("Daft Punk", b.artist)
+        assertEquals("Get Lucky", b.title)
+        val c = YouTubeImport.asExt(YtVideo("c", "Song (Remix) | Live Session", "Band", 1L, null))
+        assertEquals("Band", c.artist)
+        assertEquals("Song (Remix)", c.title)
     }
 }

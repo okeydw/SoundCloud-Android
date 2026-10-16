@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'dev/**']
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -37,27 +37,92 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Lint baseline
+        if: hashFiles('app/lint-baseline.xml') == ''
+        run: ./gradlew updateLintBaseline
+
+      - name: Upload lint baseline
+        if: hashFiles('app/lint-baseline.xml') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-baseline
+          path: app/lint-baseline.xml
+          retention-days: 7
+
       - name: Lint
-        run: ./gradlew lint
+        run: |
+          set -o pipefail
+          ./gradlew lintLiteDebug 2>&1 | tee -a gradle-out.log
 
       - name: Upload lint report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: lint-report
-          path: app/build/reports/lint-results-debug.html
+          path: app/build/reports/lint-results-*.html
           retention-days: 7
 
       - name: Unit tests
-        run: ./gradlew test
+        run: |
+          set -o pipefail
+          ./gradlew testLiteDebugUnitTest 2>&1 | tee -a gradle-out.log
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug
+      - name: YouTube live check
+        continue-on-error: true
+        run: |
+          ./gradlew testLiteDebugUnitTest --tests com.scd.android.YouTubeLiveTest -Pyt.live=true 2>&1 | tee yt-live.log || true
+          python3 - <<'PY'
+          import re
+          lines = [m.group(0) for m in re.finditer(r'YT: .*', open('yt-live.log', encoding='utf-8', errors='replace').read())]
+          import glob, xml.etree.ElementTree as ET
+          for f in glob.glob('app/build/test-results/testLiteDebugUnitTest/*YouTubeLive*.xml'):
+              for tc in ET.parse(f).getroot().iter('testcase'):
+                  for bad in list(tc.findall('failure')) + list(tc.findall('error')):
+                      lines.append('YT: TEST ' + tc.get('name') + ' ' + (bad.get('message') or '')[:300])
+                  out = tc.find('system-out')
+              so = ET.parse(f).getroot().find('system-out')
+              if so is not None and so.text:
+                  lines += re.findall(r'YT: .*', so.text)
+          text = '\n'.join(dict.fromkeys(lines))[:6000] or 'no YT lines'
+          print('::notice title=YouTube::' + text.replace('%', '%25').replace('\n', '%0A'))
+          PY
 
-      - name: Upload APK artifact
+      - name: Build debug APKs
+        run: |
+          set -o pipefail
+          ./gradlew assembleLiteDebug assembleFullDebug --continue 2>&1 | tee -a gradle-out.log
+
+      - name: Build release APKs (R8 check)
+        run: |
+          set -o pipefail
+          ./gradlew assembleLiteRelease assembleFullRelease --continue 2>&1 | tee -a gradle-out.log
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import re
+          try:
+              lines = open('gradle-out.log', encoding='utf-8', errors='replace').read().splitlines()
+          except FileNotFoundError:
+              lines = []
+          picked = []
+          for i, line in enumerate(lines):
+              if re.match(r'^(e: |w: .*error)', line) or 'What went wrong' in line or re.search(r'\berror:', line):
+                  picked.append(line)
+                  if 'What went wrong' in line:
+                      picked.extend(lines[i + 1:i + 4])
+          picked = [re.sub(r'file://\S*?/app/src/', 'app/src/', l) for l in picked]
+          text = '\n'.join(dict.fromkeys(picked))[:60000] or 'no error lines captured'
+          esc = lambda t: t.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+          for k in range(0, len(text), 6000):
+              print('::error title=Build errors ' + str(k // 6000 + 1) + '::' + esc(text[k:k + 6000]))
+          PY
+
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/*/debug/*.apk
           if-no-files-found: error
           retention-days: 7

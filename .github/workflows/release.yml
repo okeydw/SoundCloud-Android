@@ -55,9 +55,32 @@ jobs:
           ' CHANGELOG.md > release_notes.md
           if [ ! -s release_notes.md ]; then echo "Release $GITHUB_REF_NAME" > release_notes.md; fi
 
+      - name: Collect APKs
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          LITE="$(ls app/build/outputs/apk/lite/release/*.apk | head -n 1)"
+          FULL="$(ls app/build/outputs/apk/full/release/*.apk | head -n 1)"
+          test -n "$LITE" && test -n "$FULL"
+          cp "$LITE" "dist/SoundCloud-Lite-v$VERSION.apk"
+          cp "$FULL" "dist/SoundCloud-Full-v$VERSION.apk"
+          ls -la dist
+
+      - name: Check both APKs share the signing key
+        run: |
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)apksigner"
+          A="$("$APKSIGNER" verify --print-certs dist/SoundCloud-Lite-*.apk | grep -m1 'SHA-256')"
+          B="$("$APKSIGNER" verify --print-certs dist/SoundCloud-Full-*.apk | grep -m1 'SHA-256')"
+          echo "lite: $A"
+          echo "full: $B"
+          if [ -z "$A" ] || [ "$A" != "$B" ]; then
+            echo "::error::Lite and Full must be signed with the same key"
+            exit 1
+          fi
+
       - name: Checksums and signing certificate
         run: |
-          cd app/build/outputs/apk/release
+          cd dist
           sha256sum *.apk > SHA256SUMS.txt
           cd - > /dev/null
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)apksigner"
@@ -65,13 +88,20 @@ jobs:
             echo ""
             echo "---"
             echo ""
+            echo "**Какой APK качать:**"
+            echo ""
+            echo "- \`SoundCloud-Full-v${GITHUB_REF_NAME#v}.apk\` — SoundCloud, новый Glass-дизайн (\`com.scd.android.full\`)"
+            echo "- \`SoundCloud-Lite-v${GITHUB_REF_NAME#v}.apk\` — SoundCloud Lite, привычный интерфейс (\`com.scd.android\`)"
+            echo ""
+            echo "Можно поставить оба сразу — загрузки и плейлисты у них общие."
+            echo ""
             echo "**SHA-256 APK:**"
             echo '```'
-            cat app/build/outputs/apk/release/SHA256SUMS.txt
+            cat dist/SHA256SUMS.txt
             echo '```'
             echo "**Signing certificate:**"
             echo '```'
-            "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/*.apk | grep -E "SHA-256" || true
+            "$APKSIGNER" verify --print-certs "$(ls dist/*.apk | head -n 1)" | grep -E "SHA-256" || true
             echo '```'
           } >> release_notes.md
 
@@ -79,8 +109,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/apk/release/SHA256SUMS.txt
+            dist/*.apk
+            dist/SHA256SUMS.txt
           body_path: release_notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true

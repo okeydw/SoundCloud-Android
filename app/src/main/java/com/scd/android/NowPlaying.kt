@@ -13,6 +13,7 @@ object NowPlaying {
     var artistUrn by mutableStateOf<String?>(null)
     var artworkUri by mutableStateOf<String?>(null)
     var waveformUrl by mutableStateOf<String?>(null)
+    var genre by mutableStateOf<String?>(null)
     var isPlaying by mutableStateOf(false)
     var shuffle by mutableStateOf(false)
     var repeatMode by mutableStateOf(Player.REPEAT_MODE_OFF)
@@ -29,9 +30,11 @@ object NowPlaying {
         artistUrn = md?.extras?.getString("artist_urn")
         artworkUri = md?.artworkUri?.toString()
         waveformUrl = md?.extras?.getString("waveform_url")
+        genre = md?.extras?.getString("genre")
         isPlaying = c.isPlaying
-        shuffle = c.shuffleModeEnabled
+        shuffle = ShuffleQueue.on && !ShuffleQueue.isWave(urn)
         repeatMode = c.repeatMode
+        WaveState.remember(urn, c.currentPosition)
     }
 }
 
@@ -44,8 +47,6 @@ object NavEvents {
     var playlistUrn by mutableStateOf<String?>(null)
     var playlistTitle by mutableStateOf<String?>(null)
     var pendingUrl by mutableStateOf<String?>(null)
-    var claimToken by mutableStateOf<String?>(null)
-    var sessionReady by mutableStateOf(false)
 
     fun openPlaylist(urn: String, title: String) {
         playlistTitle = title
@@ -57,19 +58,48 @@ object NavEvents {
         playlistTitle = null
     }
 
+    var route by mutableStateOf<String?>(null)
+        private set
+    var userUrn by mutableStateOf<String?>(null)
+        private set
+
+    const val STATS = "stats"
+    const val CATALOG = "catalog:"
+    const val ALBUM = "album:"
+
+    fun openCatalog(id: String) {
+        route = CATALOG + id
+    }
+
+    fun openAlbum(id: String) {
+        route = ALBUM + id
+    }
+
+    fun openStats() {
+        route = STATS
+    }
+
+    fun openUser(urn: String) {
+        userUrn = urn
+    }
+
+    fun openScUser(scId: String) {
+        userUrn = "soundcloud:users:$scId"
+    }
+
+    fun consumeRoute() {
+        route = null
+    }
+
+    fun consumeUser() {
+        userUrn = null
+    }
+
     fun openUrl(url: String) {
         pendingUrl = url
     }
 
     fun consumeUrl() {
         pendingUrl = null
-    }
-
-    fun claim(token: String) {
-        claimToken = token
-    }
-
-    fun consumeClaim() {
-        claimToken = null
     }
 }

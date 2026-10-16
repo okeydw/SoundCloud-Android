@@ -83,6 +83,8 @@ class PlaybackService : MediaSessionService() {
             player.preloadConfiguration =
                 ExoPlayer.PreloadConfiguration(8_000_000L)
         }
+        player.repeatMode = Prefs.repeatMode.coerceIn(0, 2)
+        ShuffleQueue.onChanged = { scope.launch(Dispatchers.Main) { updateCustomLayout() } }
 
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -97,7 +99,15 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                if (shuffleModeEnabled) {
+                    player.shuffleModeEnabled = false
+                    ShuffleQueue.set(player, true)
+                }
                 updateCustomLayout()
+            }
+
+            override fun onRepeatModeChanged(repeatMode: Int) {
+                Prefs.changeRepeatMode(repeatMode)
             }
 
             override fun onAudioSessionIdChanged(audioSessionId: Int) {
@@ -159,6 +169,20 @@ class PlaybackService : MediaSessionService() {
             androidx.compose.runtime.snapshotFlow { Triple(Prefs.eqEnabled, Prefs.eqPreset, Prefs.eqBands) }
                 .collect { AudioFx.apply() }
         }
+        fun route() {
+            val device = AudioOutput.resolve(this)
+            runCatching { player.setPreferredAudioDevice(device) }
+                .onFailure { Logs.add("player", "output route failed: ${it.javaClass.simpleName}") }
+        }
+        AudioOutput.watch(this) { route() }
+        scope.launch(Dispatchers.Main) {
+            androidx.compose.runtime.snapshotFlow { Prefs.audioOutput }.collect { route() }
+        }
+        setListener(object : MediaSessionService.Listener {
+            override fun onForegroundServiceStartNotAllowedException() {
+                Logs.add("player", "foreground start not allowed by system")
+            }
+        })
         Logs.add("player", "service ready")
     }
 
@@ -198,8 +222,10 @@ class PlaybackService : MediaSessionService() {
             }
             when (customCommand.customAction) {
                 CMD_SHUFFLE -> {
-                    session.player.shuffleModeEnabled = !session.player.shuffleModeEnabled
-                    scope.launch(Dispatchers.Main) { updateCustomLayout() }
+                    scope.launch(Dispatchers.Main) {
+                        ShuffleQueue.toggle(session.player)
+                        updateCustomLayout()
+                    }
                 }
                 CMD_LIKE -> {
                     val track = session.player.currentMediaItem?.toTrackOrNull()
@@ -231,7 +257,7 @@ class PlaybackService : MediaSessionService() {
 
     @OptIn(UnstableApi::class)
     private fun shuffleButton(): CommandButton {
-        val on = mediaSession?.player?.shuffleModeEnabled == true
+        val on = ShuffleQueue.active(mediaSession?.player)
         return CommandButton.Builder(CommandButton.ICON_UNDEFINED)
             .setDisplayName(getString(if (on) R.string.notif_shuffle_on else R.string.notif_shuffle))
             .setCustomIconResId(if (on) R.drawable.ic_shuffle_on else R.drawable.ic_shuffle)
@@ -275,6 +301,7 @@ class PlaybackService : MediaSessionService() {
         evPos = 0L
         evDur = 0L
         if (prev == null || prev == nextUrn && reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) return
+        if (!isScUrn(prev)) return
         when (reason) {
             Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
             Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> Events.fullPlay(prev)
@@ -327,7 +354,7 @@ class PlaybackService : MediaSessionService() {
 
     private fun watchForHistory(player: Player) {
         val urn = player.currentMediaItem?.mediaId?.takeIf { it.isNotEmpty() } ?: return
-        if (urn == lastReportedUrn) return
+        if (urn == lastReportedUrn || !isScUrn(urn)) return
         historyJob?.cancel()
         historyJob = scope.launch(Dispatchers.Main) {
             while (true) {
@@ -380,6 +407,7 @@ class PlaybackService : MediaSessionService() {
         brain?.stop()
         brain = null
         AudioFx.release()
+        AudioOutput.unwatch(this)
         scope.cancel()
         mediaSession?.run {
             player.release()

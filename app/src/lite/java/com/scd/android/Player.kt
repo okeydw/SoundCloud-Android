@@ -1,0 +1,1036 @@
+package com.scd.android
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+@Composable
+fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
+    val last = remember { arrayOfNulls<String>(3) }
+    if (NowPlaying.title.isNotEmpty()) {
+        last[0] = NowPlaying.title
+        last[1] = NowPlaying.artist
+        last[2] = NowPlaying.artworkUri
+    }
+    val title = NowPlaying.title.ifEmpty { last[0] ?: "" }
+    val artist = if (NowPlaying.title.isEmpty()) last[1] ?: "" else NowPlaying.artist
+    val artworkUri = if (NowPlaying.title.isEmpty()) last[2] else NowPlaying.artworkUri
+    val currentUrn = NowPlaying.urn
+    val isPlaying = NowPlaying.isPlaying
+    if (title.isEmpty()) return
+
+    val surface = MaterialTheme.colorScheme.surfaceVariant
+    val tintTarget = rememberArtworkColor(artworkUri)
+    val barColor by animateColorAsState(
+        tintTarget.copy(alpha = 0.45f).compositeOver(surface),
+        tween(800),
+        label = "barTint",
+    )
+
+    val count = controller?.mediaItemCount ?: 0
+    val prevIdx = controller?.previousMediaItemIndex ?: -1
+    val nextIdx = controller?.nextMediaItemIndex ?: -1
+    val hasPrev = controller != null && prevIdx in 0 until count
+    val hasNext = controller != null && nextIdx in 0 until count
+    val prev = if (hasPrev) controller!!.getMediaItemAt(prevIdx).mediaMetadata else null
+    val next = if (hasNext) controller!!.getMediaItemAt(nextIdx).mediaMetadata else null
+
+    val scope = rememberCoroutineScope()
+    val offsetX = remember { Animatable(0f) }
+    var widthPx by remember { mutableStateOf(1f) }
+    var dragTotal by remember { mutableStateOf(0f) }
+    val liked = currentUrn != null && Likes.isLiked(currentUrn)
+
+    Surface(
+        color = barColor.copy(alpha = barColor.alpha * Prefs.footerAlpha),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragStart = { dragTotal = 0f },
+                        onVerticalDrag = { _, dy -> dragTotal += dy },
+                        onDragEnd = { if (dragTotal < -60f) onExpand() },
+                    )
+                },
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clipToBounds()
+                    .onSizeChanged { widthPx = it.width.toFloat().coerceAtLeast(1f) }
+                    .pointerInput(currentUrn, hasPrev, hasNext) {
+                        detectHorizontalDragGestures(
+                            onHorizontalDrag = { change, dx ->
+                                change.consume()
+                                val lo = if (hasNext) -widthPx else 0f
+                                val hi = if (hasPrev) widthPx else 0f
+                                scope.launch { offsetX.snapTo((offsetX.value + dx).coerceIn(lo, hi)) }
+                            },
+                            onDragEnd = {
+                                val v = offsetX.value
+                                val threshold = widthPx * 0.28f
+                                scope.launch {
+                                    when {
+                                        v <= -threshold && hasNext -> {
+                                            offsetX.animateTo(-widthPx, tween(180))
+                                            controller?.seekToNextMediaItem()
+                                            offsetX.snapTo(0f)
+                                        }
+                                        v >= threshold && hasPrev -> {
+                                            offsetX.animateTo(widthPx, tween(180))
+                                            controller?.seekToPreviousMediaItem()
+                                            offsetX.snapTo(0f)
+                                        }
+                                        else -> offsetX.animateTo(0f, tween(180))
+                                    }
+                                }
+                            },
+                        )
+                    },
+            ) {
+                val w = widthPx
+                if (prev != null) {
+                    MiniContent(
+                        prev.title?.toString() ?: "",
+                        prev.artist?.toString() ?: "",
+                        prev.artworkUri?.toString(),
+                        marquee = false,
+                        modifier = Modifier.graphicsLayer {
+                            translationX = offsetX.value - w
+                            alpha = (offsetX.value / w).coerceIn(0f, 1f)
+                        },
+                    )
+                }
+                if (next != null) {
+                    MiniContent(
+                        next.title?.toString() ?: "",
+                        next.artist?.toString() ?: "",
+                        next.artworkUri?.toString(),
+                        marquee = false,
+                        modifier = Modifier.graphicsLayer {
+                            translationX = offsetX.value + w
+                            alpha = (-offsetX.value / w).coerceIn(0f, 1f)
+                        },
+                    )
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            translationX = offsetX.value
+                            alpha = (1f - abs(offsetX.value) / w).coerceIn(0f, 1f)
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f).clickable(onClick = onExpand)) {
+                        MiniContent(title, artist, artworkUri, marquee = true)
+                    }
+                    IconButton(onClick = {
+                        controller?.currentMediaItem?.toTrackOrNull()?.let { scope.launch { Likes.toggle(it) } }
+                    }) {
+                        Icon(
+                            painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                            iconLabel(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                            tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = {
+                        controller?.let { if (it.isPlaying) it.pause() else it.play() }
+                    }) {
+                        Icon(
+                            painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                            iconLabel(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                        )
+                    }
+                }
+            }
+            MiniProgress()
+        }
+    }
+}
+
+@Composable
+private fun MiniProgress() {
+    val dur = NowPlaying.duration
+    val progress = if (dur > 0) (NowPlaying.position.toFloat() / dur).coerceIn(0f, 1f) else 0f
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress,
+        animationSpec = tween(durationMillis = 260, easing = LinearEasing),
+        label = "miniProgress",
+    )
+    val track = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+    val brush = accentBrush()
+    Box(
+        Modifier.fillMaxWidth().height(2.dp).drawWithContent {
+            drawRect(track)
+            drawRect(brush, size = Size(size.width * animatedProgress, size.height))
+        },
+    )
+}
+
+@Composable
+private fun SeekSection(
+    waveform: List<Float>?,
+    duration: Long,
+    isPlaying: Boolean,
+    subColor: Color,
+    onSeek: (Float) -> Unit,
+) {
+    val position = NowPlaying.position
+    var dragging by remember { mutableStateOf(false) }
+    var dragValue by remember { mutableStateOf(0f) }
+    if (waveform != null) {
+        WaveformSeekBar(
+            samples = waveform,
+            progress = if (duration > 0) position.toFloat() / duration else 0f,
+            isPlaying = isPlaying,
+            onSeek = onSeek,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+        )
+    } else {
+        Slider(
+            value = if (dragging) dragValue else if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
+            onValueChange = {
+                dragging = true
+                dragValue = it
+            },
+            onValueChangeFinished = {
+                onSeek(dragValue)
+                dragging = false
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(
+            formatDuration(if (dragging && duration > 0) (dragValue * duration).toLong() else position),
+            color = subColor,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            formatDuration(duration),
+            color = subColor,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
+private fun MiniContent(
+    title: String,
+    artist: String,
+    artworkUri: String?,
+    marquee: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TrackArtwork(artworkUri, 40.dp, 4.dp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            if (marquee) {
+                var titleOverflows by remember(title) { mutableStateOf(false) }
+                Text(
+                    title,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Clip,
+                    fontWeight = FontWeight.Medium,
+                    onTextLayout = { if (!titleOverflows) titleOverflows = it.hasVisualOverflow },
+                    modifier = if (titleOverflows) {
+                        Modifier
+                            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                            .drawWithContent {
+                                drawContent()
+                                val fade = 16.dp.toPx()
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        0f to Color.Transparent,
+                                        fade / size.width to Color.Black,
+                                        1f - fade / size.width to Color.Black,
+                                        1f to Color.Transparent,
+                                    ),
+                                    blendMode = BlendMode.DstIn,
+                                )
+                            }
+                            .basicMarquee()
+                    } else Modifier,
+                )
+            } else {
+                Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+            }
+            if (artist.isNotEmpty()) {
+                Text(
+                    artist,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun NowPlayingScreen(
+    controller: MediaController,
+    onClose: () -> Unit,
+    onOpenArtist: (String) -> Unit = {},
+) {
+    val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val title = NowPlaying.title
+    val artist = NowPlaying.artist
+    val artistUrn = NowPlaying.artistUrn
+    val artworkUri = NowPlaying.artworkUri
+    val currentUrn = NowPlaying.urn
+    val isPlaying = NowPlaying.isPlaying
+    val shuffle = NowPlaying.shuffle
+    val repeatMode = NowPlaying.repeatMode
+
+    var showLyrics by remember { mutableStateOf(false) }
+    var showEq by remember { mutableStateOf(false) }
+    var showOutput by remember { mutableStateOf(false) }
+
+    var fullTrack by remember(currentUrn) { mutableStateOf<Track?>(null) }
+    var streamHost by remember(currentUrn) { mutableStateOf<String?>(null) }
+    LaunchedEffect(currentUrn) {
+        val urn = currentUrn ?: return@LaunchedEffect
+        fullTrack = runCatching { Api.trackByUrn(urn) }.getOrNull()
+        val downloaded = Downloads.isDownloaded(urn)
+        if ((Prefs.streamDebug || Prefs.streamTags) && !downloaded) {
+            val info = Api.streamProbe(urn)
+            Logs.add("stream", info.replace("\n", " "))
+            streamHost = Regex("@([^ \\n]+)").find(info)?.groupValues?.get(1)
+            if (Prefs.streamDebug) {
+                android.util.Log.i("SCDStream", info)
+                android.widget.Toast.makeText(context, info, android.widget.Toast.LENGTH_LONG).show()
+            }
+        } else if (downloaded) {
+            streamHost = "offline"
+        }
+    }
+    var offlineQuality by remember(currentUrn) { mutableStateOf(currentUrn?.let { Downloads.cachedQuality(it) }) }
+    LaunchedEffect(currentUrn) {
+        val urn = currentUrn ?: return@LaunchedEffect
+        if (Downloads.isDownloaded(urn)) offlineQuality = Downloads.quality(urn)
+    }
+    val qualityTag = when {
+        Downloads.isDownloaded(currentUrn ?: "") -> offlineQuality ?: "OFFLINE"
+        ScDataSource.wasHq(currentUrn) -> "HQ"
+        else -> "SQ"
+    }
+    val serverTag = streamHost?.split('.')?.take(2)?.joinToString(".")
+    val isGoPlus = fullTrack?.goPlus == true
+    val apiDuration = maxOf(
+        fullTrack?.displayDuration ?: 0L,
+        currentUrn?.let { DurationCache.get(it) } ?: 0L,
+    ).takeIf { it > 0L } ?: NowPlaying.duration
+    val playerDuration = NowPlaying.duration
+    val duration = when {
+        playerDuration <= 0L -> apiDuration
+        apiDuration > 45_000L && playerDuration < apiDuration - 10_000L -> apiDuration
+        else -> playerDuration
+    }
+    fun seekFraction(frac: Float) {
+        if (duration <= 0L) return
+        var target = (frac * duration).toLong()
+        val real = controller.duration
+        if (real > 0L && target > real - 500L) target = (real - 500L).coerceAtLeast(0L)
+        controller.seekTo(target)
+    }
+
+    var waveform by remember(currentUrn) { mutableStateOf(WaveCache.get(currentUrn)) }
+    LaunchedEffect(currentUrn, fullTrack) {
+        if (waveform != null) return@LaunchedEffect
+        val urn = currentUrn ?: return@LaunchedEffect
+        val url = NowPlaying.waveformUrl ?: fullTrack?.waveform_url ?: return@LaunchedEffect
+        val loaded = runCatching { Api.waveform(url) }.getOrNull() ?: return@LaunchedEffect
+        WaveCache.put(urn, loaded)
+        if (currentUrn == urn) waveform = loaded
+    }
+
+    val background = MaterialTheme.colorScheme.background
+    val tintTarget = rememberArtworkColor(artworkUri)
+    val tint by animateColorAsState(tintTarget, tween(800), label = "playerTint")
+    val topColor = tint.copy(alpha = 0.65f).compositeOver(background)
+
+    val offsetY = remember { Animatable(0f) }
+
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        val immersive = Prefs.immersiveArtwork && artworkUri != null
+        Surface(
+            Modifier.fillMaxSize(),
+            color = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onBackground,
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .offset { IntOffset(0, offsetY.value.roundToInt().coerceAtLeast(0)) },
+            ) {
+                if (immersive) {
+                    AsyncImage(
+                        model = artworkUri,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { scaleX = 1.25f; scaleY = 1.25f },
+                        contentScale = ContentScale.Crop,
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0f to Color.Black.copy(alpha = 0.35f),
+                                    0.5f to Color.Black.copy(alpha = 0.45f),
+                                    1f to Color.Black.copy(alpha = 0.8f),
+                                )
+                            )
+                    )
+                } else {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0f to topColor,
+                                    0.75f to background,
+                                    1f to background,
+                                )
+                            )
+                    )
+                }
+
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .systemBarsPadding()
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures(
+                                onVerticalDrag = { _, dy ->
+                                    scope.launch {
+                                        offsetY.snapTo((offsetY.value + dy).coerceAtLeast(0f))
+                                    }
+                                },
+                                onDragEnd = {
+                                    scope.launch {
+                                        if (offsetY.value > 260f) onClose()
+                                        else offsetY.animateTo(0f)
+                                    }
+                                },
+                                onDragCancel = {
+                                    scope.launch { offsetY.animateTo(0f) }
+                                },
+                            )
+                        }
+                        .padding(horizontal = 24.dp),
+                ) {
+                    val titleColor = if (immersive) Color.White else MaterialTheme.colorScheme.onBackground
+                    val subColor = if (immersive) Color.White.copy(alpha = 0.75f)
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                    val hasTrack = currentUrn != null
+
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onClose) {
+                            Icon(painterResource(R.drawable.ic_chevron_down), iconLabel(R.drawable.ic_chevron_down), tint = titleColor)
+                        }
+                        Spacer(Modifier.weight(1f))
+                        if (hasTrack) {
+                            IconButton(onClick = {
+                                val url = controller.currentMediaItem?.toTrackOrNull()?.permalink_url
+                                if (url != null) {
+                                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_TEXT, url)
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(send, null))
+                                } else {
+                                    android.widget.Toast.makeText(
+                                        context, context.getString(networkErrorText()),
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }) {
+                                Icon(painterResource(R.drawable.ic_share), iconLabel(R.drawable.ic_share), tint = titleColor, modifier = Modifier.size(20.dp))
+                            }
+                            IconButton(
+                                enabled = !Playback.radioBusy,
+                                onClick = {
+                                    val seed = fullTrack?.takeIf { it.urn == currentUrn }
+                                        ?: controller.currentMediaItem?.toTrackOrNull()
+                                    if (seed != null) {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            context.getString(R.string.radio_starting),
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                        Playback.startTrackRadio(controller, seed) { added ->
+                                            if (added == 0) {
+                                                android.widget.Toast.makeText(
+                                                    context.applicationContext,
+                                                    context.getString(R.string.radio_failed),
+                                                    android.widget.Toast.LENGTH_SHORT,
+                                                ).show()
+                                            }
+                                        }
+                                    }
+                                },
+                            ) {
+                                Icon(painterResource(R.drawable.ic_mix), iconLabel(R.drawable.ic_mix), tint = titleColor, modifier = Modifier.size(22.dp))
+                            }
+                            Box {
+                                var menuOpen by remember { mutableStateOf(false) }
+                                IconButton(onClick = { menuOpen = true }) {
+                                    Icon(painterResource(R.drawable.ic_plus), iconLabel(R.drawable.ic_plus), tint = titleColor)
+                                }
+                                controller.currentMediaItem?.toTrackOrNull()?.let { track ->
+                                    AddToPlaylistMenu(
+                                        expanded = menuOpen,
+                                        track = track,
+                                        onDismiss = { menuOpen = false },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.weight(if (immersive) 6f else 1f))
+
+                    if (!immersive) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (artworkUri != null) {
+                                AsyncImage(
+                                    model = artworkUri,
+                                    contentDescription = null,
+                                    modifier = Modifier.matchParentSize(),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            } else {
+                                Icon(
+                                    painterResource(R.drawable.ic_music),
+                                    null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(64.dp),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(28.dp))
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            var titleOverflows by remember(title) { mutableStateOf(false) }
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Clip,
+                                color = titleColor,
+                                onTextLayout = { if (!titleOverflows) titleOverflows = it.hasVisualOverflow },
+                                modifier = if (titleOverflows) {
+                                    Modifier
+                                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                                        .drawWithContent {
+                                            drawContent()
+                                            val fade = 24.dp.toPx()
+                                            drawRect(
+                                                brush = Brush.horizontalGradient(
+                                                    0f to Color.Transparent,
+                                                    fade / size.width to Color.Black,
+                                                    1f - fade / size.width to Color.Black,
+                                                    1f to Color.Transparent,
+                                                ),
+                                                blendMode = BlendMode.DstIn,
+                                            )
+                                        }
+                                        .basicMarquee()
+                                } else Modifier,
+                            )
+                            if (isGoPlus) {
+                                Spacer(Modifier.height(6.dp))
+                                StarTag()
+                            }
+                            if (YouTubeImport.isYouTube(currentUrn)) {
+                                Spacer(Modifier.height(6.dp))
+                                YouTubeBadge()
+                            }
+                            if (StreamStatus.isProtected(currentUrn)) {
+                                Spacer(Modifier.height(6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(
+                                        Modifier.size(12.dp),
+                                        strokeWidth = 1.5.dp,
+                                        color = subColor,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        stringResource(R.string.stream_protected),
+                                        color = subColor,
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                artist,
+                                color = subColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = if (artistUrn != null) {
+                                    Modifier.clickable { onOpenArtist(artistUrn) }
+                                } else Modifier,
+                            )
+                        }
+                        if (Prefs.streamTags) {
+                            Spacer(Modifier.width(8.dp))
+                            Column(
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                StreamChip(qualityTag, titleColor)
+                                serverTag?.let { StreamChip(it, titleColor) }
+                            }
+                        }
+                    }
+
+                    if (currentUrn != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val liked = Likes.isLiked(currentUrn)
+                            val disliked = Dislikes.isDisliked(currentUrn)
+                            IconButton(onClick = {
+                                controller.currentMediaItem?.toTrackOrNull()?.let {
+                                    scope.launch { Likes.toggle(it) }
+                                }
+                            }) {
+                                Icon(
+                                    painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                                    iconLabel(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
+                                    tint = if (liked) MaterialTheme.colorScheme.primary else subColor,
+                                )
+                            }
+                            IconButton(onClick = {
+                                controller.currentMediaItem?.toTrackOrNull()?.let {
+                                    scope.launch { if (Dislikes.toggle(it)) controller.seekToNext() }
+                                }
+                            }) {
+                                Icon(
+                                    painterResource(R.drawable.ic_thumb_down),
+                                    iconLabel(R.drawable.ic_thumb_down),
+                                    tint = if (disliked) MaterialTheme.colorScheme.error else subColor,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            when {
+                                currentUrn in Downloads.inProgress ->
+                                    CircularProgressIndicator(Modifier.size(22.dp).padding(2.dp), strokeWidth = 2.dp)
+                                Downloads.isDownloaded(currentUrn) ->
+                                    IconButton(onClick = { scope.launch { Downloads.remove(currentUrn) } }) {
+                                        Icon(
+                                            painterResource(R.drawable.ic_check),
+                                            iconLabel(R.drawable.ic_check),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                else ->
+                                    IconButton(onClick = {
+                                        controller.currentMediaItem?.toTrackOrNull()?.let {
+                                            Downloads.enqueue(context, listOf(it))
+                                        }
+                                    }) {
+                                        Icon(
+                                            painterResource(R.drawable.ic_download),
+                                            iconLabel(R.drawable.ic_download),
+                                            tint = subColor,
+                                        )
+                                    }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            if (!Prefs.offline) {
+                                IconButton(onClick = { showLyrics = true }) {
+                                    Icon(painterResource(R.drawable.ic_lyrics), iconLabel(R.drawable.ic_lyrics), tint = subColor, modifier = Modifier.size(22.dp))
+                                }
+                            }
+                            IconButton(onClick = { showOutput = true }) {
+                                Icon(
+                                    painterResource(R.drawable.ic_speaker),
+                                    stringResource(R.string.output_title),
+                                    tint = if (Prefs.audioOutput != AudioOutput.AUTO) MaterialTheme.colorScheme.primary else subColor,
+                                    modifier = Modifier.size(21.dp),
+                                )
+                            }
+                            IconButton(onClick = { showEq = true }) {
+                                Icon(
+                                    painterResource(R.drawable.ic_equalizer),
+                                    iconLabel(R.drawable.ic_equalizer),
+                                    tint = if (Prefs.eqEnabled) MaterialTheme.colorScheme.primary else subColor,
+                                    modifier = Modifier.size(21.dp),
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    SeekSection(
+                        waveform = waveform,
+                        duration = duration,
+                        isPlaying = isPlaying,
+                        subColor = subColor,
+                        onSeek = { frac -> seekFraction(frac) },
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val waveNow = ShuffleQueue.isWave(NowPlaying.urn)
+                        val liteContext = androidx.compose.ui.platform.LocalContext.current
+                        IconButton(onClick = {
+                            if (waveNow) {
+                                android.widget.Toast.makeText(liteContext, liteContext.getString(R.string.shuffle_wave_off), android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                ShuffleQueue.set(controller, !shuffle)
+                            }
+                        }) {
+                            Icon(
+                                painterResource(R.drawable.ic_shuffle),
+                                iconLabel(R.drawable.ic_shuffle),
+                                tint = if (shuffle && !waveNow) MaterialTheme.colorScheme.primary else if (waveNow) subColor.copy(alpha = 0.4f) else subColor,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        IconButton(onClick = { controller.seekToPrevious() }, modifier = Modifier.size(56.dp)) {
+                            Icon(painterResource(R.drawable.ic_prev), iconLabel(R.drawable.ic_prev), modifier = Modifier.size(36.dp), tint = titleColor)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clickable { if (controller.isPlaying) controller.pause() else controller.play() },
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                                    iconLabel(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                                    tint = MaterialTheme.colorScheme.background,
+                                    modifier = Modifier.size(40.dp),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        IconButton(onClick = { controller.seekToNext() }, modifier = Modifier.size(56.dp)) {
+                            Icon(painterResource(R.drawable.ic_next), iconLabel(R.drawable.ic_next), modifier = Modifier.size(36.dp), tint = titleColor)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Box {
+                            IconButton(onClick = {
+                                controller.repeatMode = when (repeatMode) {
+                                    Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                                    Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                                    else -> Player.REPEAT_MODE_OFF
+                                }
+                            }) {
+                                Icon(
+                                    painterResource(R.drawable.ic_repeat),
+                                    iconLabel(R.drawable.ic_repeat),
+                                    tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else subColor,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                            if (repeatMode == Player.REPEAT_MODE_ONE) {
+                                Text(
+                                    "1",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 4.dp),
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.weight(1.4f))
+                }
+            }
+        }
+    }
+
+    val urnForExtras = currentUrn
+    if (showLyrics && urnForExtras != null) {
+        LyricsSheet(
+            urn = urnForExtras,
+            title = listOf(artist, title).filter { it.isNotBlank() }.joinToString(" — "),
+            controller = controller,
+            onClose = { showLyrics = false },
+        )
+    }
+    if (showOutput) AudioOutputDialog(onDismiss = { showOutput = false })
+    if (showEq) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showEq = false }) {
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
+                Column(
+                    Modifier
+                        .padding(20.dp)
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                ) {
+                    EqualizerPanel()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StreamChip(text: String, color: Color) {
+    Text(
+        text,
+        color = color.copy(alpha = 0.9f),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        modifier = Modifier
+            .border(1.dp, color.copy(alpha = 0.4f), RoundedCornerShape(5.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
+@Composable
+fun AddToPlaylistMenu(expanded: Boolean, track: Track, onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var showCreate by remember { mutableStateOf(false) }
+
+    fun addTo(urn: String) {
+        val added = LocalPlaylists.add(urn, track)
+        android.widget.Toast.makeText(
+            context,
+            context.getString(if (added) R.string.added else R.string.playlist_already_has),
+            android.widget.Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    androidx.compose.material3.DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        val list = LocalPlaylists.visible
+        if (list.isNotEmpty()) {
+            androidx.compose.material3.Text(
+                stringResource(R.string.add_to_playlist),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+        list.forEach { pl ->
+            androidx.compose.material3.DropdownMenuItem(
+                text = { androidx.compose.material3.Text(pl.title) },
+                trailingIcon = if (pl.syncing) {
+                    { Icon(painterResource(R.drawable.ic_refresh), stringResource(R.string.playlist_syncing), Modifier.size(14.dp)) }
+                } else null,
+                onClick = {
+                    onDismiss()
+                    addTo(pl.id)
+                },
+            )
+        }
+        androidx.compose.material3.DropdownMenuItem(
+            text = { androidx.compose.material3.Text(stringResource(R.string.new_playlist)) },
+            leadingIcon = { Icon(painterResource(R.drawable.ic_plus), null, Modifier.size(18.dp)) },
+            onClick = {
+                onDismiss()
+                showCreate = true
+            },
+        )
+    }
+
+    if (showCreate) {
+        CreatePlaylistDialog(onDismiss = { showCreate = false }) { title, private ->
+            LocalPlaylists.create(title, private, listOf(track))
+            android.widget.Toast.makeText(context, context.getString(R.string.added), android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+@Composable
+fun WaveformSeekBar(
+    samples: List<Float>,
+    progress: Float,
+    isPlaying: Boolean,
+    onSeek: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var dragFrac by remember { mutableStateOf<Float?>(null) }
+    val played = MaterialTheme.colorScheme.primary
+    val rest = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+
+    val pulseState = if (isPlaying) {
+        rememberInfiniteTransition(label = "wfPulse").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(520), RepeatMode.Reverse),
+            label = "wfPulseValue",
+        )
+    } else {
+        null
+    }
+
+    Canvas(
+        modifier
+            .pointerInput(samples) {
+                detectTapGestures { offset ->
+                    onSeek((offset.x / size.width).coerceIn(0f, 1f))
+                }
+            }
+            .pointerInput(samples) {
+                detectHorizontalDragGestures(
+                    onDragStart = { dragFrac = (it.x / size.width).coerceIn(0f, 1f) },
+                    onHorizontalDrag = { change, _ ->
+                        dragFrac = (change.position.x / size.width).coerceIn(0f, 1f)
+                    },
+                    onDragEnd = {
+                        dragFrac?.let(onSeek)
+                        dragFrac = null
+                    },
+                    onDragCancel = { dragFrac = null },
+                )
+            }
+    ) {
+        val n = samples.size
+        if (n == 0) return@Canvas
+        val playedBrush: Brush? = null
+        val bw = size.width / n
+        val prog = dragFrac ?: progress
+        val pulse = pulseState?.value ?: 0f
+        samples.forEachIndexed { i, v ->
+            val frac = i.toFloat() / n
+            var h = v * size.height
+            if (isPlaying) {
+                val d = abs(frac - prog)
+                if (d < 0.035f) {
+                    h *= 1f + 0.3f * pulse * (1f - d / 0.035f) * v
+                }
+            }
+            h = h.coerceIn(2f, size.height)
+            if (frac <= prog && playedBrush != null) {
+                drawRoundRect(
+                    brush = playedBrush,
+                    topLeft = Offset(i * bw + bw * 0.15f, (size.height - h) / 2f),
+                    size = Size(bw * 0.7f, h),
+                    cornerRadius = CornerRadius(bw * 0.35f),
+                )
+            } else {
+                drawRoundRect(
+                    color = if (frac <= prog) played else rest,
+                    topLeft = Offset(i * bw + bw * 0.15f, (size.height - h) / 2f),
+                    size = Size(bw * 0.7f, h),
+                    cornerRadius = CornerRadius(bw * 0.35f),
+                )
+            }
+        }
+    }
+}

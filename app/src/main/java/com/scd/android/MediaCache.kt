@@ -148,6 +148,52 @@ object MediaCache {
         if (removed > 0) Logs.add("cache", "pruned $removed spans older than ${days}d")
     }
 
+    fun contentLength(key: String): Long {
+        val c = cache ?: return -1L
+        return runCatching { androidx.media3.datasource.cache.ContentMetadata.getContentLength(c.getContentMetadata(key)) }.getOrDefault(-1L)
+    }
+
+    fun holds(urn: String): Boolean {
+        val c = cache ?: return false
+        return listOf(urn, "$urn|hq").any { key ->
+            runCatching {
+                val length = androidx.media3.datasource.cache.ContentMetadata.getContentLength(c.getContentMetadata(key))
+                length > 0L && c.isCached(key, 0L, length)
+            }.getOrDefault(false)
+        }
+    }
+
+    fun keyCount(): Int = cache?.keys?.size ?: 0
+
+    fun scanSnippets(tmpDir: File, skipUrn: String?, step: () -> Unit = {}): Pair<Int, Int> {
+        val c = cache ?: return 0 to 0
+        var checked = 0
+        var removed = 0
+        val tmp = File(tmpDir, "integrity.m4a")
+        for (key in c.keys.toList()) {
+            step()
+            val urn = key.substringBefore('|')
+            if (urn == skipUrn) continue
+            val length = contentLength(key)
+            if (length !in 1..2_500_000L) continue
+            if (!runCatching { c.isCached(key, 0L, length) }.getOrDefault(false)) continue
+            val spans = runCatching { c.getCachedSpans(key).sortedBy { it.position } }.getOrNull() ?: continue
+            val copied = runCatching {
+                tmp.outputStream().use { out -> spans.forEach { span -> span.file?.inputStream()?.use { it.copyTo(out) } } }
+                tmp.length() == length
+            }.getOrDefault(false)
+            val ms = if (copied) ScDataSource.durationOf(tmp) else null
+            tmp.delete()
+            if (ms == null) continue
+            checked++
+            val expected = DurationCache.get(urn)
+            if (ScDataSource.isSnippetLength(ms) && (expected == 0L || ms < expected - 5_000L)) {
+                if (runCatching { c.removeResource(key) }.isSuccess) removed++
+            }
+        }
+        return checked to removed
+    }
+
     fun remove(urn: String) {
         val c = cache ?: return
         for (key in listOf(urn, "$urn|hq")) {

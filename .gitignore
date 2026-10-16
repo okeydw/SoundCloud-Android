@@ -10,10 +10,13 @@ local.properties
 .cxx
 README-dev.md
 app/release/
+app/lite
+app/full
 *.apk
 *.aab
 *.jks
 *.keystore
 docs/screenshots/tmp_*
+docs/features
 *.hprof
 .gradle-cache/

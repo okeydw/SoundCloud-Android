@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit
 object ScAnon {
     private const val SC_HOME = "https://soundcloud.com"
     private const val SC_API_V2 = "https://api-v2.soundcloud.com"
-    private const val USER_AGENT =
+    const val USER_AGENT =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     private val PRESETS = listOf("mp3_1_0", "aac_160k", "mp3_0_0", "aac_1_0")
     private const val FAIL_THRESHOLD = 3
@@ -180,13 +180,18 @@ object ScAnon {
         return json.decodeFromString(AnonTrack.serializer(), body)
     }
 
+    private fun isProgressive(t: Transcoding) = t.format?.protocol == "progressive"
+
     private fun ranked(list: List<Transcoding>): List<Transcoding> {
         val usable = list.filter {
             val protocol = it.format?.protocol.orEmpty()
-            protocol == "progressive" && !it.snipped && !it.url.contains("/preview") && it.url.isNotEmpty()
+            (protocol == "progressive" || protocol == "hls") && !it.snipped && !it.url.contains("/preview") && it.url.isNotEmpty()
         }
-        val byPreset = PRESETS.mapNotNull { p -> usable.firstOrNull { it.preset == p } }
-        return byPreset + usable.filter { it !in byPreset }
+        fun ordered(group: List<Transcoding>): List<Transcoding> {
+            val byPreset = PRESETS.mapNotNull { p -> group.firstOrNull { it.preset == p } }
+            return byPreset + group.filter { it !in byPreset }
+        }
+        return ordered(usable.filter(::isProgressive)) + ordered(usable.filterNot(::isProgressive))
     }
 
     private fun resolveTranscoding(t: Transcoding, auth: String?): String {
@@ -251,7 +256,7 @@ object ScAnon {
         }
     }
 
-    fun progressiveUrl(urn: String): String? {
+    fun sourceUrl(urn: String): String? {
         if (!available()) return null
         if (!urn.startsWith("soundcloud:tracks:")) return null
         if (clientId == null) {
@@ -268,7 +273,7 @@ object ScAnon {
             }
             val options = ranked(track.media?.transcodings.orEmpty())
             if (options.isEmpty()) {
-                Logs.add("anon", "$id no progressive stream")
+                Logs.add("anon", "$id no usable stream")
                 failures = 0
                 return null
             }
@@ -276,8 +281,9 @@ object ScAnon {
                 val url = runCatching { resolveTranscoding(t, track.track_authorization) }.getOrNull()
                 if (!url.isNullOrEmpty()) {
                     failures = 0
-                    Logs.add("anon", "$id → ${t.preset ?: "?"}")
-                    return url
+                    val hls = !isProgressive(t)
+                    Logs.add("anon", "$id → ${t.preset ?: "?"}${if (hls) " (hls)" else ""}")
+                    return if (hls) HlsDownload.wrap(url) else url
                 }
             }
             failures = 0

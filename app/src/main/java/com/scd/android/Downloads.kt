@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -71,8 +72,8 @@ object Downloads {
             }
             Logs.add(
                 "download",
-                "улучшение качества: ${targets.size} к проверке" +
-                    if (skipped > 0) ", $skipped пропущено (HQ не было на прошлой неделе)" else "",
+                "quality upgrade: ${targets.size} to check" +
+                    if (skipped > 0) ", $skipped skipped (no HQ last week)" else "",
             )
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 onResult(targets.size)
@@ -89,37 +90,105 @@ object Downloads {
         if (track.urn in inProgress) return@withContext false
         val old = fileFor(track.urn)
         if (!old.exists()) return@withContext false
-        val oldKbps = fileKbps(old) ?: 0
+        ScDataSource.noteStorageQuality(track.urn, track.scdMeta?.storage_quality, overwrite = false)
         inProgress = inProgress + track.urn
         val base = baseName(track.urn)
         val tmp = File(dir, "$base.upgrade.part")
         try {
             val hqSources = sequence {
-                ScDataSource.storageUrlsFor(track.urn).forEach { yield(it) }
+                if (ScDataSource.storageQualityOf(track.urn).equals("hq", ignoreCase = true)) {
+                    ScDataSource.storageUrlsFor(track.urn).forEach { yield(it) }
+                }
                 val hqStream = Api.streamUrl(track.urn, hq = true, goPlus = true)
                 yield(hqStream)
                 if (!track.goPlus) ScDataSource(Api.http).resolveViaDownload(hqStream)?.let { yield(it) }
             }
+            val oldMs = AudioProbe.durationMs(old)
+            var reached = false
             for (url in hqSources) {
                 tmp.delete()
-                val ok = runCatching { fetchTo(url, tmp) }.getOrDefault(false)
-                if (!ok || truncated(tmp, track.displayDuration, track.urn, track.goPlus)) continue
-                val newKbps = fileKbps(tmp) ?: 0
-                if (newKbps <= oldKbps + 16) continue
+                var header: String? = null
+                val ok = runCatching { fetchTo(url, tmp) { header = it } }.getOrDefault(false)
+                if (!ok) continue
+                reached = true
+                if (truncated(tmp, track.displayDuration, track.urn, track.goPlus)) continue
+                val newMs = AudioProbe.durationMs(tmp)
+                if (oldMs != null && (newMs == null || newMs < oldMs - 5_000L)) {
+                    Logs.add("download", "${track.title.take(24)}: HQ copy is ${newMs?.div(1000) ?: "?"}s of ${oldMs / 1000}s, keeping SQ")
+                    continue
+                }
+                if (!ScDataSource.sourceIsHq(url, track.urn, header)) continue
+                if (!AudioProbe.inspect(tmp).playable) continue
+                if (!awaitNotPlaying(track.urn)) return@withContext false
                 val ext = audioExt(tmp)
                 audioExts.forEach { File(dir, "$base.$it").delete() }
                 if (!tmp.renameTo(File(dir, "$base.$ext"))) return@withContext false
+                rememberQuality(track.urn, "HQ")
                 qualityLabels.remove(track.urn)
-                Logs.add("download", "${track.title.take(24)}: ${oldKbps}k → ${newKbps}k $ext")
+                Logs.add("download", "${track.title.take(24)}: SQ → HQ $ext @${url.substringAfter("://").substringBefore('/')}")
                 return@withContext true
             }
-            Logs.add("download", "${track.title.take(24)}: HQ-версии нет, оставляю ${oldKbps}k")
-            markNoHq(track.urn)
+            if (reached) {
+                Logs.add("download", "${track.title.take(24)}: sources gave SQ only, keeping it")
+                markNoHq(track.urn)
+            } else {
+                Logs.add("download", "${track.title.take(24)}: HQ sources unavailable")
+            }
             false
         } finally {
             tmp.delete()
             inProgress = inProgress - track.urn
         }
+    }
+
+    private suspend fun awaitNotPlaying(urn: String): Boolean {
+        if (NowPlaying.urn != urn) return true
+        inProgress = inProgress - urn
+        var waited = 0
+        try {
+            while (NowPlaying.urn == urn) {
+                if (waited >= 900) return false
+                delay(2_000)
+                waited += 2
+            }
+        } finally {
+            inProgress = inProgress + urn
+        }
+        return true
+    }
+
+    private val finishedListeners = java.util.concurrent.ConcurrentHashMap<String, (File) -> Unit>()
+
+    suspend fun redownload(context: Context, tracks: List<Track>, onReady: ((String, File) -> Unit)? = null) {
+        val list = tracks.filter { !YouTubeImport.isYouTube(it.urn) }.distinctBy { it.urn }
+        if (list.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            for (t in list) ScDataSource.invalidateNow(t.urn)
+            removeAll(list.map { it.urn })
+            for (t in list) DownloadFailures.clear(t.urn)
+        }
+        if (Prefs.offline) return
+        if (onReady != null) for (t in list) finishedListeners[t.urn] = { f -> onReady(t.urn, f) }
+        Logs.add("download", "re-downloading ${list.size} broken ${if (list.size == 1) "track" else "tracks"}")
+        enqueue(context.applicationContext, list)
+    }
+
+    private val upgradeClaims = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    private fun qualityPrefs() = appContext.getSharedPreferences("downloads_quality", Context.MODE_PRIVATE)
+
+    private fun storedQuality(urn: String): String? = runCatching { qualityPrefs().getString(urn, null) }.getOrNull()
+
+    private fun rememberQuality(urn: String, tier: String) {
+        runCatching { qualityPrefs().edit().putString(urn, tier).apply() }
+    }
+
+    fun upgradeInBackground(urn: String?) {
+        if (urn == null || !downloadHq || Prefs.offline || !isDownloaded(urn)) return
+        if (YouTubeImport.isYouTube(urn) || storedQuality(urn) == "HQ" || recentlyNoHq(urn)) return
+        val track = synchronized(index) { index[urn] } ?: return
+        if (!upgradeClaims.add(urn)) return
+        App.scope.launch(Dispatchers.IO) { runCatching { upgradeOne(track) } }
     }
 
     private val jobQueue = ConcurrentLinkedQueue<DownloadJob>()
@@ -134,6 +203,7 @@ object Downloads {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        AudioProbe.init(context)
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, context.getString(R.string.downloads), NotificationManager.IMPORTANCE_LOW)
@@ -166,7 +236,7 @@ object Downloads {
         }
     }
 
-    private val audioExts = listOf("m4a", "mp3", "ogg", "aac")
+    private val audioExts = listOf("m4a", "mp3", "ogg", "aac", "webm")
 
     private fun baseName(urn: String) = urn.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
@@ -182,6 +252,7 @@ object Downloads {
         if (n < 12) return "m4a"
         fun at(i: Int, s: String) = s.indices.all { head[i + it] == s[it].code.toByte() }
         return when {
+            (head[0].toInt() and 0xFF) == 0x1A && (head[1].toInt() and 0xFF) == 0x45 && (head[2].toInt() and 0xFF) == 0xDF -> "webm"
             at(4, "ftyp") -> "m4a"
             at(0, "OggS") -> "ogg"
             at(0, "ID3") -> "mp3"
@@ -197,31 +268,13 @@ object Downloads {
 
     fun cachedQuality(urn: String): String? = qualityLabels[urn]
 
-    private fun fileKbps(file: File): Int? = runCatching {
-        val r = android.media.MediaMetadataRetriever()
-        try {
-            r.setDataSource(file.path)
-            val declared = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull()
-            val durMs = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-            (declared?.takeIf { it > 0 } ?: durMs?.takeIf { it > 0 }?.let { file.length() * 8_000L / it })
-                ?.let { (it / 1000).toInt() }
-        } finally {
-            runCatching { r.release() }
-        }
-    }.getOrNull()
-
     suspend fun quality(urn: String): String? = withContext(Dispatchers.IO) {
         qualityLabels[urn]?.let { return@withContext it }
         if (!isDownloaded(urn)) return@withContext null
         val file = fileFor(urn)
         if (!file.exists()) return@withContext null
-        val kbps = fileKbps(file)
-        val tier = when {
-            kbps == null -> "?"
-            kbps >= 192 -> "HQ"
-            else -> "SQ"
-        }
-        val label = listOfNotNull(tier, kbps?.let { "${it}k" }, file.extension.uppercase()).joinToString(" ")
+        val tier = storedQuality(urn) ?: "SQ"
+        val label = "$tier ${file.extension.uppercase()}"
         qualityLabels[urn] = label
         label
     }
@@ -233,19 +286,12 @@ object Downloads {
         artFor(urn).takeIf { it.exists() && it.length() > 0 }?.absolutePath
 
     private fun truncated(file: File, expectedMs: Long, urn: String, goPlus: Boolean): Boolean {
-        val actual = runCatching {
-            val retriever = android.media.MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(file.path)
-                retriever.extractMetadata(
-                    android.media.MediaMetadataRetriever.METADATA_KEY_DURATION,
-                )?.toLongOrNull() ?: 0L
-            } finally {
-                runCatching { retriever.release() }
-            }
-        }.getOrDefault(0L)
-        val snippetLike = actual > 0L &&
-            (kotlin.math.abs(actual - 30_000L) < 1_500L || kotlin.math.abs(actual - 10_000L) < 1_500L)
+        if (AudioProbe.tooSmall(file.length(), expectedMs)) return true
+        val info = AudioProbe.inspect(file)
+        val declared = info.declaredMs
+        if (declared != null && expectedMs > 45_000L && declared < expectedMs - 5_000L && ScDataSource.isSnippetLength(declared)) return true
+        val actual = info.ms ?: 0L
+        val snippetLike = actual > 0L && ScDataSource.isSnippetLength(actual)
         if (goPlus && snippetLike) return true
         if (actual <= 0L || expectedMs <= 45_000L) {
             if (actual > 0L) DurationCache.record(urn, actual)
@@ -281,26 +327,45 @@ object Downloads {
         }
         if (!gp) {
             ScDataSource(Api.http).resolveViaDownload(primary)?.let { yield(it to "SQ") }
-            ScAnon.progressiveUrl(track.urn)?.let { yield(it to "SQ") }
+            ScAnon.sourceUrl(track.urn)?.let { yield(it to "SQ") }
             if (!storageFirst) ScDataSource.storageUrlsFor(track.urn).forEach { yield(it to "HQ") }
         }
     }
 
     fun looksLikeAudio(file: File): Boolean {
         if (file.length() < 8_192L) return false
-        val head = ByteArray(12)
-        val n = runCatching { file.inputStream().use { it.read(head) } }.getOrDefault(-1)
+        val head = ByteArray(189)
+        val n = runCatching { file.inputStream().use { input -> input.readNBytesCompat(head) } }.getOrDefault(-1)
         if (n < 12) return false
         fun at(i: Int, s: String) = s.indices.all { head[i + it] == s[it].code.toByte() }
         val b0 = head[0].toInt() and 0xFF
         val b1 = head[1].toInt() and 0xFF
-        return at(4, "ftyp") || at(0, "ID3") || at(0, "OggS") || at(0, "RIFF") || at(0, "fLaC") ||
-            (b0 == 0xFF && (b1 and 0xE0) == 0xE0)
+        return at(4, "ftyp") || at(4, "styp") || at(4, "moof") || at(0, "ID3") || at(0, "OggS") || at(0, "RIFF") || at(0, "fLaC") ||
+            (b0 == 0x1A && b1 == 0x45 && (head[2].toInt() and 0xFF) == 0xDF) ||
+            (b0 == 0xFF && (b1 and 0xE0) == 0xE0) ||
+            (b0 == 0x47 && n >= 189 && (head[188].toInt() and 0xFF) == 0x47)
+    }
+
+    private fun java.io.InputStream.readNBytesCompat(buf: ByteArray): Int {
+        var total = 0
+        while (total < buf.size) {
+            val r = read(buf, total, buf.size - total)
+            if (r < 0) break
+            total += r
+        }
+        return total
     }
 
     private val hostDown = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    private fun fetchTo(url: String, tmp: File): Boolean {
+    private fun fetchTo(url: String, tmp: File, onHeader: (String?) -> Unit = {}): Boolean {
+        if (HlsDownload.isHls(url)) {
+            val manifest = HlsDownload.manifest(url)
+            return runCatching { HlsDownload.writeTo(client, manifest, tmp); true }.getOrElse {
+                Logs.add("download", "hls ${it.message ?: it.javaClass.simpleName} @${manifest.substringAfter("://").substringBefore('/')}")
+                false
+            }
+        }
         val host = url.substringAfter("://").substringBefore('/')
         hostDown[host]?.let { if (System.currentTimeMillis() - it < 60_000L) return false }
         val req = Api.authorize(Request.Builder().url(url), url)
@@ -314,6 +379,7 @@ object Downloads {
                     return@use false
                 }
                 val body = res.body ?: return@use false
+                onHeader(res.header("x-audio-quality")?.lowercase())
                 tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
                 val ok = looksLikeAudio(tmp)
                 if (!ok) Logs.add("download", "not audio (${tmp.length()} B) @$host")
@@ -330,30 +396,92 @@ object Downloads {
         }
     }
 
-    private suspend fun downloadArt(track: Track) = withContext(Dispatchers.IO) {
-        val raw = Api.artworkUrl(track.artwork_url, "t500x500") ?: return@withContext
+    private suspend fun downloadArt(track: Track): Boolean = withContext(Dispatchers.IO) {
         val target = artFor(track.urn)
-        if (target.exists() && target.length() > 0) return@withContext
-        runCatching {
-            val request = if (raw.contains("sndcdn.com")) {
+        if (target.exists() && target.length() > 0) return@withContext true
+        val raw = Api.artworkUrl(track.artwork_url, "t500x500")
+            ?: Api.artworkUrl(track.user?.avatar_url, "t500x500")
+            ?: return@withContext false
+        val requests = buildList {
+            if (raw.contains("sndcdn.com")) {
                 val (name, value) = Api.imageProxyTarget(raw)
-                Request.Builder()
-                    .url("${Api.IMAGES_BASE}/?t=${android.net.Uri.encode(value)}")
-                    .header(name, value)
-                    .build()
-            } else {
-                Request.Builder().url(raw).build()
+                Endpoints.imageHosts.forEach { host ->
+                    add(Request.Builder().url("$host/?t=${android.net.Uri.encode(value)}").header(name, value).build())
+                }
             }
-            Api.http.newCall(request).execute().use { res ->
-                val body = res.body ?: return@use
-                if (!res.isSuccessful) return@use
-                target.outputStream().use { out -> body.byteStream().copyTo(out) }
-            }
+            add(Request.Builder().url(raw).build())
         }
-        if (target.exists() && target.length() <= 0L) target.delete()
+        val tmp = File(target.path + ".part")
+        for (req in requests) {
+            val ok = runCatching {
+                client.newCall(req).execute().use { res ->
+                    val body = res.body
+                    if (!res.isSuccessful || body == null) return@use false
+                    tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeFile(tmp.path, bounds)
+                    bounds.outWidth > 0
+                }
+            }.getOrDefault(false)
+            if (ok && tmp.renameTo(target)) return@withContext true
+            tmp.delete()
+        }
+        false
+    }
+
+    suspend fun backfillArt() {
+        if (Prefs.offline) return
+        val missing = tracks().filter { artPathOrNull(it.urn) == null && (it.artwork_url != null || it.user?.avatar_url != null) }
+        if (missing.isEmpty()) return
+        var got = 0
+        for (t in missing) {
+            if (Prefs.offline) break
+            if (runCatching { downloadArt(t) }.getOrDefault(false)) got++
+        }
+        Logs.add("download", "offline artwork: $got of ${missing.size}")
     }
 
     fun isDownloaded(urn: String) = urn in downloaded
+
+    val ready: Boolean get() = ::dir.isInitialized
+
+    fun localFile(urn: String): File? = if (ready && isDownloaded(urn)) fileFor(urn).takeIf { it.exists() } else null
+
+    suspend fun importFrom(track: Track, audio: java.io.InputStream, art: java.io.InputStream?): Boolean = withContext(Dispatchers.IO) {
+        if (isDownloaded(track.urn) || track.urn in inProgress) {
+            audio.close()
+            art?.close()
+            return@withContext isDownloaded(track.urn)
+        }
+        inProgress = inProgress + track.urn
+        val base = baseName(track.urn)
+        val tmp = File(dir, "$base.import.part")
+        try {
+            tmp.delete()
+            audio.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+            if (!looksLikeAudio(tmp)) {
+                tmp.delete()
+                return@withContext false
+            }
+            val target = File(dir, "$base.${audioExt(tmp)}")
+            audioExts.forEach { File(dir, "$base.$it").delete() }
+            if (!tmp.renameTo(target)) return@withContext false
+            art?.use { input -> runCatching { artFor(track.urn).outputStream().use { input.copyTo(it) } } }
+            synchronized(index) {
+                index[track.urn] = track
+                saveIndex()
+            }
+            downloaded = downloaded + track.urn
+            finishedListeners.remove(track.urn)?.let { cb -> runCatching { cb(target) } }
+            true
+        } catch (_: Exception) {
+            tmp.delete()
+            false
+        } finally {
+            art?.let { runCatching { it.close() } }
+            inProgress = inProgress - track.urn
+        }
+    }
 
     fun tracks(): List<Track> = synchronized(index) { index.values.toList() }.reversed()
 
@@ -371,21 +499,38 @@ object Downloads {
             var quality = ""
             var sawTruncated = false
             val tried = mutableSetOf<String>()
-            for ((url, q) in candidates(track)) {
+            ScDataSource.noteStorageQuality(track.urn, track.scdMeta?.storage_quality, overwrite = false)
+            if (YouTubeImport.isYouTube(track.urn)) {
+                val ok = runCatching { YouTubeImport.downloadTo(track, tmp) }
+                    .onFailure { Logs.add("download", "${track.title.take(24)} → YouTube: ${it.message?.take(80)}") }
+                    .getOrDefault(false)
+                if (ok && looksLikeAudio(tmp)) {
+                    picked = "youtube"
+                    quality = "YT"
+                } else {
+                    tmp.delete()
+                }
+            }
+            for ((url, q) in if (picked != null || YouTubeImport.isYouTube(track.urn)) emptySequence() else candidates(track)) {
                 if (!tried.add(url)) continue
-                val ok = runCatching { fetchTo(url, tmp) }.getOrDefault(false)
-                if (ok && !truncated(tmp, track.displayDuration, track.urn, track.goPlus)) {
+                val storage = ScDataSource.isStorage(url)
+                if (storage && ScDataSource.storageCooling(url)) continue
+                var header: String? = null
+                val ok = runCatching { fetchTo(url, tmp) { header = it } }.getOrDefault(false)
+                if (ok && !truncated(tmp, track.displayDuration, track.urn, track.goPlus) && AudioProbe.inspect(tmp).playable) {
                     picked = url
-                    quality = q
+                    quality = if (q != "SQ" && ScDataSource.sourceIsHq(url, track.urn, header)) "HQ" else "SQ"
                     break
                 }
                 if (ok) sawTruncated = true
                 tmp.delete()
             }
             if (picked == null) {
+                DownloadFailures.record(track.urn)
                 Logs.add(
                     "download",
-                    "${track.title.take(24)} → " + if (sawTruncated) "обрезан, не сохраняю" else "не скачался",
+                    "${track.title.take(24)} → " + (if (sawTruncated) "truncated, not saved" else "download failed") +
+                        " (attempt ${DownloadFailures.failures(track.urn)})",
                 )
                 return@withContext false
             }
@@ -393,17 +538,20 @@ object Downloads {
             val target = File(dir, "$base.$ext")
             audioExts.forEach { File(dir, "$base.$it").delete() }
             if (!tmp.renameTo(target)) return@withContext false
+            rememberQuality(track.urn, quality)
             Logs.add(
                 "download",
                 "${track.title.take(24)} → $quality $ext ${target.length() / 1024} KB " +
                     "@${picked.substringAfter("://").substringBefore('/')}",
             )
+            DownloadFailures.clear(track.urn)
             runCatching { downloadArt(track) }
             synchronized(index) {
                 index[track.urn] = track
                 saveIndex()
             }
             downloaded = downloaded + track.urn
+            finishedListeners.remove(track.urn)?.let { cb -> runCatching { cb(target) } }
             true
         } catch (_: Exception) {
             tmp.delete()
@@ -452,15 +600,18 @@ object Downloads {
         }
         val single = total == 1
         var done = 0
+        var saved = 0
+        var failed = 0
         try {
             notifyProgress(done, total, job.playlistUrn, job.playlistTitle, single)
             for (t in pending) {
                 if (job.key != null && job.key in cancelledKeys) break
-                if (job.upgrade) upgradeOne(t) else download(t)
+                val ok = if (job.upgrade) upgradeOne(t) else download(t)
                 done++
+                if (ok) saved++ else failed++
                 notifyProgress(done, total, job.playlistUrn, job.playlistTitle, single)
             }
-            notifyComplete(done, total, job.playlistUrn, job.playlistTitle, single)
+            notifyComplete(saved, failed, job.upgrade, job.playlistUrn, job.playlistTitle, single)
         } catch (e: kotlinx.coroutines.CancellationException) {
             jobQueue.clear()
             queued = emptySet()
@@ -549,6 +700,7 @@ object Downloads {
             artFor(urn).delete()
         }
         withContext(Dispatchers.Main) { urns.forEach { qualityLabels.remove(it) } }
+        runCatching { qualityPrefs().edit().apply { urns.forEach { remove(it) } }.apply() }
         synchronized(index) {
             urns.forEach { index.remove(it) }
             saveIndex()
@@ -579,23 +731,36 @@ object Downloads {
 
     @SuppressLint("MissingPermission")
     private fun notifyComplete(
-        done: Int,
-        total: Int,
+        saved: Int,
+        failed: Int,
+        upgrade: Boolean,
         playlistUrn: String?,
         playlistTitle: String?,
         single: Boolean,
     ) {
         if (!::appContext.isInitialized) return
-        val notif = NotificationCompat.Builder(appContext, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_check)
-            .setContentTitle(appContext.getString(R.string.download_done))
-            .setContentText(appContext.getString(R.string.download_done_count, done))
+        val ctx = appContext
+        val title = when {
+            upgrade -> ctx.getString(R.string.upgrade_quality)
+            saved == 0 && failed > 0 -> ctx.getString(R.string.download_failed)
+            else -> ctx.getString(R.string.download_done)
+        }
+        val text = when {
+            upgrade -> ctx.getString(R.string.upgrade_done_count, saved)
+            failed == 0 -> ctx.getString(R.string.download_done_count, saved)
+            saved == 0 -> ctx.getString(R.string.download_failed_count, failed)
+            else -> ctx.getString(R.string.download_partial_count, saved, failed)
+        }
+        val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
+            .setSmallIcon(if (saved == 0 && failed > 0 && !upgrade) R.drawable.ic_clear else R.drawable.ic_check)
+            .setContentTitle(title)
+            .setContentText(text)
             .setOngoing(false)
             .setAutoCancel(true)
             .setSilent(true)
             .setContentIntent(contentIntent(playlistUrn, playlistTitle, single))
             .build()
-        runCatching { NotificationManagerCompat.from(appContext).notify(NOTIF_ID, notif) }
+        runCatching { NotificationManagerCompat.from(ctx).notify(NOTIF_ID, notif) }
     }
 
     private fun saveIndex() {

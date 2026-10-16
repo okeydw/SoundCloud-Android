@@ -232,11 +232,6 @@ _SoundCloud는 SoundCloud Ltd.의 상표입니다. 이 앱은 SoundCloud와 관�
 
 ---
 
-<p align="center">
-<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
-<img src="https://img.shields.io/badge/SoundCloud_Android_다운로드-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="SoundCloud Android 다운로드"/>
-</a>
-</p>
 
 <p align="center">
 <code>soundcloud android</code> · <code>soundcloud apk</code> · <code>사운드클라우드 안드로이드</code> · <code>사운드클라우드 앱</code> · <code>광고 없는 사운드클라우드</code> · <code>사운드클라우드 차단</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>사운드클라우드 음악 플레이어</code>

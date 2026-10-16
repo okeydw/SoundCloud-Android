@@ -232,11 +232,6 @@ _SoundCloud es una marca registrada de SoundCloud Ltd. Esta aplicación no está
 
 ---
 
-<p align="center">
-<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
-<img src="https://img.shields.io/badge/Descargar_SoundCloud_Android-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="Descargar SoundCloud Android"/>
-</a>
-</p>
 
 <p align="center">
 <code>soundcloud android</code> · <code>soundcloud apk</code> · <code>cliente soundcloud</code> · <code>soundcloud para android</code> · <code>soundcloud sin anuncios</code> · <code>soundcloud bloqueado</code> · <code>soundcloud no funciona</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>reproductor de música soundcloud</code>

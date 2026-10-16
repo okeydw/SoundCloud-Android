@@ -232,11 +232,6 @@ _SoundCloud - гандлёвая марка SoundCloud Ltd. Гэта прагр�
 
 ---
 
-<p align="center">
-<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
-<img src="https://img.shields.io/badge/Спампаваць_SoundCloud_Android-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="Спампаваць SoundCloud Android"/>
-</a>
-</p>
 
 <p align="center">
 <code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud кліент</code> · <code>soundcloud для андроід</code> · <code>soundcloud без рэкламы</code> · <code>soundcloud заблакаваны</code> · <code>soundcloud не працуе</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>музычны плэер soundcloud</code>

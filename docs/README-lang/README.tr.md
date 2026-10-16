@@ -232,11 +232,6 @@ _SoundCloud, SoundCloud Ltd.'nin ticari markasıdır. Bu uygulamanın SoundCloud
 
 ---
 
-<p align="center">
-<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
-<img src="https://img.shields.io/badge/SoundCloud_Android_indir-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="SoundCloud Android indir"/>
-</a>
-</p>
 
 <p align="center">
 <code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud istemcisi</code> · <code>android için soundcloud</code> · <code>reklamsız soundcloud</code> · <code>soundcloud engellendi</code> · <code>soundcloud çalışmıyor</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>soundcloud müzik çalar</code>

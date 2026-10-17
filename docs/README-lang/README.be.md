@@ -19,7 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
-<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop версія</a>] · iOS у распрацоўцы</b><br>
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop версія</a>] · [<a href="https://github.com/okeydw/SoundCloud-Android/tree/ios">iOS версія</a>]</b><br>
 <b>Неафіцыйны кліент SoundCloud для Android</b><br>
 Без рэкламы · Без капчы · Без цэнзуры · Даступна ў Расіі
 </p>
@@ -58,7 +58,7 @@
 
 > `SoundCloud Lite` - спрошчаны інтэрфейс, які выкарыстоўваўся ў першых версіях, для тых, хто цэніць мінімалізм і слабыя тэлефоны.
 
-### Распрацоўка iOS пачалася, магчыма, хутка даробім
+### [iOS версія (бэта)](https://github.com/okeydw/SoundCloud-Android/tree/ios)
 
 ---
 
@@ -232,6 +232,11 @@ _SoundCloud - гандлёвая марка SoundCloud Ltd. Гэта прагр�
 
 ---
 
+<p align="center">
+<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
+<img src="https://img.shields.io/badge/Спампаваць_SoundCloud_Android-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="Спампаваць SoundCloud Android"/>
+</a>
+</p>
 
 <p align="center">
 <code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud кліент</code> · <code>soundcloud для андроід</code> · <code>soundcloud без рэкламы</code> · <code>soundcloud заблакаваны</code> · <code>soundcloud не працуе</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>музычны плэер soundcloud</code>

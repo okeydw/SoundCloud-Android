@@ -19,7 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
-<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop-Version</a>] · iOS in Entwicklung</b><br>
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop-Version</a>] · [<a href="https://github.com/okeydw/SoundCloud-Android/tree/ios">iOS-Version</a>]</b><br>
 <b>Inoffizieller SoundCloud-Client für Android</b><br>
 Ohne Werbung · Ohne Captcha · Ohne Zensur · In Russland verfügbar
 </p>
@@ -58,7 +58,7 @@ Den Client gibt es in zwei Versionen mit denselben Funktionen, nur das Aussehen 
 
 > `SoundCloud Lite` - die vereinfachte Oberfläche aus den ersten Versionen, für alle, die Minimalismus mögen oder schwächere Handys haben.
 
-### Die Entwicklung für iOS hat begonnen, vielleicht ist sie bald fertig
+### [iOS-Version (Beta)](https://github.com/okeydw/SoundCloud-Android/tree/ios)
 
 ---
 
@@ -232,6 +232,11 @@ _SoundCloud ist eine Marke von SoundCloud Ltd. Diese App steht in keiner Verbind
 
 ---
 
+<p align="center">
+<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
+<img src="https://img.shields.io/badge/SoundCloud_Android_herunterladen-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="SoundCloud Android herunterladen"/>
+</a>
+</p>
 
 <p align="center">
 <code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud client</code> · <code>soundcloud für android</code> · <code>soundcloud ohne werbung</code> · <code>soundcloud gesperrt</code> · <code>soundcloud funktioniert nicht</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>soundcloud musikplayer</code>

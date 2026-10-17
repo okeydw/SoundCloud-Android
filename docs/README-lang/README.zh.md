@@ -19,7 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
-<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">桌面版</a>] · iOS 开发中</b><br>
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">桌面版</a>] · [<a href="https://github.com/okeydw/SoundCloud-Android/tree/ios">iOS 版</a>]</b><br>
 <b>非官方 SoundCloud Android 客户端</b><br>
 无广告 · 无验证码 · 无审查 · 在俄罗斯可用
 </p>
@@ -58,7 +58,7 @@
 
 > `SoundCloud Lite` - 早期版本使用的简化界面，适合喜欢简洁或手机性能较弱的用户。
 
-### iOS 版已开始开发，可能很快完成
+### [iOS 版 (测试版)](https://github.com/okeydw/SoundCloud-Android/tree/ios)
 
 ---
 
@@ -232,6 +232,11 @@ _SoundCloud 是 SoundCloud Ltd. 的商标。本应用与 SoundCloud 无关。_
 
 ---
 
+<p align="center">
+<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
+<img src="https://img.shields.io/badge/下载_SoundCloud_Android-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="下载 SoundCloud Android"/>
+</a>
+</p>
 
 <p align="center">
 <code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud 安卓</code> · <code>soundcloud 客户端</code> · <code>soundcloud 无广告</code> · <code>soundcloud 被封锁</code> · <code>soundcloud 打不开</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>soundcloud 音乐播放器</code>

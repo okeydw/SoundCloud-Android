@@ -6,8 +6,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -61,7 +63,8 @@ data class LocalPlaylist(
 }
 
 object LocalPlaylists {
-    private const val RECREATE_AFTER_MS = 24L * 60 * 60 * 1000
+    private const val RECREATE_AFTER_MS = 72L * 60 * 60 * 1000
+    private const val MAX_CREATE_ATTEMPTS = 3
     private const val PULL_PAGES = 100
     private const val PULLS_PER_SYNC = 8
     private const val PUSH_SETTLE_MS = 60_000L
@@ -307,13 +310,16 @@ object LocalPlaylists {
         }
     }
 
-    suspend fun sync() = syncMutex.withLock {
+    suspend fun sync() = withContext(NonCancellable) { syncLocked() }
+
+    private suspend fun syncLocked() = syncMutex.withLock {
         if (Prefs.offline || Api.sessionId == null) return@withLock
         syncingNow = true
         try {
-            all.filter { it.remoteUrn == null && !it.createAccepted && !it.deleted && !it.localOnly }.forEach { sendCreate(it) }
             val remote = fetchRemote()
             if (remote != null) reconcile(remote.first, remote.second)
+            all.filter { it.remoteUrn == null && !it.createAccepted && !it.deleted && !it.localOnly && (remote != null || it.createAttempts == 0) }
+                .forEach { sendCreate(it) }
             all.filter { it.remoteUrn != null && it.ops.isNotEmpty() }.forEach { replay(it) }
             all.filter { pullable(it) && it.ops.isEmpty() && !it.tracksLoaded && it.tracks.isNotEmpty() }
                 .take(PULLS_PER_SYNC)
@@ -338,6 +344,13 @@ object LocalPlaylists {
         val res = runCatching { Api.createPlaylist(p.title, p.sharing, p.tracks.map { it.urn }.filter { isScUrn(it) }) }
         res.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         val created = res.getOrNull()
+        val error = res.exceptionOrNull()
+        val rejected = error is ApiHttpException && error.code in 400..499 && error.code != 408 && error.code != 429
+        if (created == null && error != null && !rejected && !Api.neverReachedServer(error)) {
+            edit(p.id) { it.copy(createAccepted = true, createSentAt = now, createAttempts = it.createAttempts + 1) }
+            Logs.add("playlist", "${p.title.take(30)}: create unconfirmed (${error.message?.take(60)}), will look for it on the server before sending again")
+            return
+        }
         if (created != null) {
             edit(p.id) {
                 it.copy(
@@ -389,18 +402,24 @@ object LocalPlaylists {
         val now = System.currentTimeMillis()
         update { list ->
             val claimed = list.mapNotNull { it.remoteUrn }.toMutableSet()
+            val kept = HashSet<String>()
             val next = mutableListOf<LocalPlaylist>()
             for (p in list) {
                 var q = p
-                if (q.remoteUrn == null && q.createAccepted) {
-                    val match = remote.firstOrNull { it.title.trim() == q.title && it.urn !in claimed }
+                val known = q.remoteUrn
+                if (known != null && !q.deleted && !kept.add(known)) {
+                    Logs.add("playlist", "${q.title.take(30)}: second local copy of $known dropped")
+                    continue
+                }
+                if (q.remoteUrn == null && !q.deleted && !q.localOnly && (q.createAccepted || q.createAttempts > 0)) {
+                    val match = remote.firstOrNull { it.title.trim().equals(q.title.trim(), ignoreCase = true) && it.urn !in claimed }
                     if (match != null) {
                         claimed += match.urn
-                        q = q.copy(remoteUrn = match.urn)
+                        q = q.copy(remoteUrn = match.urn, createAccepted = true)
                         Logs.add("playlist", "${q.title.take(30)}: found on server as ${match.urn}")
-                    } else if (now - q.createSentAt > RECREATE_AFTER_MS) {
+                    } else if (now - q.createSentAt > RECREATE_AFTER_MS && q.createAttempts < MAX_CREATE_ATTEMPTS) {
                         q = q.copy(createAccepted = false)
-                        Logs.add("playlist", "${q.title.take(30)}: still not on server after a day, will send again")
+                        Logs.add("playlist", "${q.title.take(30)}: still not on server after 3 days, will send again")
                     }
                 }
                 val r = q.remoteUrn?.let { byUrn[it] }

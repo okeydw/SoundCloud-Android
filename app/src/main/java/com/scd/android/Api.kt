@@ -178,7 +178,7 @@ object Api {
         throw last ?: IOException("upload failed")
     }
 
-    private fun neverReachedServer(e: Throwable): Boolean =
+    fun neverReachedServer(e: Throwable): Boolean =
         e is java.net.ConnectException || e is java.net.UnknownHostException ||
             e is javax.net.ssl.SSLHandshakeException || e is java.net.NoRouteToHostException
 
@@ -202,7 +202,7 @@ object Api {
                         val html = res.header("content-type")?.contains("text/html", ignoreCase = true) == true
                         val infra = res.code in 502..504 && html
                         val starGate = base == Endpoints.API_STAR && res.code == 403
-                        if (hasNext && (infra || starGate)) {
+                        if (hasNext && ((infra && method != "POST") || starGate)) {
                             last = ApiHttpException(res.code, text.take(300))
                             return@use
                         }

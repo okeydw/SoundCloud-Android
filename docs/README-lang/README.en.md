@@ -19,7 +19,7 @@
 <h1 align="center">SoundCloud Android</h1>
 
 <p align="center">
-<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop version</a>] · [<a href="https://github.com/okeydw/SoundCloud-Android/tree/ios">iOS version</a>]</b><br>
+<b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop version</a>] · [<a href="https://github.com/okeydw/SoundCloud-iOS">iOS version</a>]</b><br>
 <b>Unofficial SoundCloud client for Android</b><br>
 No ads · No captcha · No censorship · Works in Russia
 </p>
@@ -58,7 +58,7 @@ The client ships in two versions with the same features, only the look differs:
 
 > `SoundCloud Lite` - the simplified interface from the first versions, for those who value minimalism and have weaker phones.
 
-### [iOS version (beta)](https://github.com/okeydw/SoundCloud-Android/tree/ios)
+### [iOS version (beta)](https://github.com/okeydw/SoundCloud-iOS)
 
 ---
 
@@ -240,10 +240,4 @@ _SoundCloud is a trademark of SoundCloud Ltd. This app is not affiliated with So
 
 <p align="center">
 <code>soundcloud android</code> · <code>soundcloud apk</code> · <code>soundcloud client</code> · <code>soundcloud for android</code> · <code>soundcloud no ads</code> · <code>soundcloud blocked</code> · <code>soundcloud not working</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud without captcha</code> · <code>soundcloud music player</code>
-</p>
-
-<p align="center">
-<a href="https://github.com/okeydw/SoundCloud-Android/releases/latest">
-<img src="https://img.shields.io/badge/Download_SoundCloud_Android-0048FF?style=for-the-badge&logo=android&logoColor=white" alt="Download SoundCloud Android"/>
-</a>
 </p>

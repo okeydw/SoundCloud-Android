@@ -37,7 +37,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -104,21 +103,15 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
         label = "barTint",
     )
 
-    val count = controller?.mediaItemCount ?: 0
-    val prevIdx = controller?.previousMediaItemIndex ?: -1
-    val nextIdx = controller?.nextMediaItemIndex ?: -1
-    val hasPrev = controller != null && prevIdx in 0 until count
-    val hasNext = controller != null && nextIdx in 0 until count
-    val prev = if (hasPrev) controller!!.getMediaItemAt(prevIdx).mediaMetadata else null
-    val next = if (hasNext) controller!!.getMediaItemAt(nextIdx).mediaMetadata else null
-
+    val preview = rememberQueuePreview(controller)
+    val swipe = rememberTrackSwipeFade(preview)
+    val drag = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
-    val offsetX = remember { Animatable(0f) }
-    var widthPx by remember { mutableStateOf(1f) }
     var dragTotal by remember { mutableStateOf(0f) }
     val liked = currentUrn != null && Likes.isLiked(currentUrn)
 
     Surface(
+        modifier = Modifier.offset { IntOffset(drag.value.roundToInt(), 0) },
         color = barColor.copy(alpha = barColor.alpha * Prefs.footerAlpha),
         contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
@@ -133,77 +126,31 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
                     )
                 },
         ) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clipToBounds()
-                    .onSizeChanged { widthPx = it.width.toFloat().coerceAtLeast(1f) }
-                    .pointerInput(currentUrn, hasPrev, hasNext) {
-                        detectHorizontalDragGestures(
-                            onHorizontalDrag = { change, dx ->
-                                change.consume()
-                                val lo = if (hasNext) -widthPx else 0f
-                                val hi = if (hasPrev) widthPx else 0f
-                                scope.launch { offsetX.snapTo((offsetX.value + dx).coerceIn(lo, hi)) }
-                            },
-                            onDragEnd = {
-                                val v = offsetX.value
-                                val threshold = widthPx * 0.28f
-                                scope.launch {
-                                    when {
-                                        v <= -threshold && hasNext -> {
-                                            offsetX.animateTo(-widthPx, tween(180))
-                                            controller?.seekToNextMediaItem()
-                                            offsetX.snapTo(0f)
-                                        }
-                                        v >= threshold && hasPrev -> {
-                                            offsetX.animateTo(widthPx, tween(180))
-                                            controller?.seekToPreviousMediaItem()
-                                            offsetX.snapTo(0f)
-                                        }
-                                        else -> offsetX.animateTo(0f, tween(180))
-                                    }
-                                }
-                            },
-                        )
-                    },
+            Row(
+                Modifier.fillMaxWidth().pointerInput(currentUrn, preview) {
+                    val threshold = 80.dp.toPx()
+                    detectHorizontalDragGestures(
+                        onDragStart = { swipe.begin(preview, threshold) },
+                        onDragCancel = {
+                            swipe.cancel()
+                            scope.launch { drag.animateTo(0f, tween(380, easing = androidx.compose.animation.core.CubicBezierEasing(0.16f, 1f, 0.3f, 1f))) }
+                        },
+                        onHorizontalDrag = { change, dx ->
+                            change.consume()
+                            swipe.drag(dx)
+                            scope.launch { drag.snapTo(swipe.distance * 0.6f) }
+                        },
+                        onDragEnd = {
+                            swipe.finish(controller)
+                            scope.launch { drag.animateTo(0f, tween(380, easing = androidx.compose.animation.core.CubicBezierEasing(0.16f, 1f, 0.3f, 1f))) }
+                        },
+                    )
+                },
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                val w = widthPx
-                if (prev != null) {
-                    MiniContent(
-                        prev.title?.toString() ?: "",
-                        prev.artist?.toString() ?: "",
-                        prev.artworkUri?.toString(),
-                        marquee = false,
-                        modifier = Modifier.graphicsLayer {
-                            translationX = offsetX.value - w
-                            alpha = (offsetX.value / w).coerceIn(0f, 1f)
-                        },
-                    )
-                }
-                if (next != null) {
-                    MiniContent(
-                        next.title?.toString() ?: "",
-                        next.artist?.toString() ?: "",
-                        next.artworkUri?.toString(),
-                        marquee = false,
-                        modifier = Modifier.graphicsLayer {
-                            translationX = offsetX.value + w
-                            alpha = (-offsetX.value / w).coerceIn(0f, 1f)
-                        },
-                    )
-                }
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .graphicsLayer {
-                            translationX = offsetX.value
-                            alpha = (1f - abs(offsetX.value) / w).coerceIn(0f, 1f)
-                        },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(Modifier.weight(1f).clickable(onClick = onExpand)) {
-                        MiniContent(title, artist, artworkUri, marquee = true)
+                    FadingTrack(swipe, preview.current, Modifier.weight(1f).clickable(onClick = onExpand)) { md ->
+                        MiniContent(md.title?.toString().orEmpty(), md.artist?.toString().orEmpty(),
+                            md.artworkUri?.toString(), marquee = swipe.window == null)
                     }
                     IconButton(onClick = {
                         controller?.currentMediaItem?.toTrackOrNull()?.let { scope.launch { Likes.toggle(it) } }
@@ -222,7 +169,6 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
                             iconLabel(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
                         )
                     }
-                }
             }
             MiniProgress()
         }
@@ -366,7 +312,6 @@ fun NowPlayingScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val title = NowPlaying.title
     val artist = NowPlaying.artist
-    val artistUrn = NowPlaying.artistUrn
     val artworkUri = NowPlaying.artworkUri
     val currentUrn = NowPlaying.urn
     val isPlaying = NowPlaying.isPlaying
@@ -375,7 +320,9 @@ fun NowPlayingScreen(
 
     var showLyrics by remember { mutableStateOf(false) }
     var showEq by remember { mutableStateOf(false) }
+    var showTogether by remember { mutableStateOf(false) }
     var showOutput by remember { mutableStateOf(false) }
+    var showSleep by remember { mutableStateOf(false) }
 
     var fullTrack by remember(currentUrn) { mutableStateOf<Track?>(null) }
     var streamHost by remember(currentUrn) { mutableStateOf<String?>(null) }
@@ -441,6 +388,9 @@ fun NowPlayingScreen(
     val topColor = tint.copy(alpha = 0.65f).compositeOver(background)
 
     val offsetY = remember { Animatable(0f) }
+    val preview = rememberQueuePreview(controller)
+    val swipe = rememberTrackSwipeFade(preview)
+
 
     Dialog(
         onDismissRequest = onClose,
@@ -458,14 +408,16 @@ fun NowPlayingScreen(
                     .offset { IntOffset(0, offsetY.value.roundToInt().coerceAtLeast(0)) },
             ) {
                 if (immersive) {
-                    AsyncImage(
-                        model = artworkUri,
+                    SlidingTrack(swipe, preview.current, Modifier.fillMaxSize()) { md ->
+                      AsyncImage(
+                        model = md.artworkUri?.toString(),
                         contentDescription = null,
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer { scaleX = 1.25f; scaleY = 1.25f },
                         contentScale = ContentScale.Crop,
                     )
+                    }
                     Box(
                         Modifier
                             .fillMaxSize()
@@ -528,6 +480,14 @@ fun NowPlayingScreen(
                             Icon(painterResource(R.drawable.ic_chevron_down), iconLabel(R.drawable.ic_chevron_down), tint = titleColor)
                         }
                         Spacer(Modifier.weight(1f))
+                        IconButton(onClick = { showSleep = true }) {
+                            Icon(
+                                painterResource(R.drawable.ic_timer),
+                                stringResource(R.string.sleep_timer),
+                                tint = if (SleepTimer.active) MaterialTheme.colorScheme.primary else titleColor,
+                                modifier = Modifier.size(21.dp),
+                            )
+                        }
                         if (hasTrack) {
                             IconButton(onClick = {
                                 val url = controller.currentMediaItem?.toTrackOrNull()?.permalink_url
@@ -589,39 +549,39 @@ fun NowPlayingScreen(
 
                     Spacer(Modifier.weight(if (immersive) 6f else 1f))
 
-                    if (!immersive) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (artworkUri != null) {
-                                AsyncImage(
-                                    model = artworkUri,
-                                    contentDescription = null,
-                                    modifier = Modifier.matchParentSize(),
-                                    contentScale = ContentScale.Crop,
+                    Box(
+                        Modifier.fillMaxWidth()
+                            .then(if (immersive) Modifier.height(160.dp) else Modifier.aspectRatio(1f))
+                            .clip(RoundedCornerShape(12.dp))
+                            .pointerInput(currentUrn, preview) {
+                                val threshold = 90.dp.toPx()
+                                detectHorizontalDragGestures(
+                                    onDragStart = {
+                                        val travel = size.width / 0.7f
+                                        swipe.begin(preview, threshold, travel, travel)
+                                    },
+                                    onHorizontalDrag = { change, dx -> change.consume(); swipe.drag(dx) },
+                                    onDragEnd = { swipe.finish(controller, slide = true) },
+                                    onDragCancel = { swipe.cancel() },
                                 )
-                            } else {
-                                Icon(
-                                    painterResource(R.drawable.ic_music),
-                                    null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(64.dp),
-                                )
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (!immersive) {
+                            SlidingTrack(swipe, preview.current, Modifier.matchParentSize(), tilt = true) { md ->
+                                AsyncImage(model = md.artworkUri?.toString(), contentDescription = null,
+                                    modifier = Modifier.fillMaxWidth().aspectRatio(1f), contentScale = ContentScale.Crop)
                             }
                         }
-                        Spacer(Modifier.height(28.dp))
                     }
+                    Spacer(Modifier.height(28.dp))
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            var titleOverflows by remember(title) { mutableStateOf(false) }
+                        SlidingTrack(swipe, preview.current, Modifier.weight(1f)) { md ->
+                          Column {
+                            var titleOverflows by remember(md.title) { mutableStateOf(false) }
                             Text(
-                                title,
+                                md.title?.toString().orEmpty(),
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -673,15 +633,34 @@ fun NowPlayingScreen(
                                 }
                             }
                             Spacer(Modifier.height(4.dp))
-                            Text(
-                                artist,
-                                color = subColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = if (artistUrn != null) {
-                                    Modifier.clickable { onOpenArtist(artistUrn) }
-                                } else Modifier,
-                            )
+                            val artistTrack = fullTrack?.takeIf { it.urn == currentUrn }
+                                ?: controller.currentMediaItem?.toTrackOrNull()
+                            if (artistTrack != null && (swipe.window == null || md === swipe.window?.current)) {
+                                TrackArtistNames(
+                                    artistTrack,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = subColor,
+                                    enabled = !Prefs.offline && swipe.window == null,
+                                    fallbackName = md.artist?.toString().orEmpty(),
+                                    onOpen = { target ->
+                                        when (target) {
+                                            is ArtistDestination.Profile -> onOpenArtist(target.urn)
+                                            is ArtistDestination.Catalog -> {
+                                                onClose()
+                                                target.open()
+                                            }
+                                        }
+                                    },
+                                )
+                            } else {
+                                Text(
+                                    md.artist?.toString().orEmpty(),
+                                    color = subColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                         }
                         if (Prefs.streamTags) {
                             Spacer(Modifier.width(8.dp))
@@ -761,11 +740,21 @@ fun NowPlayingScreen(
                                     modifier = Modifier.size(21.dp),
                                 )
                             }
+                            if (!Prefs.offline) {
+                                IconButton(onClick = { showTogether = true }) {
+                                    Icon(
+                                        painterResource(R.drawable.ic_together),
+                                        stringResource(R.string.together_title),
+                                        tint = if (Together.room != null) MaterialTheme.colorScheme.primary else subColor,
+                                        modifier = Modifier.size(21.dp),
+                                    )
+                                }
+                            }
                             IconButton(onClick = { showEq = true }) {
                                 Icon(
                                     painterResource(R.drawable.ic_equalizer),
                                     iconLabel(R.drawable.ic_equalizer),
-                                    tint = if (Prefs.eqEnabled) MaterialTheme.colorScheme.primary else subColor,
+                                    tint = if (Prefs.eqEnabled || SpeedPitch.active) MaterialTheme.colorScheme.primary else subColor,
                                     modifier = Modifier.size(21.dp),
                                 )
                             }
@@ -873,6 +862,8 @@ fun NowPlayingScreen(
         )
     }
     if (showOutput) AudioOutputDialog(onDismiss = { showOutput = false })
+    if (showSleep) SleepTimerDialog(onDismiss = { showSleep = false })
+    if (showTogether) TogetherDialog(onDismiss = { showTogether = false })
     if (showEq) {
         androidx.compose.ui.window.Dialog(onDismissRequest = { showEq = false }) {
             Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
@@ -881,6 +872,8 @@ fun NowPlayingScreen(
                         .padding(20.dp)
                         .verticalScroll(androidx.compose.foundation.rememberScrollState()),
                 ) {
+                    SpeedPitchPanel()
+                    Spacer(Modifier.height(20.dp))
                     EqualizerPanel()
                 }
             }

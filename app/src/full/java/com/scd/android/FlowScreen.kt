@@ -90,7 +90,7 @@ fun FlowScreen() {
         if (!offline && Recommendations.stale) Recommendations.refresh()
     }
 
-    LazyColumn(Modifier.fillMaxWidth(), contentPadding = dockContentPadding()) {
+    GlassList(Modifier.fillMaxWidth()) {
         item(key = "mast", contentType = "mast") { Masthead() }
         if (Library.soundprint.isNotEmpty()) {
             item(key = "print", contentType = "print") {

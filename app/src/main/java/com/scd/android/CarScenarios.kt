@@ -72,4 +72,11 @@ object CarScenarios {
         val list = all
         if (list.any { it.eq == key }) store(list.map { if (it.eq == key) it.copy(eq = EqPresets.NONE) else it })
     }
+
+    fun remapEq(map: (String) -> String) {
+        val raw = Prefs.carScenarios.takeIf { it.isNotBlank() } ?: return
+        val list = runCatching { json.decodeFromString(serializer, raw) }.getOrNull() ?: return
+        val next = list.map { it.copy(eq = map(it.eq)) }
+        if (next != list) store(next)
+    }
 }

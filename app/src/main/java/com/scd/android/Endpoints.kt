@@ -37,7 +37,9 @@ object Endpoints {
     const val DIRECT = "direct"
     private lateinit var sp: SharedPreferences
 
-    private const val RELAY_ZONE = "relay.scnative.space"
+    private const val RELAY_ZONE = "relay.scnative.dev"
+
+    private const val ORIGIN_ZONE = "scnative.dev"
     private const val MAX_RELAY = 16
     private val DEFAULT_RELAYS = listOf("r1", "r2")
 
@@ -48,21 +50,21 @@ object Endpoints {
     private fun relayHosts(service: String) = relayNodes.map { "https://$service.$it.$RELAY_ZONE" }
 
     val apiHosts: List<String>
-        get() = listOf("https://api.scnative.space") + relayHosts("api")
+        get() = listOf("https://api.$ORIGIN_ZONE") + relayHosts("api")
 
     val streamHosts: List<String>
-        get() = listOf("https://stream.scnative.space") + relayHosts("stream")
+        get() = listOf("https://stream.$ORIGIN_ZONE") + relayHosts("stream")
 
     val imageHosts: List<String>
-        get() = listOf("https://images.scnative.space") + relayHosts("images")
+        get() = listOf("https://images.$ORIGIN_ZONE") + relayHosts("images")
 
     fun storageRelays(star: Boolean): List<String> = relayHosts(if (star) "storage-star" else "storage")
 
-    private const val TRUSTED_ZONE = "scnative.space"
+    private val TRUSTED_ZONES = listOf("scnative.dev", "scnative.space")
 
     fun trustedHost(host: String): Boolean {
         val h = host.lowercase().trimEnd('.')
-        return h == TRUSTED_ZONE || h.endsWith(".$TRUSTED_ZONE")
+        return TRUSTED_ZONES.any { zone -> h == zone || h.endsWith(".$zone") }
     }
 
     fun trustedUrl(url: String): Boolean {
@@ -73,19 +75,24 @@ object Endpoints {
         return trustedHost(authority.substringBefore(':'))
     }
 
-    const val API_STAR = "https://api-star.scnative.space"
-    const val STREAM_STAR = "https://stream-star.scnative.space"
-    const val STORAGE_STAR = "https://storage-star.scnative.space"
-    const val STORAGE_MAIN = "https://storage.scnative.space"
+    const val API_STAR = "https://api-star.scnative.dev"
+    const val STREAM_STAR = "https://stream-star.scnative.dev"
+    const val STORAGE_STAR = "https://storage-star.scnative.dev"
+    const val STORAGE_MAIN = "https://storage.scnative.dev"
 
     val starApiActive: Boolean get() = Prefs.star && Prefs.apiStar
 
+    fun serviceHosts(service: String): List<String> =
+        (listOf(activeNode) + relayNodes).distinct().filter { it.matches(Regex("r\\d{1,2}")) }
+            .map { "https://$service.$it.$RELAY_ZONE" }
+            .ifEmpty { DEFAULT_RELAYS.map { "https://$service.$it.$RELAY_ZONE" } }
+
+    fun isStarApi(base: String): Boolean = base.startsWith("https://api-star.")
+
     fun hostsFor(path: String): List<String> {
-        val hosts = apiHosts
-        val n = hosts.size
-        val main = (0 until n).map { hosts[(apiIndex + it) % n] }
+        val main = serviceHosts("api")
         if (path.startsWith("/auth") || !starApiActive) return main
-        return listOf(API_STAR) + main
+        return serviceHosts("api-star") + main
     }
 
     @Volatile
@@ -127,7 +134,7 @@ object Endpoints {
     val activeNode: String get() = nodes.getOrElse(apiIndex) { DIRECT }
 
     fun hostOf(node: String): String =
-        if (node == DIRECT) "api.scnative.space" else "api.$node.$RELAY_ZONE"
+        if (node == DIRECT) "api.$ORIGIN_ZONE" else "api.$node.$RELAY_ZONE"
 
     private fun applyNode(node: String) {
         val i = nodes.indexOf(node)
@@ -255,8 +262,6 @@ object Endpoints {
     val apiHostnames: List<String> get() = (apiHosts + API_STAR).map { it.removePrefix("https://") }
     val imageHostnames: List<String> get() = imageHosts.map { it.removePrefix("https://") }
 
-    fun apiHostAt(i: Int) = apiHosts[i]
-
     fun commitApi(i: Int) { if (i >= 0) { apiIndex = i; persist("api2", i) } }
     fun commitStream(i: Int) { if (i >= 0) { streamIndex = i; persist("stream2", i) } }
     fun commitImage(i: Int) { if (i >= 0) { imageIndex = i; persist("image2", i) } }
@@ -281,9 +286,9 @@ object Endpoints {
     }
 
     private val TOPOLOGY_URLS = listOf(
-        "https://health.scnative.space/topology",
-        "https://health.r1.relay.scnative.space/topology",
-        "https://health.r2.relay.scnative.space/topology",
+        "https://health.$ORIGIN_ZONE/topology",
+        "https://health.r1.$RELAY_ZONE/topology",
+        "https://health.r2.$RELAY_ZONE/topology",
     )
 
     private suspend fun topologyRelays(): List<String>? = withContext(Dispatchers.IO) {

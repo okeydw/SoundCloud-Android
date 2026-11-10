@@ -209,20 +209,28 @@ Alle Änderungen stehen in [CHANGELOG.md](../../CHANGELOG.md).
 
 | Domain | Wofür |
 |---|---|
-| `api.scnative.space`, `api-star.scnative.space` | API |
-| `stream.scnative.space`, `stream-star.scnative.space` | Audio |
-| `storage.scnative.space`, `storage-star.scnative.space`, `s3.scnative.space` | Track-Speicher |
-| `images.scnative.space` | Cover |
-| `pay.scnative.space` | STAR-Zahlung |
-| `health.scnative.space` | Verbindungsprüfung |
-| `call-*.scnative.space` | „Nutzernetz“ |
-| `*.relay.scnative.space` | Ausweichrouten |
+| `api.scnative.dev`, `api-star.scnative.dev` | API |
+| `stream.scnative.dev`, `stream-star.scnative.dev` | Audio |
+| `storage.scnative.dev`, `storage-star.scnative.dev`, `s3.scnative.dev` | Track-Speicher |
+| `images.scnative.dev` | Cover |
+| `pay.scnative.dev` | STAR-Zahlung |
+| `health.scnative.dev` | Verbindungsprüfung |
+| `call-*.scnative.dev` | „Nutzernetz“ |
+| `*.relay.scnative.dev` | Ausweichrouten |
 | `soundcloud.com`, `api-v2.soundcloud.com`, `*.sndcdn.com` | direkter Track-Download von SoundCloud |
 
 QR-Anmeldeprotokoll: [qr-link-protocol.md](https://github.com/zxcloli666/SoundCloud-Desktop/blob/main/docs/qr-link-protocol.md) im Desktop-Repository.
 
 ---
 
+
+## Statistik
+
+<p align="center">
+<img src="https://zxcloli666.github.io/download-history/okeydw_SoundCloud-Android.svg" alt="Download-Verlauf" />
+</p>
+
+---
 
 ## Lizenz
 

@@ -44,10 +44,10 @@ object Library {
     }
 
     suspend fun refreshPlaylists(offline: Boolean) {
-        runCatching { Api.likedPlaylists(fresh = false) }.onSuccess { likedPlaylists = it.collection }
+        runCatching { Api.likedPlaylists(fresh = false) }.onSuccess { likedPlaylists = if (it.complete) it.collection else (it.collection + likedPlaylists).distinctBy { p -> p.urn } }
         if (offline) return
         runCatching { Api.likedPlaylists(fresh = true) }.onSuccess {
-            likedPlaylists = it.collection
+            likedPlaylists = if (it.complete) it.collection else (it.collection + likedPlaylists).distinctBy { p -> p.urn }
             LikedPlaylists.seed(force = true)
         }
         LocalPlaylists.sync()
@@ -62,7 +62,7 @@ object Library {
         } else {
             Api.likedTracks(page, fresh = live)
         }
-        if (page == 0 && live && !res.has_more) Likes.replaceAll(res.collection, since) else Likes.seed(res.collection)
+        if (page == 0 && live && res.complete) Likes.replaceAll(res.collection, since) else Likes.seed(res.collection)
         return res.collection to res.has_more
     }
 
@@ -115,7 +115,7 @@ object Library {
             if (page == 0 && (offline || Prefs.offline)) throw NotSavedOfflineException()
             throw e
         }
-        PlaylistSnapshots.record(urn, page, res.collection, res.has_more)
+        PlaylistSnapshots.record(urn, page, res.collection, res.has_more, res.snapshotReady)
         return res.collection to res.has_more
     }
 

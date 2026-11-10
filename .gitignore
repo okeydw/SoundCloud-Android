@@ -20,3 +20,4 @@ docs/screenshots/tmp_*
 docs/features
 *.hprof
 .gradle-cache/
+/tools/eq-verify/

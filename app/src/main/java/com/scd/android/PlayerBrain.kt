@@ -21,7 +21,6 @@ class PlayerBrain(
     private val player: Player,
     private val scope: CoroutineScope,
 ) : Player.Listener {
-
     private var streamRetries = 0
     private var resumeRetries = 0
     private var skipped = 0
@@ -31,6 +30,10 @@ class PlayerBrain(
     private var positionJob: Job? = null
     private var fillJob: Job? = null
     private var fadeJob: Job? = null
+    private var sleepJob: Job? = null
+    private var snippetCheckJob: Job? = null
+
+    private var crossVol = 1f
 
     private val snippetHandled = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val previewUrns = java.util.Collections.synchronizedSet(mutableSetOf<String>())
@@ -89,11 +92,63 @@ class PlayerBrain(
     private fun playableFile(urn: String): java.io.File? =
         Downloads.fileFor(urn).takeIf { urn !in localFailed && Downloads.isDownloaded(urn) && Downloads.looksLikeAudio(it) }
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun start() {
         player.addListener(this)
         curUrn = player.currentMediaItem?.mediaId
         scope.launch(Dispatchers.Main) {
             snapshotFlow { Prefs.crossfade to Prefs.crossfadeSeconds }.collect { (on, _) -> setCrossfade(on) }
+        }
+        scope.launch(Dispatchers.Main) {
+            snapshotFlow { SleepTimer.endsAt to SleepTimer.endOfTrack }.collect { (_, endOfTrack) ->
+                (player as? androidx.media3.exoplayer.ExoPlayer)?.pauseAtEndOfMediaItems = endOfTrack
+                watchSleep()
+            }
+        }
+    }
+
+    private fun trackLeftMs(): Long {
+        val d = player.duration
+        if (d <= 0L || d == C.TIME_UNSET) return -1L
+        return (d - player.currentPosition).coerceAtLeast(0L)
+    }
+
+    private fun applyVolume() {
+        player.volume = crossVol * SleepTimer.gain(trackLeftMs = trackLeftMs())
+    }
+
+    private fun watchSleep() {
+        sleepJob?.cancel()
+        if (!SleepTimer.active) {
+            applyVolume()
+            return
+        }
+        sleepJob = scope.launch(Dispatchers.Main) {
+            while (SleepTimer.active) {
+                val left = trackLeftMs()
+                val endOfTrack = SleepTimer.endOfTrack && player !is androidx.media3.exoplayer.ExoPlayer && left in 0L..250L
+                if (SleepTimer.due() || endOfTrack) {
+                    sleepPause()
+                    break
+                }
+                applyVolume()
+                delay(if (player.isPlaying) 200L else 1_000L)
+            }
+        }
+    }
+
+    private fun sleepPause() {
+        player.pause()
+        SleepTimer.cancel()
+        player.volume = crossVol
+        Logs.add("player", "sleep timer: paused")
+    }
+
+    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM && SleepTimer.endOfTrack) {
+            SleepTimer.cancel()
+            player.volume = crossVol
+            Logs.add("player", "sleep timer: paused after the track")
         }
     }
 
@@ -102,6 +157,8 @@ class PlayerBrain(
         positionJob?.cancel()
         fillJob?.cancel()
         fadeJob?.cancel()
+        sleepJob?.cancel()
+        snippetCheckJob?.cancel()
     }
 
     private fun trackPosition() {
@@ -128,6 +185,7 @@ class PlayerBrain(
     }
 
     override fun onPlaybackStateChanged(playbackState: Int) {
+        if (playbackState == Player.STATE_ENDED && SleepTimer.endOfTrack) SleepTimer.cancel()
         if (playbackState == Player.STATE_READY) {
             DurationCache.record(player.currentMediaItem?.mediaId, player.duration)
             retryIfSnippet()
@@ -135,11 +193,15 @@ class PlayerBrain(
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        snippetCheckJob?.cancel()
         val prevUrn = curUrn
         val prevPos = curPos
         curUrn = mediaItem?.mediaId
         curPos = 0L
-        if (prevUrn != null && prevUrn != curUrn) Downloads.upgradeInBackground(prevUrn)
+        if (prevUrn != null && prevUrn != curUrn) {
+            Downloads.upgradeInBackground(prevUrn)
+            if (prevUrn !in previewUrns) CacheUpgrade.afterPlayed(prevUrn, context)
+        }
         if (prevUrn != null && prevUrn != curUrn && previewUrns.remove(prevUrn)) ScDataSource.invalidate(prevUrn)
         val auto = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
         val manual = reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
@@ -308,7 +370,8 @@ class PlayerBrain(
     private fun setCrossfade(on: Boolean) {
         fadeJob?.cancel()
         if (!on) {
-            player.volume = 1f
+            crossVol = 1f
+            applyVolume()
             return
         }
         val seconds = Prefs.crossfadeSeconds.coerceIn(1, 30) * 1000f
@@ -325,13 +388,14 @@ class PlayerBrain(
                     val fadeOut = if (player.hasNextMediaItem()) ((dur - pos) / out).coerceIn(0f, 1f) else 1f
                     minOf(fadeIn, fadeOut)
                 }
-                player.volume = vol
+                crossVol = vol
+                applyVolume()
                 delay(if (player.isPlaying) 60 else 500)
             }
         }
     }
 
-    private fun retryIfSnippet() {
+    private fun retryIfSnippet(checked: Boolean = false) {
         val item = player.currentMediaItem ?: return
         val urn = item.mediaId.takeIf { it.isNotEmpty() } ?: return
         val uri = item.localConfiguration?.uri
@@ -341,6 +405,27 @@ class PlayerBrain(
         val actual = player.duration
         if (actual <= 0L || actual == C.TIME_UNSET) return
         if (!ScDataSource.isSnippetLength(actual)) return
+        if (!checked) {
+            snippetCheckJob?.cancel()
+            snippetCheckJob = scope.launch(Dispatchers.Main) {
+                val complete = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val file = if (local) uri?.path?.let { java.io.File(it) }
+                            else uri?.let { ScDataSource.spooledFile(urn, it.toString()) }
+                        val info = file?.let { AudioProbe.inspect(it) }
+                        info != null && info.playable && (info.ms ?: 0L) > actual + 4_000L &&
+                            AudioProbe.shortReason(info, file.length(), expected) == null
+                    }.getOrDefault(false)
+                }
+                if (player.currentMediaItem != item) return@launch
+                if (complete) {
+                    Logs.add("player", "short fragment index, full audio verified → keeping track")
+                    return@launch
+                }
+                retryIfSnippet(checked = true)
+            }
+            return
+        }
         if (local) {
             if (expected <= 45_000L || actual >= expected - 5_000L || !healedUrns.add(urn)) return
             val file = uri?.path?.let { java.io.File(it) }
@@ -406,7 +491,7 @@ class PlayerBrain(
     }
 
     private suspend fun fillQueue() {
-        if (Prefs.offline) return
+        if (Prefs.offline || Together.isGuest) return
         if (player.repeatMode == Player.REPEAT_MODE_ONE) return
         val count = player.mediaItemCount
         val urn = player.currentMediaItem?.mediaId ?: return

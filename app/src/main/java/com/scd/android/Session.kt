@@ -12,7 +12,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 object SessionGuard {
-
     var signedIn by mutableStateOf(false)
         private set
 
@@ -22,10 +21,14 @@ object SessionGuard {
 
     fun signIn(context: Context, sessionId: String) {
         Api.storeSession(context, sessionId)
+        SessionState.dismissReconnect()
+        SessionState.consume()
+        ScDataSource.forgetResolved()
         signedIn = true
     }
 
     fun signOut(context: Context, controller: MediaController?) {
+        SessionState.dismissReconnect()
         val sid = Api.sessionId
         if (sid != null) App.scope.launch { Api.logout(sid) }
         AccountData.wipe(context, controller)
@@ -33,6 +36,7 @@ object SessionGuard {
     }
 
     fun dropLocal(context: Context, controller: MediaController?) {
+        SessionState.dismissReconnect()
         AccountData.wipe(context, controller)
         signedIn = false
     }
@@ -43,7 +47,7 @@ object SessionGuard {
         val recentlyRefreshed = System.currentTimeMillis() - SessionState.lastRefreshAt < 10 * 60_000L
         if (stream && !recentlyRefreshed) {
             val code = Api.refreshSession()
-            if (code in 200..299) {
+            if (code == 200) {
                 SessionState.lastRefreshAt = System.currentTimeMillis()
                 SessionState.consume()
                 Logs.add("auth", "stream 401 → session refreshed")
@@ -88,7 +92,7 @@ object BrowserLogin {
         busy = true
         status = null
         try {
-            val login = Api.authLogin()
+            val login = loginOnce()
             openInBrowser(context, login.url)
             status = context.getString(R.string.login_waiting)
             val deadline = System.currentTimeMillis() + 5 * 60_000
@@ -111,15 +115,37 @@ object BrowserLogin {
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            status = context.getString(R.string.error_network) + "\n" + (e.message ?: "")
+            val busyCode = busyCode(e)
+            status = if (busyCode != null) {
+                context.getString(R.string.error_server_busy) + " (HTTP $busyCode)"
+            } else {
+                context.getString(R.string.error_network) + "\n" + (e.message ?: "")
+            }
         } finally {
             busy = false
         }
     }
+
+    private fun busyCode(e: Exception): Int? {
+        val code = when (e) {
+            is ApiHttpException -> e.code
+            is ApiHostException -> e.code
+            else -> return null
+        }
+        return code.takeIf { it == 429 || it in 500..599 }
+    }
+
+    private suspend fun loginOnce(): LoginResponse = try {
+        Api.authLogin()
+    } catch (e: java.io.IOException) {
+        val code = busyCode(e) ?: throw e
+        Logs.add("auth", "login HTTP $code, retrying once")
+        delay(3_000)
+        Api.authLogin()
+    }
 }
 
 object LinkClaims {
-
     suspend fun accountName(pull: Boolean): String? {
         if (!pull) return null
         return runCatching { Api.authStatus() }.getOrNull()?.username?.takeIf { it.isNotBlank() }
@@ -183,7 +209,7 @@ object Startup {
                 delay(600)
                 val since = Likes.snapshot()
                 runCatching { Api.likedTracks(0, 100, fresh = true) }.onSuccess { res ->
-                    if (res.has_more) Likes.seed(res.collection) else Likes.replaceAll(res.collection, since)
+                    if (res.complete) Likes.replaceAll(res.collection, since) else Likes.seed(res.collection)
                 }
                 delay(5_000)
                 LikesAutoCache.run(app)

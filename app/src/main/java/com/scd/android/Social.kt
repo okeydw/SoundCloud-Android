@@ -266,17 +266,6 @@ object DiscordInfo {
     }
 }
 
-object WebProfiles {
-    private val cache = mutableStateMapOf<String, List<WebProfile>>()
-
-    fun of(urn: String): List<WebProfile> = cache[urn].orEmpty()
-
-    suspend fun load(urn: String) {
-        if (Prefs.offline || cache.containsKey(urn)) return
-        runCatching { Api.webProfiles(urn) }.onSuccess { cache[urn] = it.filter { p -> p.url.startsWith("http") } }
-    }
-}
-
 fun isScUrn(urn: String?): Boolean = urn != null && urn.startsWith("soundcloud:")
 
 val Track.external: Boolean get() = !isScUrn(urn)

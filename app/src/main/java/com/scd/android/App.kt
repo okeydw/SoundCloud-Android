@@ -25,6 +25,8 @@ class App : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         Prefs.init(this)
+        ThemeFonts.init()
+        Together.init(this)
         Endpoints.init(this)
         Api.initHttp(this)
         NetMonitor.watch(this)

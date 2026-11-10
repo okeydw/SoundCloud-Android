@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,7 +27,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -37,7 +35,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -88,12 +85,15 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
     val immersive = Prefs.immersiveArtwork && art != null
     var showLyrics by remember { mutableStateOf(false) }
     var showEq by remember { mutableStateOf(false) }
+    var showTogether by remember { mutableStateOf(false) }
     var showOutput by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
+    var showSleep by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf<Track?>(null) }
     val dragY = remember { Animatable(0f) }
-    val dragX = remember { Animatable(0f) }
+    val preview = rememberQueuePreview(controller)
+    val swipe = rememberTrackSwipeFade(preview)
     val heart = remember(urn) { Animatable(0f) }
 
     BackHandler(onBack = onClose)
@@ -134,7 +134,9 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
             .offset { IntOffset(0, dragY.value.roundToInt().coerceAtLeast(0)) }
             .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {},
     ) {
-        if (immersive) ImmersiveBackdrop(art) else ArtBackdrop(art, artColor)
+        if (immersive) {
+            SlidingTrack(swipe, preview.current, Modifier.fillMaxSize()) { md -> ImmersiveBackdrop(md.artworkUri?.toString()) }
+        } else ArtBackdrop(art, artColor)
         Box(
             Modifier.fillMaxSize().drawBehind {
                 drawCircle(
@@ -180,8 +182,18 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
         ) {
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconOrb(R.drawable.ic_chevron_down, stringResource(R.string.cd_close), size = 48.dp, onClick = onClose)
-                Column(Modifier.weight(1f).padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Eyebrow(stringResource(R.string.now_playing), color = p.text3)
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp)
+                        .then(if (SleepTimer.active) Modifier.clickable { showSleep = true } else Modifier),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (SleepTimer.active) {
+                        SleepEyebrow()
+                    } else {
+                        Eyebrow(stringResource(R.string.now_playing), color = p.text3)
+                    }
                     Spacer(Modifier.height(3.dp))
                     Text(sourceLabel(controller), style = GlassType.small.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -194,33 +206,17 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
                 Box(
                     Modifier
                         .then(if (immersive) Modifier.fillMaxWidth().height(artSide) else Modifier.size(artSide))
-                        .offset { IntOffset(dragX.value.roundToInt(), 0) }
-                        .graphicsLayer {
-                            val f = (abs(dragX.value) / (size.width.coerceAtLeast(1f))).coerceIn(0f, 1f)
-                            alpha = 1f - 0.35f * f
-                            rotationZ = dragX.value / size.width.coerceAtLeast(1f) * 6f
-                        }
                         .then(if (immersive) Modifier else Modifier.shadow(40.dp, RoundedCornerShape(30.dp), clip = false, ambientColor = glow, spotColor = glow))
-                        .pointerInput(urn) {
+                        .pointerInput(urn, preview) {
                             val threshold = with(density) { 90.dp.toPx() }
-                            var total = 0f
                             detectHorizontalDragGestures(
-                                onDragStart = { total = 0f },
-                                onDragEnd = {
-                                    scope.launch {
-                                        when {
-                                            total < -threshold -> controller.seekToNextMediaItem()
-                                            total > threshold -> controller.seekToPrevious()
-                                        }
-                                        dragX.animateTo(0f, tween(380, easing = EaseApple))
-                                    }
+                                onDragStart = {
+                                    val travel = size.width / 0.7f
+                                    swipe.begin(preview, threshold, travel, travel)
                                 },
-                                onDragCancel = { scope.launch { dragX.animateTo(0f) } },
-                                onHorizontalDrag = { change, dx ->
-                                    change.consume()
-                                    total += dx
-                                    scope.launch { dragX.snapTo(total * 0.7f) }
-                                },
+                                onDragEnd = { swipe.finish(controller, slide = true) },
+                                onDragCancel = { swipe.cancel() },
+                                onHorizontalDrag = { change, dx -> change.consume(); swipe.drag(dx) },
                             )
                         }
                         .pointerInput(urn) {
@@ -235,7 +231,12 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
                             })
                         },
                 ) {
-                    if (!immersive) Artwork(art, Modifier.matchParentSize(), corner = 30.dp)
+                    if (!immersive) {
+                        SlidingTrack(swipe, preview.current, Modifier.matchParentSize(), tilt = true) { md ->
+                            Artwork(md.artworkUri?.toString(), Modifier.size(artSide), corner = 30.dp)
+                        }
+                    }
+
                     Icon(
                         painterResource(R.drawable.ic_heart_filled),
                         null,
@@ -256,29 +257,39 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
             Spacer(Modifier.weight(0.5f))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
+                SlidingTrack(swipe, preview.current, Modifier.weight(1f)) { md ->
+                  Column {
                     Text(
-                        NowPlaying.title,
+                        md.title?.toString().orEmpty(),
                         style = GlassType.title,
                         color = p.text,
                         maxLines = 1,
                         modifier = Modifier.basicMarquee(),
                     )
                     Spacer(Modifier.height(4.dp))
-                    val artistUrn = NowPlaying.artistUrn
-                    Text(
-                        NowPlaying.artist,
-                        style = GlassType.body.copy(fontSize = 16.sp),
-                        color = p.text2,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = if (artistUrn != null && !Prefs.offline) {
-                            Modifier.clip(RoundedCornerShape(8.dp)).clickable {
+                    val artistTrack = currentTrack()
+                    if (artistTrack != null && (swipe.window == null || md === swipe.window?.current)) {
+                        TrackArtistNames(
+                            artistTrack,
+                            style = GlassType.body.copy(fontSize = 16.sp),
+                            color = p.text2,
+                            enabled = !Prefs.offline && swipe.window == null,
+                            fallbackName = md.artist?.toString().orEmpty(),
+                            onOpen = { target ->
                                 onClose()
-                                nav.push(Screen.ArtistS(artistUrn))
-                            }
-                        } else Modifier,
-                    )
+                                target.open()
+                            },
+                        )
+                    } else {
+                        Text(
+                            md.artist?.toString().orEmpty(),
+                            style = GlassType.body.copy(fontSize = 16.sp),
+                            color = p.text2,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
                 }
                 Spacer(Modifier.width(12.dp))
                 val liked = urn != null && Likes.isLiked(urn)
@@ -316,7 +327,7 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
             BottomDock(
                 lyrics = !Prefs.offline,
                 radioBusy = Playback.radioBusy,
-                eqOn = Prefs.eqEnabled,
+                eqOn = Prefs.eqEnabled || SpeedPitch.active,
                 disliked = urn != null && Dislikes.isDisliked(urn),
                 onLyrics = { showLyrics = true },
                 onRadio = {
@@ -343,9 +354,24 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
                 showMenu = false
                 showQueue = true
             }
+            if (!Prefs.offline) {
+                SheetAction(R.drawable.ic_together, stringResource(R.string.together_title)) {
+                    showMenu = false
+                    showTogether = true
+                }
+            }
             SheetAction(R.drawable.ic_speaker, stringResource(R.string.output_title)) {
                 showMenu = false
                 showOutput = true
+            }
+            val sleepShort = sleepTimerShort()
+            SheetAction(
+                R.drawable.ic_timer,
+                stringResource(R.string.sleep_timer) + (sleepShort?.let { " · $it" } ?: ""),
+                tint = if (sleepShort != null) p.accent else null,
+            ) {
+                showMenu = false
+                showSleep = true
             }
             if (t != null) {
                 SheetAction(R.drawable.ic_plus, stringResource(R.string.add_to_playlist)) {
@@ -360,7 +386,7 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
                 }
                 NowPlaying.artistUrn?.let { a ->
                     if (!Prefs.offline) {
-                        SheetAction(R.drawable.ic_user, stringResource(R.string.to_artist)) {
+                        SheetAction(R.drawable.ic_user, stringResource(R.string.catalog_sc_profile)) {
                             showMenu = false
                             onClose()
                             nav.push(Screen.ArtistS(a))
@@ -382,7 +408,9 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
         GlassLyricsSheet(urn = urn, controller = controller, onClose = { showLyrics = false })
     }
     if (showEq) EqualizerModal(onDismiss = { showEq = false })
+    if (showTogether) TogetherDialog(onDismiss = { showTogether = false })
     if (showOutput) AudioOutputDialog(onDismiss = { showOutput = false })
+    if (showSleep) SleepTimerSheet(onDismiss = { showSleep = false })
 }
 
 @Composable

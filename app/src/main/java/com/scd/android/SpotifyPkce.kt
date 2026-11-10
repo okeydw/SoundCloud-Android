@@ -36,8 +36,6 @@ object SpotifyPkce {
 
     fun redirectUri(context: Context): String = "${context.packageName}://$HOST"
 
-    fun configured(): Boolean = Prefs.spotifyClientId.isNotBlank()
-
     private fun b64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
     private fun randomToken(size: Int): String = b64(ByteArray(size).also { random.nextBytes(it) })

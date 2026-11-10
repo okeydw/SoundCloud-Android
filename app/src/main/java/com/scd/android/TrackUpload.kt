@@ -127,7 +127,7 @@ object TrackUpload {
                     }
                 } catch (e: IOException) {
                     Logs.add("upload", "network: ${e.javaClass.simpleName}")
-                    viaSoundCloud(resolver, request) ?: run {
+                    (if (Api.neverReachedServer(e)) viaSoundCloud(resolver, request) else null) ?: run {
                         fail(R.string.upload_err_network, null)
                         return@launch
                     }
@@ -152,7 +152,7 @@ object TrackUpload {
         }
     }
 
-    private fun retryable(e: ApiHttpException): Boolean = e.code >= 500 || e.code == 401 || e.code == 429
+    private fun retryable(e: ApiHttpException): Boolean = e.code == 401 || e.code == 429
 
     private suspend fun viaSoundCloud(resolver: ContentResolver, request: UploadRequest): String? {
         val token = Prefs.scWebToken.takeIf { it.isNotBlank() } ?: return null
@@ -184,6 +184,9 @@ object TrackUpload {
     private val directClient: OkHttpClient by lazy {
         Api.http.newBuilder()
             .cache(null)
+            .retryOnConnectionFailure(false)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .connectTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(5, TimeUnit.MINUTES)
             .readTimeout(5, TimeUnit.MINUTES)

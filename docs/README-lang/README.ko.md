@@ -209,20 +209,28 @@
 
 | 도메인 | 용도 |
 |---|---|
-| `api.scnative.space`, `api-star.scnative.space` | API |
-| `stream.scnative.space`, `stream-star.scnative.space` | 오디오 |
-| `storage.scnative.space`, `storage-star.scnative.space`, `s3.scnative.space` | 트랙 저장소 |
-| `images.scnative.space` | 커버 |
-| `pay.scnative.space` | STAR 결제 |
-| `health.scnative.space` | 연결 확인 |
-| `call-*.scnative.space` | "사용자 네트워크" |
-| `*.relay.scnative.space` | 예비 경로 |
+| `api.scnative.dev`, `api-star.scnative.dev` | API |
+| `stream.scnative.dev`, `stream-star.scnative.dev` | 오디오 |
+| `storage.scnative.dev`, `storage-star.scnative.dev`, `s3.scnative.dev` | 트랙 저장소 |
+| `images.scnative.dev` | 커버 |
+| `pay.scnative.dev` | STAR 결제 |
+| `health.scnative.dev` | 연결 확인 |
+| `call-*.scnative.dev` | "사용자 네트워크" |
+| `*.relay.scnative.dev` | 예비 경로 |
 | `soundcloud.com`, `api-v2.soundcloud.com`, `*.sndcdn.com` | SoundCloud에서 트랙 직접 다운로드 |
 
 QR 로그인 프로토콜: 데스크톱 저장소의 [qr-link-protocol.md](https://github.com/zxcloli666/SoundCloud-Desktop/blob/main/docs/qr-link-protocol.md).
 
 ---
 
+
+## 통계
+
+<p align="center">
+<img src="https://zxcloli666.github.io/download-history/okeydw_SoundCloud-Android.svg" alt="다운로드 기록" />
+</p>
+
+---
 
 ## 라이선스
 
@@ -239,5 +247,5 @@ _SoundCloud는 SoundCloud Ltd.의 상표입니다. 이 앱은 SoundCloud와 관�
 </p>
 
 <p align="center">
-<code>soundcloud android</code> · <code>soundcloud apk</code> · <code>사운드클라우드 안드로이드</code> · <code>사운드클라우드 앱</code> · <code>광고 없는 사운드클라우드</code> · <code>사운드클라우드 차단</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>사운드클라우드 음악 플레이어</code>
+<code>soundcloud android</code> · <code>soundcloud apk</code> · <code>SoundCloud 안드로이드</code> · <code>SoundCloud 앱</code> · <code>광고 없는 SoundCloud</code> · <code>SoundCloud 차단</code> · <code>soundcloud android app</code> · <code>soundcloud player</code> · <code>soundcloud apk download</code> · <code>soundcloud alternative client</code> · <code>soundcloud no ads</code> · <code>SoundCloud 음악 플레이어</code>
 </p>

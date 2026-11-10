@@ -83,7 +83,11 @@ fun AppRoot(controller: MediaController?) {
             onSurfaceVariant = text.copy(alpha = 0.7f),
         )
     }
-    MaterialTheme(colorScheme = scheme) {
+    val fontFamily = ThemeFonts.family
+    val typography = androidx.compose.runtime.remember(fontFamily) {
+        androidx.compose.material3.Typography().withThemeFont(fontFamily)
+    }
+    MaterialTheme(colorScheme = scheme, typography = typography) {
         val customBackground = Prefs.backgroundImage != null || Prefs.bgColor1 != 0
         Box(
             Modifier
@@ -145,6 +149,7 @@ private fun Root(controller: MediaController?) {
     LaunchedEffect(SessionState.expired) {
         SessionGuard.handleExpired(context, controller)
     }
+    SoundCloudReconnect()
 
     val linkToken = PendingLink.token
     val linkPull = PendingLink.pull

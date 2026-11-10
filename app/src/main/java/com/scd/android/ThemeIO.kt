@@ -7,6 +7,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 
 @Serializable
@@ -24,10 +27,12 @@ data class ThemePack(
     val backgroundBlurRadius: Float = 28f,
     val backgroundDim: Float = 0.6f,
     val image: String? = null,
+    val font: String? = null,
+    val fontName: String? = null,
+    val fontData: String? = null,
 )
 
 object ThemeIO {
-
     private val json = Json {
         ignoreUnknownKeys = true
         prettyPrint = true
@@ -38,6 +43,7 @@ object ThemeIO {
         val encoded = Prefs.backgroundImage
             ?.let { path -> runCatching { File(path).readBytes() }.getOrNull() }
             ?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
+        val font = ThemeFonts.currentBytes()?.let { Base64.encodeToString(it, Base64.NO_WRAP) }
 
         return ThemePack(
             name = "SCD theme",
@@ -52,8 +58,14 @@ object ThemeIO {
             backgroundBlurRadius = Prefs.backgroundBlurRadius,
             backgroundDim = Prefs.backgroundDim,
             image = encoded,
+            font = if (font != null) FONT_CUSTOM else FONT_SYSTEM,
+            fontName = Prefs.themeFontName.takeIf { font != null },
+            fontData = font,
         )
     }
+
+    const val FONT_CUSTOM = "custom"
+    const val FONT_SYSTEM = "system"
 
     suspend fun export(context: Context, target: Uri): Boolean = withContext(Dispatchers.IO) {
         runCatching {
@@ -65,7 +77,7 @@ object ThemeIO {
         }.getOrDefault(false)
     }
 
-    private const val MAX_FILE_BYTES = 24L * 1024 * 1024
+    private const val MAX_FILE_BYTES = 40L * 1024 * 1024
 
     private fun readLimited(context: Context, source: Uri): ByteArray? {
         context.contentResolver.openInputStream(source)?.use { input ->
@@ -95,10 +107,18 @@ object ThemeIO {
     suspend fun import(context: Context, source: Uri): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             val raw = readLimited(context, source) ?: return@runCatching false
-            val pack = json.decodeFromString(ThemePack.serializer(), raw.decodeToString())
+            if (ThemeFonts.extensionOf(raw) != null) {
+                return@runCatching ThemeFonts.save(context, raw, "Custom")
+            }
+            val text = raw.decodeToString()
+            val tree = json.parseToJsonElement(text) as? JsonObject ?: return@runCatching false
+            if ((tree["accent"] as? JsonPrimitive)?.isString == true) return@runCatching importDesktop(context, tree)
+            val pack = json.decodeFromString(ThemePack.serializer(), text)
 
             val image = pack.image?.takeIf { it.isNotEmpty() }?.let { Base64.decode(it, Base64.DEFAULT) }
             if (image != null && !isImage(image)) return@runCatching false
+            val fontBytes = pack.fontData?.takeIf { it.isNotEmpty() }?.let { Base64.decode(it, Base64.DEFAULT) }
+            if (fontBytes != null && ThemeFonts.extensionOf(fontBytes) == null) return@runCatching false
 
             if (pack.accent2 != 0) Prefs.changeAccentGradient(opaque(pack.accent), opaque(pack.accent2)) else Prefs.changeAccent(opaque(pack.accent))
             Prefs.changeBackgroundColors(
@@ -117,7 +137,31 @@ object ThemeIO {
             } else {
                 BackgroundImage.saveBytes(context, image)
             }
+            when {
+                fontBytes != null -> ThemeFonts.save(context, fontBytes, pack.fontName ?: "Custom")
+                pack.font == FONT_SYSTEM -> ThemeFonts.clear(context)
+            }
             true
         }.getOrDefault(false)
+    }
+
+    private fun hex(value: JsonElement?): Int? {
+        val raw = (value as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+        if (!raw.matches(Regex("^#[0-9a-fA-F]{6}$"))) return null
+        return opaque(raw.substring(1).toInt(16))
+    }
+
+    private fun importDesktop(context: Context, tree: JsonObject): Boolean {
+        val accent = hex(tree["accent"]) ?: return false
+        Prefs.changeAccent(accent)
+        hex(tree["background"])?.let { Prefs.changeBackgroundColors(it, 0) }
+        when ((tree["scheme"] as? JsonPrimitive)?.content) {
+            "dark" -> Prefs.setThemeMode("dark")
+            "white" -> Prefs.setThemeMode("light")
+        }
+        val font = (tree["font"] as? JsonPrimitive)?.content
+        if (font == FONT_SYSTEM) ThemeFonts.clear(context)
+        else if (font != null) Logs.add("theme", "desktop font preset '$font' is not bundled on Android, keeping current")
+        return true
     }
 }

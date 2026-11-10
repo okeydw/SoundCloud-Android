@@ -158,12 +158,11 @@ fun TextInputDialog(title: String, initial: String, confirm: String, onDismiss: 
 
 @Composable
 fun CarEqDialog(selected: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
-    val system = AudioFx.info?.presets.orEmpty()
     val options = buildList {
         add(EqPresets.NONE to stringResource(R.string.car_eq_keep))
         add(EqPresets.OFF to stringResource(R.string.car_eq_off))
-        EqPresets.user.forEach { add(EqPresets.userKey(it.name) to it.name) }
-        EqPresets.visibleSystem(system).forEach { (i, name) -> add(EqPresets.sysKey(i) to name) }
+        EqPresets.custom.forEach { add(EqPresets.customKey(it.id) to it.name) }
+        EqPresets.builtin.forEach { add(EqPresets.presetKey(it.id) to eqPresetName(it.id)) }
     }
     AppDialog(onDismiss) {
         Column(Modifier.padding(vertical = 16.dp)) {
@@ -188,17 +187,9 @@ fun CarEqDialog(selected: String, onPick: (String) -> Unit, onDismiss: () -> Uni
                             onPick(key)
                             onDismiss()
                         })
-                        Text(label)
+                        Text(label, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                     }
                 }
-            }
-            if (system.isEmpty()) {
-                Text(
-                    stringResource(R.string.car_eq_hint),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                )
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                 Spacer(Modifier.weight(1f))
@@ -213,7 +204,9 @@ fun carEqLabel(key: String): String {
     return when (key) {
         EqPresets.NONE -> stringResource(R.string.car_eq_keep)
         EqPresets.OFF -> stringResource(R.string.car_eq_off)
-        else -> EqPresets.label(key, AudioFx.info?.presets.orEmpty()) ?: key
+        else -> EqPresets.builtinOfKey(key)?.let { eqPresetName(it.id) }
+            ?: EqPresets.customOfKey(key)?.name
+            ?: stringResource(R.string.car_eq_keep)
     }
 }
 

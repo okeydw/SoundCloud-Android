@@ -47,8 +47,12 @@ object PlaylistSnapshots {
         read(urn).takeIf { it.isNotEmpty() }
     }
 
-    suspend fun record(urn: String, page: Int, tracks: List<Track>, hasMore: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun record(urn: String, page: Int, tracks: List<Track>, hasMore: Boolean, snapshotReady: Boolean = true) = withContext(Dispatchers.IO) {
         if (!::dir.isInitialized) return@withContext
+        if (!snapshotReady) {
+            synchronized(lock) { pending.remove(urn) }
+            return@withContext
+        }
         val (list, complete) = synchronized(lock) {
             val p = if (page == 0) Pending().also { pending[urn] = it } else pending[urn] ?: return@withContext
             p.pages[page] = tracks

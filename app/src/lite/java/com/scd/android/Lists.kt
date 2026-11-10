@@ -181,8 +181,7 @@ fun TrackList(
     InfiniteScroll(listState, canLoadMore, loading, tracks.size, onLoadMore)
     val uniqueTracks = remember(tracks) { tracks.distinctBy { it.urn } }
 
-    LazyColumn(
-        Modifier.fillMaxSize(),
+    LiteList(
         state = listState,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = topPadding),
     ) {
@@ -253,8 +252,7 @@ fun ArtistCardList(
     }
     val listState = rememberLazyListState()
     InfiniteScroll(listState, canLoadMore, loading, artists.size, onLoadMore)
-    LazyColumn(
-        Modifier.fillMaxSize(),
+    LiteList(
         state = listState,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = topPadding),
     ) {
@@ -319,8 +317,7 @@ fun PlaylistCardList(
     }
     val listState = rememberLazyListState()
     InfiniteScroll(listState, canLoadMore, loading, playlists.size, onLoadMore)
-    LazyColumn(
-        Modifier.fillMaxSize(),
+    LiteList(
         state = listState,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = topPadding),
     ) {
@@ -485,10 +482,8 @@ fun TrackRow(
                     StarTag()
                 }
             }
-            Text(
-                track.user?.username ?: "",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            TrackArtistNames(
+                track,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
             )

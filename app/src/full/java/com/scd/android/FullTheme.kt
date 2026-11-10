@@ -27,7 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 
-val Inter = FontFamily(
+private val InterBase = FontFamily(
     Font(R.font.inter_regular, FontWeight.Normal),
     Font(R.font.inter_medium, FontWeight.Medium),
     Font(R.font.inter_semibold, FontWeight.SemiBold),
@@ -36,6 +36,8 @@ val Inter = FontFamily(
 )
 
 val Mono = FontFamily(Font(R.font.jetbrains_mono_medium, FontWeight.Medium))
+
+val Inter: FontFamily get() = ThemeFonts.family ?: InterBase
 
 val EaseApple = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
 
@@ -196,14 +198,14 @@ private fun Typography.inter(): Typography = copy(
 )
 
 object GlassType {
-    val hero = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Black, fontSize = 32.sp, lineHeight = 34.sp, letterSpacing = (-0.045).em)
-    val title = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Black, fontSize = 27.sp, lineHeight = 30.sp, letterSpacing = (-0.035).em)
-    val section = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Black, fontSize = 20.sp, lineHeight = 24.sp, letterSpacing = (-0.03).em)
-    val rowTitle = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 19.sp, letterSpacing = (-0.01).em)
-    val body = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 19.sp)
-    val small = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Medium, fontSize = 12.5.sp, lineHeight = 16.sp)
-    val eyebrow = TextStyle(fontFamily = Inter, fontWeight = FontWeight.ExtraBold, fontSize = 10.5.sp, letterSpacing = 0.22.em)
-    val mono = TextStyle(fontFamily = Mono, fontWeight = FontWeight.Medium, fontSize = 11.5.sp, letterSpacing = 0.02.em)
+    val hero: TextStyle get() = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Black, fontSize = 32.sp, lineHeight = 34.sp, letterSpacing = (-0.045).em)
+    val title: TextStyle get() = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Black, fontSize = 27.sp, lineHeight = 30.sp, letterSpacing = (-0.035).em)
+    val section: TextStyle get() = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Black, fontSize = 20.sp, lineHeight = 24.sp, letterSpacing = (-0.03).em)
+    val rowTitle: TextStyle get() = TextStyle(fontFamily = Inter, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 19.sp, letterSpacing = (-0.01).em)
+    val body: TextStyle get() = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 19.sp)
+    val small: TextStyle get() = TextStyle(fontFamily = Inter, fontWeight = FontWeight.Medium, fontSize = 12.5.sp, lineHeight = 16.sp)
+    val eyebrow: TextStyle get() = TextStyle(fontFamily = Inter, fontWeight = FontWeight.ExtraBold, fontSize = 10.5.sp, letterSpacing = 0.22.em)
+    val mono: TextStyle get() = TextStyle(fontFamily = Mono, fontWeight = FontWeight.Medium, fontSize = 11.5.sp, letterSpacing = 0.02.em)
 }
 
 @Composable
@@ -238,7 +240,7 @@ fun GlassTheme(content: @Composable () -> Unit) {
         errorContainer = Color(0xFFFF5A5F).copy(alpha = 0.18f),
         onErrorContainer = palette.text,
     )
-    MaterialTheme(colorScheme = scheme, typography = remember { Typography().inter() }) {
+    MaterialTheme(colorScheme = scheme, typography = remember(ThemeFonts.family) { Typography().inter() }) {
         CompositionLocalProvider(
             LocalGlass provides palette,
             LocalFx provides fx,

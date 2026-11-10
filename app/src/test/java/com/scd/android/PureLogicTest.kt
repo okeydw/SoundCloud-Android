@@ -8,7 +8,7 @@ import org.junit.Test
 class PureLogicTest {
 
     @Test
-    fun parseLrcReadsTimestampsAndSkipsEmptyLines() {
+    fun parseLrcReadsTimestampsAndKeepsTimedPauses() {
         val lines = parseLrc(
             """
             [ar:Someone]
@@ -17,10 +17,11 @@ class PureLogicTest {
             [01:02.345] second
             """.trimIndent(),
         )
-        assertEquals(2, lines.size)
+        assertEquals(3, lines.size)
         assertEquals(1_500L, lines[0].timeMs)
         assertEquals("first", lines[0].text)
-        assertEquals(62_345L, lines[1].timeMs)
+        assertEquals("", lines[1].text)
+        assertEquals(62_345L, lines[2].timeMs)
     }
 
     @Test
@@ -65,6 +66,9 @@ class PureLogicTest {
     @Test
     fun sessionOnlyGoesToTrustedHosts() {
         assertTrue(Endpoints.trustedUrl("https://api.scnative.space/me"))
+        assertTrue(Endpoints.trustedUrl("https://api.scnative.dev/me"))
+        assertTrue(Endpoints.trustedUrl("https://stream.r1.relay.scnative.dev/stream/x"))
+        assertFalse(Endpoints.trustedUrl("https://scnative.dev.evil.com/stream/x"))
         assertTrue(Endpoints.trustedUrl("https://stream.r2.relay.scnative.space/stream/x"))
         assertFalse(Endpoints.trustedUrl("https://api.scdinternal.site/me"))
         assertFalse(Endpoints.trustedUrl("https://scnative.space.evil.com/stream/x"))

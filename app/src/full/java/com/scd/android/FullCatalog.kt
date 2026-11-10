@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -55,7 +56,7 @@ fun CatalogArtistDetail(id: String) {
     var albums by remember(id) { mutableStateOf<List<ArtistAlbum>>(emptyList()) }
     var pane by rememberSaveable(id) { mutableStateOf(CatalogPane.Tracks) }
     var sort by rememberSaveable(id) { mutableStateOf("popular") }
-    var blocking by remember { mutableStateOf(false) }
+    var blocking by remember(id) { mutableStateOf(false) }
 
     LaunchedEffect(id) {
         runCatching { Api.catalogArtist(id) }.onSuccess { artist = it }.onFailure { failed = true }
@@ -68,13 +69,13 @@ fun CatalogArtistDetail(id: String) {
     val a = artist
     val aura = remember(tracks, p.accent) { auraColors(tracks, p.accent) }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = dockContentPadding()) {
+    GlassList {
         item(key = "top") { ScreenTop(null, onBack = { nav.pop() }) }
         if (a == null) {
             item(key = "wait") {
                 if (failed) EmptyState(R.drawable.ic_mic, stringResource(R.string.catalog_failed)) else SkeletonRows()
             }
-            return@LazyColumn
+            return@GlassList
         }
         item(key = "hero") {
             HeroPanel(glow = aura.first()) {
@@ -114,12 +115,12 @@ fun CatalogArtistDetail(id: String) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         WhiteButton(stringResource(R.string.play_all), R.drawable.ic_play, Modifier.weight(1f)) {
                             val list = tracks.ifEmpty { a.popular_tracks }.filter(Playback::playable)
-                            if (list.isNotEmpty()) Playback.play(controller, list, list.first(), source = "catalog:$id")
+                            if (list.isNotEmpty()) Playback.play(controller, list, list.first(), source = "catalog:$id", more = { pager.all() })
                         }
                         Spacer(Modifier.width(10.dp))
                         val shuffled = Playback.shuffledFrom("catalog:$id")
                         IconOrb(if (shuffled) R.drawable.ic_shuffle_on else R.drawable.ic_shuffle, stringResource(R.string.notif_shuffle), size = 48.dp, active = shuffled) {
-                            Playback.toggleShuffle(controller, "catalog:$id", tracks.ifEmpty { a.popular_tracks }.filter(Playback::playable))
+                            Playback.toggleShuffle(controller, "catalog:$id", tracks.ifEmpty { a.popular_tracks }.filter(Playback::playable), more = { pager.all() })
                         }
                         if (Prefs.userUrn != null) {
                             Spacer(Modifier.width(8.dp))
@@ -135,12 +136,27 @@ fun CatalogArtistDetail(id: String) {
                             }
                         }
                     }
-                    Spacer(Modifier.height(12.dp))
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        a.mainScUsers.firstOrNull()?.let { sc ->
-                            GlassChip(stringResource(R.string.catalog_sc_profile), icon = R.drawable.ic_user, onClick = { nav.push(Screen.ArtistS(CatalogRepo.scUserUrn(sc))) })
+                    val accounts = remember(a) { a.linkedScAccounts }
+                    if (accounts.isNotEmpty()) {
+                        Spacer(Modifier.height(16.dp))
+                        Eyebrow(stringResource(R.string.catalog_sc_accounts), color = p.text3)
+                        Spacer(Modifier.height(8.dp))
+                        ArtistActions {
+                            accounts.forEach { account ->
+                                GlassChip(
+                                    artistAccountLabel(account, accounts),
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    icon = R.drawable.ic_user,
+                                    onClick = { NavEvents.openScUser(account.sc_user_id) },
+                                )
+                            }
                         }
-                        SocialLinks(a.socials) { label, open -> GlassChip(label, icon = R.drawable.ic_share, onClick = open) }
+                    }
+                    if (a.socials.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        ArtistActions {
+                            SocialLinks(a.socials) { label, open -> GlassChip(label, icon = R.drawable.ic_share, onClick = open) }
+                        }
                     }
                 }
             }
@@ -180,16 +196,15 @@ fun CatalogArtistDetail(id: String) {
                     }
                     Spacer(Modifier.height(6.dp))
                 }
-                trackItems(tracks, onPlay = { t -> Playback.play(controller, tracks, t, source = "catalog:$id") })
-                if (pager.hasMore && tracks.isNotEmpty()) {
+                trackItems(tracks, onPlay = { t -> Playback.play(controller, tracks, t, source = "catalog:$id", more = { pager.all() }) })
+                if (pager.hasMore || pager.error != null) {
                     item(key = "more") {
-                        LaunchedEffect(tracks.size) { pager.loadMore() }
-                        Spinner()
+                        TrackPageFooter(pager)
                     }
                 }
                 if (tracks.isEmpty()) {
                     item(key = "empty") {
-                        if (pager.loading) SkeletonRows() else EmptyState(R.drawable.ic_music, stringResource(R.string.artist_no_tracks))
+                        if (pager.loading) SkeletonRows() else EmptyState(R.drawable.ic_music, stringResource(if (pager.error != null) networkErrorText() else R.string.artist_no_tracks))
                     }
                 }
             }
@@ -241,11 +256,11 @@ fun AlbumDetail(id: String) {
     val al = album
     val tracks = remember(al) { al?.tracks.orEmpty().filter { !it.urn.startsWith("wanted:") } }
     val aura = remember(tracks, p.accent) { auraColors(tracks, p.accent) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = dockContentPadding()) {
+    GlassList {
         item(key = "top") { ScreenTop(null, onBack = { nav.pop() }) }
         if (al == null) {
             item(key = "wait") { if (failed) EmptyState(R.drawable.ic_album, stringResource(R.string.catalog_failed)) else SkeletonRows() }
-            return@LazyColumn
+            return@GlassList
         }
         item(key = "hero") {
             HeroPanel(glow = aura.first()) {
@@ -305,7 +320,7 @@ fun StatsDetail() {
     }
     val s = stats
     val tops = remember(s) { s?.topTracks.orEmpty().map { it.asTrack() } }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = dockContentPadding()) {
+    GlassList {
         item(key = "top") { ScreenTop(stringResource(R.string.stats_title), onBack = { nav.pop() }) }
         item(key = "periods") {
             SegmentDock(
@@ -326,11 +341,11 @@ fun StatsDetail() {
         }
         if (author && canAuthor) {
             authorItems(mine, mineFailed, onPlay = { list, t -> Playback.play(controller, list, t) })
-            return@LazyColumn
+            return@GlassList
         }
         if (s == null) {
             item(key = "wait") { if (failed) EmptyState(R.drawable.ic_stats, stringResource(R.string.stats_failed)) else SkeletonRows(4) }
-            return@LazyColumn
+            return@GlassList
         }
         item(key = "hero") {
             HeroPanel {

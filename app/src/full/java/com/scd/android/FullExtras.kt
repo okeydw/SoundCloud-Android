@@ -52,23 +52,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.session.MediaController
 
-private object GlassLyricsCache {
-    val map = java.util.concurrent.ConcurrentHashMap<String, LyricsResponse>()
-}
-
 @Composable
 fun GlassLyricsSheet(urn: String, controller: MediaController, onClose: () -> Unit) {
     val p = LocalGlass.current
-    var data by remember(urn) { mutableStateOf(GlassLyricsCache.map[urn]) }
-    var loading by remember(urn) { mutableStateOf(data == null) }
-    LaunchedEffect(urn) {
-        if (data != null) return@LaunchedEffect
-        loading = true
-        val res = runCatching { Api.lyrics(urn) }.getOrNull()
-        if (res != null) GlassLyricsCache.map[urn] = res
-        data = res
-        loading = false
-    }
+    val lyrics = rememberLyrics(urn)
+    val data = lyrics.data
+    val loading = lyrics.loading
+
     val art = NowPlaying.artworkUri
     val artColor = rememberArtColor(art)
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -84,15 +74,22 @@ fun GlassLyricsSheet(urn: String, controller: MediaController, onClose: () -> Un
                         Text(NowPlaying.artist, style = GlassType.small, color = p.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
+                if (data?.source == "self_gen" && data.hasText) Text(stringResource(R.string.lyrics_generated), modifier = Modifier.padding(horizontal = 24.dp))
                 val synced = remember(data) { data?.syncedLrc?.let { parseLrc(it) }.orEmpty() }
                 val plain = data?.plainText
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when {
                         loading -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
                             Spinner()
-                            Text(stringResource(R.string.lyrics_loading), style = GlassType.body, color = p.text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                            Text(stringResource(if (data?.status == "pending") R.string.lyrics_pending else R.string.lyrics_loading), style = GlassType.body, color = p.text2, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                         }
-                        synced.isNotEmpty() -> GlassSyncedLyrics(synced, controller)
+                        lyrics.failed || data?.status == "pending" -> Column(
+                            Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(stringResource(if (lyrics.failed) R.string.lyrics_failed else R.string.lyrics_pending), textAlign = TextAlign.Center)
+                            androidx.compose.material3.TextButton(onClick = lyrics::retry) { Text(stringResource(R.string.retry_action)) }
+                        }
+                        synced.any { it.text.isNotBlank() } -> GlassSyncedLyrics(synced, controller)
                         !plain.isNullOrBlank() -> Text(
                             plain,
                             style = GlassType.section.copy(fontSize = 22.sp, lineHeight = 32.sp, fontWeight = FontWeight.ExtraBold),

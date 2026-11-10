@@ -14,8 +14,9 @@ object LikedPlaylists {
     suspend fun seed(force: Boolean = false) {
         if (seeded && !force) return
         runCatching { Api.likedPlaylists(fresh = true) }.onSuccess { res ->
-            urns = res.collection.map { it.urn }.toSet()
-            seeded = true
+            val incoming = res.collection.map { it.urn }.toSet()
+            urns = if (res.complete) incoming else urns + incoming
+            seeded = res.complete
         }
     }
 

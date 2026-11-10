@@ -1,3 +1,54 @@
+## [0.4.6] **Encryption - DONE**
+[Русский](../CHANGELOG.md)
+
+> i think i figured out how to decrypt hls without a ton of dependencies, still adds 1.5 MB though, but no way around it, sorry
+
+<h1>Added </h1>
+
+- UQ audio quality
+
+- Speed from 0.5 to 2x and pitch from -12 to +12 semitones
+
+- Equalizer like on Desktop
+
+    - APO / Peace / GraphicEQ (AutoEQ) import and export
+
+    - Our own audio processing instead of the system one now, speed and pitch work with it too
+
+- “Listen together” - no idea who uses this, but let it stay
+
+- Sleep timer
+
+- 2x2 and 4x2 widgets
+
+- “Back to top” button in long lists
+
+- Desktop theme compatibility and custom fonts
+
+- Export downloaded tracks
+
+<h1>Changed </h1>
+
+- If the whole track is already cached, downloading takes it from there.
+
+- High-quality background downloads run one at a time
+
+- Swiping in the expanded player moves the neighbouring track's artwork, title and artist together
+
+- Updated the API and hosts to the current ones
+
+<h1>Fixed </h1>
+
+- Artist profiles
+
+- The equalizer could break playback, now it can't
+
+- Think I fixed the crash on rooted devices, dunno, needs testing
+
+**Something broke? - Issues are your friend**
+
+---
+
 ## [0.4.5] Bug fixes + more testing of track imports
 
 > The original [changelog in Russian](../CHANGELOG.md)

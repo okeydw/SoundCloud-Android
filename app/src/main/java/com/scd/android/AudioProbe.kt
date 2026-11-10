@@ -64,18 +64,28 @@ object AudioProbe {
     fun tooSmall(bytes: Long, expectedMs: Long): Boolean =
         bytes > 0L && expectedMs > 45_000L && bytes * 8_000L / expectedMs < 24_000L
 
+    internal fun shortReason(info: AudioInfo, bytes: Long, expectedMs: Long): String? {
+        if (expectedMs <= 45_000L) return null
+        val actual = info.ms?.takeIf { it > 0L } ?: info.declaredMs?.takeIf { it > 0L }
+        val tolerance = maxOf(4_000L, (expectedMs * 0.04).toLong())
+        if (actual != null && actual + tolerance < expectedMs) {
+            return "short ${actual / 1000}s of ${expectedMs / 1000}s"
+        }
+        return if (tooSmall(bytes, expectedMs)) "too little audio for ${expectedMs / 1000}s" else null
+    }
+
     @Suppress("DEPRECATION")
     @androidx.annotation.OptIn(UnstableApi::class)
     private fun exoScan(file: File): Scan? {
         val ctx = appContext ?: return null
-        val ex = runCatching { MediaExtractorCompat(ctx) }.getOrNull() ?: return null
+        val ex = runCatching {
+            MediaExtractorCompat(AudioExtractors.factory(), androidx.media3.datasource.DefaultDataSource.Factory(ctx))
+        }.getOrNull() ?: return null
         return try {
             ex.setDataSource(Uri.fromFile(file), 0L)
             val track = (0 until ex.trackCount).firstOrNull {
                 ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
             } ?: return Scan(false, null, "no audio track")
-            val format = ex.getTrackFormat(track)
-            val declared = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) / 1000 else null
             ex.selectTrack(track)
             var last = -1L
             while (true) {
@@ -84,6 +94,8 @@ object AudioProbe {
                 if (t > last) last = t
                 if (!ex.advance()) break
             }
+            val format = ex.getTrackFormat(track)
+            val declared = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) / 1000 else null
             Scan(true, (last / 1000).takeIf { it > 0L }, null, declared?.takeIf { it > 0L })
         } catch (e: Exception) {
             Scan(false, null, describe(e))

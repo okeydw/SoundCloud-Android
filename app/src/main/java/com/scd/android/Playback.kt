@@ -32,6 +32,16 @@ object Playback {
     private var generation = 0L
     private var extendJob: Job? = null
 
+    fun externalQueue() {
+        source = null
+        generation++
+        extendJob?.cancel()
+        extendJob = null
+        NowPlaying.autoContinue = false
+        LocalRadio.stopTrackRadio()
+        ShuffleQueue.arrange(emptyList(), 0)
+    }
+
     fun play(
         player: Player?,
         list: List<Track>,

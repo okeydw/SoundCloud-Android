@@ -209,20 +209,28 @@ Tüm değişiklikler [CHANGELOG.md](../../CHANGELOG.md) dosyasında.
 
 | Alan adı | Amaç |
 |---|---|
-| `api.scnative.space`, `api-star.scnative.space` | API |
-| `stream.scnative.space`, `stream-star.scnative.space` | ses |
-| `storage.scnative.space`, `storage-star.scnative.space`, `s3.scnative.space` | parça deposu |
-| `images.scnative.space` | kapaklar |
-| `pay.scnative.space` | STAR ödemesi |
-| `health.scnative.space` | bağlantı kontrolü |
-| `call-*.scnative.space` | "Kullanıcı ağı" |
-| `*.relay.scnative.space` | yedek rotalar |
+| `api.scnative.dev`, `api-star.scnative.dev` | API |
+| `stream.scnative.dev`, `stream-star.scnative.dev` | ses |
+| `storage.scnative.dev`, `storage-star.scnative.dev`, `s3.scnative.dev` | parça deposu |
+| `images.scnative.dev` | kapaklar |
+| `pay.scnative.dev` | STAR ödemesi |
+| `health.scnative.dev` | bağlantı kontrolü |
+| `call-*.scnative.dev` | "Kullanıcı ağı" |
+| `*.relay.scnative.dev` | yedek rotalar |
 | `soundcloud.com`, `api-v2.soundcloud.com`, `*.sndcdn.com` | parçayı doğrudan SoundCloud'dan indirme |
 
 QR ile giriş protokolü: masaüstü deposundaki [qr-link-protocol.md](https://github.com/zxcloli666/SoundCloud-Desktop/blob/main/docs/qr-link-protocol.md).
 
 ---
 
+
+## İstatistikler
+
+<p align="center">
+<img src="https://zxcloli666.github.io/download-history/okeydw_SoundCloud-Android.svg" alt="İndirme geçmişi" />
+</p>
+
+---
 
 ## Lisans
 

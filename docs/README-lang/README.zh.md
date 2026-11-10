@@ -209,20 +209,28 @@
 
 | 域名 | 用途 |
 |---|---|
-| `api.scnative.space`, `api-star.scnative.space` | API |
-| `stream.scnative.space`, `stream-star.scnative.space` | 音频 |
-| `storage.scnative.space`, `storage-star.scnative.space`, `s3.scnative.space` | 曲目存储 |
-| `images.scnative.space` | 封面 |
-| `pay.scnative.space` | STAR 支付 |
-| `health.scnative.space` | 连接检测 |
-| `call-*.scnative.space` | "用户网络" |
-| `*.relay.scnative.space` | 备用线路 |
+| `api.scnative.dev`, `api-star.scnative.dev` | API |
+| `stream.scnative.dev`, `stream-star.scnative.dev` | 音频 |
+| `storage.scnative.dev`, `storage-star.scnative.dev`, `s3.scnative.dev` | 曲目存储 |
+| `images.scnative.dev` | 封面 |
+| `pay.scnative.dev` | STAR 支付 |
+| `health.scnative.dev` | 连接检测 |
+| `call-*.scnative.dev` | "用户网络" |
+| `*.relay.scnative.dev` | 备用线路 |
 | `soundcloud.com`, `api-v2.soundcloud.com`, `*.sndcdn.com` | 直接从 SoundCloud 下载曲目 |
 
 二维码登录协议：桌面版仓库中的 [qr-link-protocol.md](https://github.com/zxcloli666/SoundCloud-Desktop/blob/main/docs/qr-link-protocol.md)。
 
 ---
 
+
+## 统计
+
+<p align="center">
+<img src="https://zxcloli666.github.io/download-history/okeydw_SoundCloud-Android.svg" alt="下载历史" />
+</p>
+
+---
 
 ## 许可证
 

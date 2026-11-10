@@ -103,7 +103,7 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
     }
 
     val listState = MeMemory.scroll.getOrPut("${tab.name}:$guest") { androidx.compose.foundation.lazy.LazyListState() }
-    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = dockContentPadding()) {
+    GlassList(state = listState) {
         item(key = "hero", contentType = "hero") {
             Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(top = 10.dp, bottom = 16.dp)) {
                 MeHero(
@@ -166,10 +166,9 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
                         if (tab != MeTab.Offline && fullList == null) Spinner() else EmptyState(R.drawable.ic_search, stringResource(R.string.local_search_empty))
                     }
                 }
-                if (!filter.active && tab != MeTab.Offline && pager.hasMore && list.isNotEmpty()) {
+                if (!filter.active && tab != MeTab.Offline && (pager.hasMore || pager.error != null)) {
                     item(key = "more:${tab.name}") {
-                        LaunchedEffect(list.size) { pager.loadMore() }
-                        Spinner()
+                        TrackPageFooter(pager)
                     }
                 }
                 if (list.isEmpty()) {
@@ -407,7 +406,7 @@ fun DislikedDetail() {
     val p = LocalGlass.current
     val pager = rememberPaged("disliked") { page, fresh -> if (fresh) emptyList<Track>() to false else Dislikes.page(page) }
     val shown = pager.items.filter { Dislikes.isDisliked(it.urn) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = dockContentPadding()) {
+    GlassList {
         item(key = "top") {
             ScreenTop(stringResource(R.string.disliked), onBack = { nav.pop() })
             Text(
@@ -426,8 +425,7 @@ fun DislikedDetail() {
         })
         if (pager.hasMore && shown.isNotEmpty()) {
             item(key = "more") {
-                LaunchedEffect(pager.items.size) { pager.loadMore() }
-                Spinner()
+                TrackPageFooter(pager)
             }
         }
         if (shown.isEmpty()) {

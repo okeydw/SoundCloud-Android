@@ -7,18 +7,25 @@ import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
+import androidx.media3.session.MediaLibraryService.LibraryParams
+import androidx.media3.session.LibraryResult
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,12 +35,13 @@ import kotlinx.coroutines.launch
 private const val CMD_LIKE = "com.scd.android.LIKE"
 private const val CMD_SHUFFLE = "com.scd.android.SHUFFLE"
 
-class PlaybackService : MediaSessionService() {
-
-    private var mediaSession: MediaSession? = null
+@OptIn(UnstableApi::class)
+class PlaybackService : MediaLibraryService() {
+    private var mediaSession: MediaLibrarySession? = null
     private var brain: PlayerBrain? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var lastReportedUrn: String? = null
+    private var libraryParents = emptySet<String>()
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {
@@ -63,9 +71,9 @@ class PlaybackService : MediaSessionService() {
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        val player = ExoPlayer.Builder(this)
+        val player = ExoPlayer.Builder(this, EqRenderersFactory(this))
             .setMediaSourceFactory(
-                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory),
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory, AudioExtractors.factory()),
             )
             .setLoadControl(loadControl)
             .setAudioAttributes(
@@ -87,7 +95,12 @@ class PlaybackService : MediaSessionService() {
         ShuffleQueue.onChanged = { scope.launch(Dispatchers.Main) { updateCustomLayout() } }
 
         player.addListener(object : Player.Listener {
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                notifyLibraryChanged()
+            }
+
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                PlayerWidgets.publish(this@PlaybackService, player)
                 reportListenEvent(mediaItem?.mediaId, reason)
                 historyJob?.cancel()
                 if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) lastReportedUrn = null
@@ -110,11 +123,16 @@ class PlaybackService : MediaSessionService() {
                 Prefs.changeRepeatMode(repeatMode)
             }
 
-            override fun onAudioSessionIdChanged(audioSessionId: Int) {
-                AudioFx.attach(audioSessionId)
+            override fun onMediaMetadataChanged(mediaMetadata: androidx.media3.common.MediaMetadata) {
+                PlayerWidgets.publish(this@PlaybackService, player)
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                PlayerWidgets.publish(this@PlaybackService, player)
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                PlayerWidgets.publish(this@PlaybackService, player)
                 if (isPlaying) {
                     watchForHistory(player)
                     prefetchNext(player)
@@ -142,12 +160,9 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        mediaSession = MediaSession.Builder(this, player)
+        mediaSession = MediaLibrarySession.Builder(this, player, SessionCallback())
             .setSessionActivity(pending)
-            .setCallback(SessionCallback())
-            .setBitmapLoader(
-                androidx.media3.session.CacheBitmapLoader(ScBitmapLoader(Api.http)),
-            )
+            .setBitmapLoader(ScBitmapLoader(Api.http))
             .build()
 
         runCatching {
@@ -164,11 +179,16 @@ class PlaybackService : MediaSessionService() {
         scope.launch(Dispatchers.Main) {
             androidx.compose.runtime.snapshotFlow { Likes.urns }.collect { updateCustomLayout() }
         }
-        AudioFx.attach(player.audioSessionId)
         scope.launch(Dispatchers.Main) {
-            androidx.compose.runtime.snapshotFlow { Triple(Prefs.eqEnabled, Prefs.eqPreset, Prefs.eqBands) }
-                .collect { AudioFx.apply() }
+            androidx.compose.runtime.snapshotFlow {
+                listOf(Downloads.downloaded, LocalPlaylists.all, Prefs.offline, Prefs.star, Prefs.playBlocked, Prefs.language, Dislikes.urns, BlockedArtists.entries)
+            }.collect { notifyLibraryChanged() }
         }
+        scope.launch(Dispatchers.Main) {
+            androidx.compose.runtime.snapshotFlow { Triple(Prefs.playbackRate, Prefs.pitchMode, Prefs.pitchSemitones) }
+                .collect { (rate, mode, semi) -> player.playbackParameters = SpeedPitch.parameters(rate, mode, semi) }
+        }
+        Together.attachPlayer(player)
         fun route() {
             val device = AudioOutput.resolve(this)
             runCatching { player.setPreferredAudioDevice(device) }
@@ -186,22 +206,126 @@ class PlaybackService : MediaSessionService() {
         Logs.add("player", "service ready")
     }
 
-    private inner class SessionCallback : MediaSession.Callback {
+    private fun browserCatalog(player: Player): BrowserCatalog = BrowserCatalog(
+        queue = (0 until player.mediaItemCount).mapNotNull { player.getMediaItemAt(it).toTrackOrNull() },
+        downloads = Downloads.tracks(),
+        playlists = LocalPlaylists.visible,
+        labels = listOf(R.string.app_name, R.string.browser_queue, R.string.downloads, R.string.playlists)
+            .map { applicationContext.getString(it) },
+        playable = { track -> Playback.playable(track) && !track.hidden && (!Prefs.offline || Playback.offlineReady(track)) },
+    )
+
+    private fun browserRoot() = BrowserEntry(BrowserCatalog.ROOT, applicationContext.getString(R.string.app_name)).toBrowserItem()
+
+    private fun BrowserEntry.toBrowserItem(): MediaItem {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(title)
+            .setIsBrowsable(browsable)
+            .setIsPlayable(!browsable)
+            .setMediaType(if (browsable) MediaMetadata.MEDIA_TYPE_FOLDER_MIXED else MediaMetadata.MEDIA_TYPE_MUSIC)
+        track?.let { t ->
+            metadata.setArtist(t.user?.username).setDurationMs(t.displayDuration)
+            Api.artworkUrl(t.artwork_url)?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+                ?.let { metadata.setArtworkUri(android.net.Uri.parse(it)) }
+        }
+        return MediaItem.Builder().setMediaId(id).setMediaMetadata(metadata.build()).build()
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun notifyLibraryChanged() {
+        val session = mediaSession ?: return
+        val parents = setOf(BrowserCatalog.ROOT, BrowserCatalog.QUEUE, BrowserCatalog.DOWNLOADS, BrowserCatalog.PLAYLISTS) +
+            LocalPlaylists.visible.map { BrowserCatalog.playlistId(it.id) }
+        val subscribed = (libraryParents + parents).filter { session.getSubscribedControllers(it).isNotEmpty() }
+        libraryParents = parents
+        if (subscribed.isEmpty()) return
+        val counts = browserCatalog(session.player).counts()
+        subscribed.forEach { parent ->
+            session.notifyChildrenChanged(parent, counts[parent] ?: 0, null)
+        }
+    }
+
+    private inner class SessionCallback : MediaLibrarySession.Callback {
         @OptIn(UnstableApi::class)
         override fun onConnect(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): MediaSession.ConnectionResult {
             val builder = MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+            val cmds = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
+                .remove(SessionCommand.COMMAND_CODE_LIBRARY_SEARCH)
+                .remove(SessionCommand.COMMAND_CODE_LIBRARY_GET_SEARCH_RESULT)
             if (trusted(session, controller)) {
-                val cmds = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
-                    .add(SessionCommand(CMD_LIKE, Bundle.EMPTY))
+                cmds.add(SessionCommand(CMD_LIKE, Bundle.EMPTY))
                     .add(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
-                    .build()
-                builder.setAvailableSessionCommands(cmds)
             }
+            builder.setAvailableSessionCommands(cmds.build())
             return builder.build()
         }
+
+        override fun onGetLibraryRoot(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<MediaItem>> =
+            Futures.immediateFuture(LibraryResult.ofItem(browserRoot(), params))
+
+        override fun onGetItem(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            mediaId: String,
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            if (mediaId == BrowserCatalog.ROOT) return Futures.immediateFuture(LibraryResult.ofItem(browserRoot(), null))
+            val item = browserCatalog(session.player).item(mediaId)
+            return Futures.immediateFuture(
+                if (item == null) LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
+                else LibraryResult.ofItem(item.toBrowserItem(), null),
+            )
+        }
+
+        override fun onGetChildren(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+            val children = browserCatalog(session.player).children(parentId, page, pageSize)
+            return Futures.immediateFuture(
+                if (children == null) LibraryResult.ofError(SessionError.ERROR_BAD_VALUE)
+                else LibraryResult.ofItemList(children.map { it.toBrowserItem() }, params),
+            )
+        }
+
+        override fun onAddMediaItems(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: List<MediaItem>,
+        ): ListenableFuture<List<MediaItem>> {
+            if (controller.packageName == packageName && mediaItems.all { it.localConfiguration != null }) {
+                return Futures.immediateFuture(mediaItems)
+            }
+            val tracks = browserCatalog(session.player).resolve(mediaItems.map { it.mediaId })
+                ?: return Futures.immediateFailedFuture(IllegalArgumentException("Unknown library item"))
+            return Futures.immediateFuture(tracks.map { it.toMediaItem() })
+        }
+
+        @OptIn(UnstableApi::class)
+        override fun onSetMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: List<MediaItem>,
+            startIndex: Int,
+            startPositionMs: Long,
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = Futures.transform(
+            onAddMediaItems(mediaSession, controller, mediaItems),
+            { items ->
+                if (controller.packageName != packageName) Playback.externalQueue()
+                MediaSession.MediaItemsWithStartPosition(items.orEmpty(), startIndex, startPositionMs)
+            },
+            MoreExecutors.directExecutor(),
+        )
 
         @OptIn(UnstableApi::class)
         private fun trusted(session: MediaSession, controller: MediaSession.ControllerInfo): Boolean =
@@ -392,7 +516,7 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
         mediaSession
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
@@ -404,12 +528,14 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         prefetchWriter?.cancel()
+        Together.detachPlayer()
         brain?.stop()
         brain = null
-        AudioFx.release()
         AudioOutput.unwatch(this)
         scope.cancel()
         mediaSession?.run {
+            runCatching { player.pause() }
+            PlayerWidgets.publish(this@PlaybackService, player)
             player.release()
             release()
         }

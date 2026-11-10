@@ -34,7 +34,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,10 +58,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
-
 
 class SettingsSkin(
     val header: @Composable (title: String, onBack: () -> Unit) -> Unit,
@@ -100,7 +97,6 @@ private object Sec {
     const val IMPORT_YANDEX = 13
     const val UPLOAD = 14
 }
-
 
 @Composable
 fun SettingsScreen(
@@ -253,7 +249,7 @@ fun SettingsScreen(
                         Triple(R.drawable.ic_user, "Discord", "https://discord.gg/Au3ebtfYu3"),
                         Triple(R.drawable.ic_music, "Android · GitHub", "https://github.com/okeydw/SoundCloud-Android"),
                         Triple(R.drawable.ic_music, "Desktop · GitHub", "https://github.com/zxcloli666/SoundCloud-Desktop"),
-                        Triple(R.drawable.ic_wave, "soundcloud-desktop.fun", "https://soundcloud-desktop.fun/"),
+                        Triple(R.drawable.ic_wave, "getsoundcloud.app", "https://getsoundcloud.app/"),
                     )
                     links.forEach { (icon, label, url) ->
                         Row(
@@ -367,8 +363,8 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                     )
                     listOf(
-                        false to stringResource(R.string.api_server_main) + "  ·  api.scnative.space",
-                        true to stringResource(R.string.api_server_star) + "  ·  api-star.scnative.space",
+                        false to stringResource(R.string.api_server_main) + "  ·  api.scnative.dev",
+                        true to stringResource(R.string.api_server_star) + "  ·  api-star.scnative.dev",
                     ).forEach { (star, label) ->
                         val selected = if (Prefs.star) Prefs.apiStar == star else !star
                         Row(
@@ -603,42 +599,40 @@ fun SettingsScreen(
                         checked = Prefs.autoOffline,
                     ) { Prefs.changeAutoOffline(it) }
                     Spacer(Modifier.height(8.dp))
-                    SettingSwitch(
-                        title = stringResource(R.string.hq_streaming),
-                        hint = if (Prefs.star) {
-                            stringResource(R.string.hq_streaming_hint)
-                        } else {
-                            stringResource(R.string.hq_streaming_locked)
-                        },
-                        checked = Prefs.star && Prefs.hqStreaming,
-                        enabled = Prefs.star,
-                    ) { Prefs.changeHqStreaming(it) }
+                    StreamQualityPicker()
 
                     Spacer(Modifier.height(12.dp))
                     Text(stringResource(R.string.download_quality), fontWeight = FontWeight.Medium)
                     Text(
-                        stringResource(if (Prefs.star) R.string.download_quality_hint else R.string.download_quality_locked),
+                        stringResource(R.string.download_quality_hint),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    val downloadChoice = Prefs.downloadQuality.let {
+                        if (it == Prefs.QUALITY_UQ && !Prefs.star) Prefs.QUALITY_HQ else it
+                    }
                     listOf(
-                        true to stringResource(R.string.download_quality_hq),
-                        false to stringResource(R.string.download_quality_sq),
-                    ).forEach { (hq, label) ->
-                        val selected = if (Prefs.star) Prefs.downloadHq == hq else !hq
+                        Prefs.QUALITY_AUTO to R.string.stream_quality_auto,
+                        Prefs.QUALITY_SQ to R.string.download_quality_sq,
+                        Prefs.QUALITY_HQ to R.string.download_quality_hq,
+                        Prefs.QUALITY_UQ to R.string.stream_quality_uq,
+                    ).forEach { (quality, label) ->
+                        val locked = quality == Prefs.QUALITY_UQ && !Prefs.star
                         Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .alpha(if (Prefs.star || !hq) 1f else 0.5f)
-                                .clickable(enabled = Prefs.star) { Prefs.changeDownloadHq(hq) },
+                            Modifier.fillMaxWidth().alpha(if (locked) 0.5f else 1f)
+                                .clickable(enabled = !locked) { Prefs.changeDownloadQuality(quality) },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
-                                selected = selected,
-                                enabled = Prefs.star,
-                                onClick = { Prefs.changeDownloadHq(hq) },
+                                selected = downloadChoice == quality,
+                                enabled = !locked,
+                                onClick = { Prefs.changeDownloadQuality(quality) },
                             )
-                            Text(label, style = MaterialTheme.typography.bodyMedium)
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(label), style = MaterialTheme.typography.bodyMedium)
+                                if (locked) Text(stringResource(R.string.stream_quality_locked),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
 
@@ -646,7 +640,7 @@ fun SettingsScreen(
                         Spacer(Modifier.height(4.dp))
                         val upgrading = Downloads.UPGRADE_KEY in Downloads.activeLists
                         androidx.compose.material3.OutlinedButton(
-                            enabled = Prefs.star || upgrading,
+                            enabled = true,
                             onClick = {
                                 if (upgrading) {
                                     Downloads.cancelList(ctx, Downloads.UPGRADE_KEY)
@@ -670,7 +664,38 @@ fun SettingsScreen(
                             Text(stringResource(if (upgrading) R.string.upgrade_quality_stop else R.string.upgrade_quality))
                         }
                         Text(
-                            stringResource(if (Prefs.star) R.string.upgrade_quality_hint else R.string.download_quality_locked),
+                            stringResource(R.string.upgrade_quality_hint),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.OutlinedButton(
+                            enabled = !TrackExport.running,
+                            onClick = {
+                                scope.launch {
+                                    val outcome = TrackExport.exportAll(ctx)
+                                    android.widget.Toast.makeText(
+                                        ctx,
+                                        if (outcome == null) {
+                                            ctx.getString(R.string.export_unsupported)
+                                        } else {
+                                            ctx.getString(R.string.export_result, outcome.exported, outcome.skipped, outcome.failed)
+                                        },
+                                        android.widget.Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            if (TrackExport.running) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(stringResource(R.string.export_downloads))
+                        }
+                        Text(
+                            stringResource(R.string.export_downloads_hint),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -958,6 +983,9 @@ fun SettingsScreen(
                     }
 
                     Spacer(Modifier.height(24.dp))
+                    ThemeFontRow()
+
+                    Spacer(Modifier.height(24.dp))
                     Text(stringResource(R.string.theme_share), fontWeight = FontWeight.Medium)
                     Text(
                         stringResource(R.string.theme_share_hint),
@@ -1001,7 +1029,7 @@ fun SettingsScreen(
                             onClick = { exportTheme.launch("scd-theme.json") },
                         ) { Text(stringResource(R.string.theme_export)) }
                         androidx.compose.material3.OutlinedButton(
-                            onClick = { importTheme.launch("application/json") },
+                            onClick = { importTheme.launch("*/*") },
                         ) { Text(stringResource(R.string.theme_import)) }
                     }
 
@@ -1014,7 +1042,11 @@ fun SettingsScreen(
                     )
                 }
 
-                Sec.EQUALIZER -> skin?.equalizer?.invoke() ?: EqualizerPanel()
+                Sec.EQUALIZER -> {
+                    skin?.equalizer?.invoke() ?: EqualizerPanel()
+                    Spacer(Modifier.height(24.dp))
+                    SpeedPitchPanel()
+                }
 
                 Sec.NETWORK -> NetworkSection()
 
@@ -1842,7 +1874,6 @@ private fun fmtBytes(b: Long): String {
     return "%.2f GB".format(mb / 1024.0)
 }
 
-
 @Composable
 private fun ColorPresets() {
     Text(stringResource(R.string.accent_color), fontWeight = FontWeight.Medium)
@@ -2014,4 +2045,80 @@ private fun SupportBlock() {
             }
         }
     }
+}
+
+@Composable
+private fun StreamQualityPicker() {
+    Text(stringResource(R.string.stream_quality), fontWeight = FontWeight.Medium)
+    val options = listOf(
+        Triple(Prefs.QUALITY_AUTO, R.string.stream_quality_auto, R.string.stream_quality_auto_hint),
+        Triple(Prefs.QUALITY_SQ, R.string.stream_quality_sq, R.string.stream_quality_sq_hint),
+        Triple(Prefs.QUALITY_HQ, R.string.stream_quality_hq, R.string.stream_quality_hq_hint),
+        Triple(Prefs.QUALITY_UQ, R.string.stream_quality_uq, R.string.stream_quality_uq_hint),
+    )
+    val chosen = Prefs.streamQuality
+    val shown = if (chosen == Prefs.QUALITY_UQ && !Prefs.star) Prefs.QUALITY_HQ else chosen
+    options.forEach { (value, label, hint) ->
+        val locked = value == Prefs.QUALITY_UQ && !Prefs.star
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .alpha(if (locked) 0.5f else 1f)
+                .clickable(enabled = !locked) { Prefs.changeStreamQuality(value) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(
+                selected = shown == value,
+                enabled = !locked,
+                onClick = { Prefs.changeStreamQuality(value) },
+            )
+            Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
+                Text(stringResource(label), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(if (locked) R.string.stream_quality_locked else hint),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemeFontRow() {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pick = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val ok = ThemeFonts.importFile(ctx, uri)
+                android.widget.Toast.makeText(
+                    ctx,
+                    ctx.getString(if (ok) R.string.theme_font_set else R.string.theme_font_failed),
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.theme_font), fontWeight = FontWeight.Medium)
+            Text(
+                Prefs.themeFontName.ifBlank { stringResource(R.string.theme_font_default) },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (Prefs.themeFontPath != null) {
+            TextButton(onClick = { ThemeFonts.clear(ctx) }) { Text(stringResource(R.string.color_reset)) }
+        }
+        TextButton(onClick = { runCatching { pick.launch("*/*") } }) { Text(stringResource(R.string.theme_font_pick)) }
+    }
+    Text(
+        stringResource(R.string.theme_font_hint),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodySmall,
+    )
 }

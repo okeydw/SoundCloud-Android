@@ -60,21 +60,12 @@ object Downloads {
     fun upgradeAll(context: Context, onResult: (Int) -> Unit) {
         val ctx = context.applicationContext
         App.scope.launch {
-            var skipped = 0
+            val target = QualityLadder.allowed(QualityLadder.upgradeWanted())
             val targets = tracks().filter { t ->
                 val q = quality(t.urn) ?: return@filter false
-                if (q.startsWith("HQ")) return@filter false
-                if (recentlyNoHq(t.urn)) {
-                    skipped++
-                    return@filter false
-                }
-                true
+                Quality.fromLabel(q).rank < target.rank
             }
-            Logs.add(
-                "download",
-                "quality upgrade: ${targets.size} to check" +
-                    if (skipped > 0) ", $skipped skipped (no HQ last week)" else "",
-            )
+            Logs.add("download", "quality upgrade: ${targets.size} to check, up to ${target.badge}")
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 onResult(targets.size)
                 if (targets.isEmpty()) return@withContext
@@ -86,57 +77,89 @@ object Downloads {
         }
     }
 
-    private suspend fun upgradeOne(track: Track): Boolean = withContext(Dispatchers.IO) {
-        if (track.urn in inProgress) return@withContext false
+    private fun reporter(verdict: QualityLadder.Verdict, source: TierSource): (Int, String?) -> Unit {
+        val tier = source.tier?.takeIf { source.askable } ?: return { _, _ -> }
+        verdict.asked(tier)
+        return { code, retryAfter ->
+            verdict.answered(tier, if (code in 200..299) null else QualityLadder.refusalHold(code, retryAfter))
+        }
+    }
+
+    private suspend fun upgradeOne(
+        track: Track,
+        priority: TrackTurns.Priority = TrackTurns.Priority.BACKGROUND,
+        wanted: Quality = QualityLadder.downloadWanted(),
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (track.urn in inProgress || YouTubeImport.isYouTube(track.urn)) return@withContext false
         val old = fileFor(track.urn)
         if (!old.exists()) return@withContext false
         ScDataSource.noteStorageQuality(track.urn, track.scdMeta?.storage_quality, overwrite = false)
+        val current = Quality.fromLabel(storedQuality(track.urn))
+        val target = QualityLadder.allowed(wanted)
+        if (current.rank >= target.rank) return@withContext false
         inProgress = inProgress + track.urn
         val base = baseName(track.urn)
         val tmp = File(dir, "$base.upgrade.part")
+        val fallback = File(dir, "$base.upgrade.fallback.part")
         try {
-            val hqSources = sequence {
-                if (ScDataSource.storageQualityOf(track.urn).equals("hq", ignoreCase = true)) {
-                    ScDataSource.storageUrlsFor(track.urn).forEach { yield(it) }
-                }
-                val hqStream = Api.streamUrl(track.urn, hq = true, goPlus = true)
-                yield(hqStream)
-                if (!track.goPlus) ScDataSource(Api.http).resolveViaDownload(hqStream)?.let { yield(it) }
-            }
             val oldMs = AudioProbe.durationMs(old)
             var reached = false
-            for (url in hqSources) {
-                tmp.delete()
-                var header: String? = null
-                val ok = runCatching { fetchTo(url, tmp) { header = it } }.getOrDefault(false)
-                if (!ok) continue
-                reached = true
-                if (truncated(tmp, track.displayDuration, track.urn, track.goPlus)) continue
-                val newMs = AudioProbe.durationMs(tmp)
-                if (oldMs != null && (newMs == null || newMs < oldMs - 5_000L)) {
-                    Logs.add("download", "${track.title.take(24)}: HQ copy is ${newMs?.div(1000) ?: "?"}s of ${oldMs / 1000}s, keeping SQ")
-                    continue
+            val selection = UpgradeSelection(current, fallback)
+            val verdict = QualityLadder.Verdict()
+            try {
+                TrackTurns.withTurn(priority) {
+                    for (source in TierSources.ladder(track.urn, target, current, track.goPlus, verdict)) {
+                        if (selection.enoughFor(source.tier ?: Quality.SQ)) break
+                        val url = source.url
+                        if (ScDataSource.isStorage(url) && ScDataSource.storageCooling(url)) continue
+                        tmp.delete()
+                        var header: String? = null
+                        val report = reporter(verdict, source)
+                        val ok = runCatching { fetchTo(url, tmp, { header = it }, report, track.displayDuration) }.getOrDefault(false)
+                        if (!ok) continue
+                        reached = true
+                        if (truncated(tmp, track.displayDuration, track.urn, track.goPlus)) continue
+                        val newMs = AudioProbe.durationMs(tmp)
+                        if (oldMs != null && (newMs == null || newMs < oldMs - 5_000L)) {
+                            Logs.add("download", "${track.title.take(24)}: better copy is ${newMs?.div(1000) ?: "?"}s of ${oldMs / 1000}s, keeping ${current.badge}")
+                            continue
+                        }
+                        val tier = ScDataSource.servedTierOf(url, track.urn, header, source.tier)
+                        if (tier.rank <= current.rank) continue
+                        if (!AudioProbe.inspect(tmp).playable) continue
+                        selection.consider(tmp, tier, url)
+                        if (tier.rank >= (source.tier ?: Quality.SQ).rank) break
+                    }
                 }
-                if (!ScDataSource.sourceIsHq(url, track.urn, header)) continue
-                if (!AudioProbe.inspect(tmp).playable) continue
-                if (!awaitNotPlaying(track.urn)) return@withContext false
-                val ext = audioExt(tmp)
-                audioExts.forEach { File(dir, "$base.$it").delete() }
-                if (!tmp.renameTo(File(dir, "$base.$ext"))) return@withContext false
-                rememberQuality(track.urn, "HQ")
-                qualityLabels.remove(track.urn)
-                Logs.add("download", "${track.title.take(24)}: SQ → HQ $ext @${url.substringAfter("://").substringBefore('/')}")
-                return@withContext true
+            } finally {
+                verdict.settle()
             }
-            if (reached) {
-                Logs.add("download", "${track.title.take(24)}: sources gave SQ only, keeping it")
-                markNoHq(track.urn)
-            } else {
-                Logs.add("download", "${track.title.take(24)}: HQ sources unavailable")
+            val tier = selection.tier
+            if (tier == null) {
+                if (reached) {
+                    Logs.add("download", "${track.title.take(24)}: sources gave ${current.badge} only, keeping it")
+                    markNoHq(track.urn)
+                } else {
+                    Logs.add("download", "${track.title.take(24)}: ${target.badge} sources unavailable")
+                }
+                return@withContext false
             }
+            fallback.copyTo(tmp, overwrite = true)
+            if (!awaitNotPlaying(track.urn)) return@withContext false
+            val ext = audioExt(tmp)
+            val targetFile = File(dir, "$base.$ext")
+            java.nio.file.Files.move(tmp.toPath(), targetFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            audioExts.map { File(dir, "$base.$it") }.filter { it != targetFile }.forEach { it.delete() }
+            rememberQuality(track.urn, tier.badge)
+            qualityLabels.remove(track.urn)
+            Logs.add("download", "${track.title.take(24)}: ${current.badge} → ${tier.badge} $ext @${audioSourceLabel(selection.url)}")
+            true
+        } catch (e: java.io.IOException) {
+            Logs.add("download", "${track.title.take(24)}: quality upgrade failed (${e.javaClass.simpleName})")
             false
         } finally {
             tmp.delete()
+            fallback.delete()
             inProgress = inProgress - track.urn
         }
     }
@@ -184,8 +207,11 @@ object Downloads {
     }
 
     fun upgradeInBackground(urn: String?) {
-        if (urn == null || !downloadHq || Prefs.offline || !isDownloaded(urn)) return
-        if (YouTubeImport.isYouTube(urn) || storedQuality(urn) == "HQ" || recentlyNoHq(urn)) return
+        if (urn == null || Prefs.offline || !isDownloaded(urn)) return
+        if (!downloadHq) return
+        if (YouTubeImport.isYouTube(urn) || recentlyNoHq(urn)) return
+        val target = QualityLadder.allowed(QualityLadder.downloadWanted())
+        if (Quality.fromLabel(storedQuality(urn)).rank >= target.rank) return
         val track = synchronized(index) { index[urn] } ?: return
         if (!upgradeClaims.add(urn)) return
         App.scope.launch(Dispatchers.IO) { runCatching { upgradeOne(track) } }
@@ -262,7 +288,7 @@ object Downloads {
         }
     }
 
-    private val downloadHq: Boolean get() = Prefs.star && Prefs.downloadHq
+    private val downloadHq: Boolean get() = QualityLadder.downloadWanted().rank > Quality.SQ.rank
 
     private val qualityLabels = androidx.compose.runtime.mutableStateMapOf<String, String>()
 
@@ -286,10 +312,8 @@ object Downloads {
         artFor(urn).takeIf { it.exists() && it.length() > 0 }?.absolutePath
 
     private fun truncated(file: File, expectedMs: Long, urn: String, goPlus: Boolean): Boolean {
-        if (AudioProbe.tooSmall(file.length(), expectedMs)) return true
         val info = AudioProbe.inspect(file)
-        val declared = info.declaredMs
-        if (declared != null && expectedMs > 45_000L && declared < expectedMs - 5_000L && ScDataSource.isSnippetLength(declared)) return true
+        if (AudioProbe.shortReason(info, file.length(), expectedMs) != null) return true
         val actual = info.ms ?: 0L
         val snippetLike = actual > 0L && ScDataSource.isSnippetLength(actual)
         if (goPlus && snippetLike) return true
@@ -303,34 +327,72 @@ object Downloads {
     }
 
     private val client by lazy {
-        Api.http.newBuilder()
+        AudioRoute.builder(Api.http)
             .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
 
-    private fun candidates(track: Track): Sequence<Pair<String, String>> = sequence {
+    private fun candidates(track: Track, verdict: QualityLadder.Verdict): Sequence<TierSource> = sequence {
         val gp = track.goPlus
-        val hq = downloadHq
-        val storageFirst = gp || hq
-        if (storageFirst) ScDataSource.storageUrlsFor(track.urn).forEach { yield(it to "HQ") }
-        if (hq || (gp && Prefs.star)) {
-            val hqStream = Api.streamUrl(track.urn, hq = true, goPlus = true)
-            yield(hqStream to "HQ")
-            if (!gp) ScDataSource(Api.http).resolveViaDownload(hqStream)?.let { yield(it to "HQ?") }
+        val target = QualityLadder.downloadWanted()
+        yieldAll(TierSources.ladder(track.urn, target, Quality.SQ, gp, verdict))
+        if (gp) {
+            if (Prefs.star && QualityLadder.upperTiers(QualityLadder.allowed(target)).isEmpty()) {
+                yield(TierSource(Api.streamUrl(track.urn, hq = true, goPlus = true), null, false))
+            }
+            ScDataSource.storageUrlsFor(track.urn).forEach { yield(TierSource(it, null, false)) }
         }
         val current = Endpoints.streamBase
         val primary = Api.streamUrl(track.urn)
-        yield(primary to "SQ")
+        yield(TierSource(primary, null, false))
         for (host in Endpoints.streamHosts) {
-            if (host != current) yield(primary.replaceFirst(current, host) to "SQ")
+            if (host != current) yield(TierSource(primary.replaceFirst(current, host), null, false))
         }
+        ScDataSource(Api.http).resolveDownload(primary).urls.forEach { yield(TierSource(it, null, false)) }
         if (!gp) {
-            ScDataSource(Api.http).resolveViaDownload(primary)?.let { yield(it to "SQ") }
-            ScAnon.sourceUrl(track.urn)?.let { yield(it to "SQ") }
-            if (!storageFirst) ScDataSource.storageUrlsFor(track.urn).forEach { yield(it to "HQ") }
+            ScAnon.sourceUrl(track.urn)?.let { yield(TierSource(it, null, false)) }
+            ScDataSource.storageUrlsFor(track.urn).forEach { yield(TierSource(it, null, false)) }
         }
     }
+
+    private class Fetched(val url: String, val tier: Quality)
+
+    private fun fetchBest(track: Track, tmp: File, verdict: QualityLadder.Verdict, onTruncated: () -> Unit): Fetched? {
+        val tried = mutableSetOf<String>()
+        val selection = UpgradeSelection(null, File(tmp.path + ".best"))
+        fun selected(): Fetched? {
+            val tier = selection.tier ?: return null
+            selection.file.copyTo(tmp, overwrite = true)
+            return Fetched(selection.url, tier)
+        }
+        try {
+            for (source in candidates(track, verdict)) {
+                val asked = source.tier ?: Quality.SQ
+                if (selection.enoughFor(asked)) return selected()
+                val url = source.url
+                if (!tried.add(url)) continue
+                val storage = ScDataSource.isStorage(url)
+                if (storage && ScDataSource.storageCooling(url)) continue
+                var header: String? = null
+                val report = reporter(verdict, source)
+                val ok = runCatching { fetchTo(url, tmp, { header = it }, report, track.displayDuration) }.getOrDefault(false)
+                if (ok && !truncated(tmp, track.displayDuration, track.urn, track.goPlus) && AudioProbe.inspect(tmp).playable) {
+                    selection.consider(tmp, ScDataSource.servedTierOf(url, track.urn, header, source.tier), url)
+                    if (selection.enoughFor(asked)) return selected()
+                } else if (ok) onTruncated()
+                tmp.delete()
+            }
+            return selected()
+        } finally {
+            selection.file.delete()
+        }
+    }
+
+    private fun usable(file: File, track: Track): Boolean =
+        file.exists() && looksLikeAudio(file) &&
+            !truncated(file, track.displayDuration, track.urn, track.goPlus) &&
+            AudioProbe.inspect(file).playable
 
     fun looksLikeAudio(file: File): Boolean {
         if (file.length() < 8_192L) return false
@@ -358,10 +420,22 @@ object Downloads {
 
     private val hostDown = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    private fun fetchTo(url: String, tmp: File, onHeader: (String?) -> Unit = {}): Boolean {
+    private fun fetchTo(
+        url: String,
+        tmp: File,
+        onHeader: (String?) -> Unit = {},
+        onStatus: (Int, String?) -> Unit = { _, _ -> },
+        expectedMs: Long = 0L,
+    ): Boolean {
+        if (EncHls.isEnc(url)) {
+            return runCatching { EncHls.writeTo(client, url, tmp); true }.getOrElse {
+                Logs.add("download", "enc-hls ${it.message ?: it.javaClass.simpleName}")
+                false
+            }
+        }
         if (HlsDownload.isHls(url)) {
             val manifest = HlsDownload.manifest(url)
-            return runCatching { HlsDownload.writeTo(client, manifest, tmp); true }.getOrElse {
+            return runCatching { HlsDownload.writeTo(client, manifest, tmp, expectedMs); true }.getOrElse {
                 Logs.add("download", "hls ${it.message ?: it.javaClass.simpleName} @${manifest.substringAfter("://").substringBefore('/')}")
                 false
             }
@@ -373,7 +447,9 @@ object Downloads {
             .build()
         return try {
             client.newCall(req).execute().use { res ->
+                onStatus(if (res.header("content-length") == "0") -1 else res.code, res.header("retry-after"))
                 if (!res.isSuccessful || res.header("content-length") == "0") {
+                    Api.noteSoundCloudFailure(res.peekBody(16_384).string(), res.request.header("x-session-id"))
                     Logs.add("download", "HTTP ${res.code} @$host")
                     if (res.code == 401 && url.contains("/stream/")) SessionState.streamDenied()
                     return@use false
@@ -381,11 +457,13 @@ object Downloads {
                 val body = res.body ?: return@use false
                 onHeader(res.header("x-audio-quality")?.lowercase())
                 tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
+                ClearMp4.repair(tmp)
                 val ok = looksLikeAudio(tmp)
                 if (!ok) Logs.add("download", "not audio (${tmp.length()} B) @$host")
                 ok
             }
         } catch (e: java.io.IOException) {
+            onStatus(-1, null)
             Logs.add("download", "fail ${e.javaClass.simpleName} @$host")
             if (e is java.net.ConnectException || e is java.net.UnknownHostException ||
                 (e is java.net.SocketTimeoutException && tmp.length() == 0L)
@@ -485,7 +563,10 @@ object Downloads {
 
     fun tracks(): List<Track> = synchronized(index) { index.values.toList() }.reversed()
 
-    suspend fun download(track: Track): Boolean = withContext(Dispatchers.IO) {
+    suspend fun download(
+        track: Track,
+        priority: TrackTurns.Priority = TrackTurns.Priority.BACKGROUND,
+    ): Boolean = withContext(Dispatchers.IO) {
         if (isDownloaded(track.urn) || track.urn in inProgress) {
             if (isDownloaded(track.urn)) queued = queued - track.urn
             return@withContext true
@@ -493,12 +574,13 @@ object Downloads {
         inProgress = inProgress + track.urn
         val base = baseName(track.urn)
         val tmp = File(dir, "$base.part")
+        val fromCache = File(dir, "$base.cache.part")
         try {
             tmp.delete()
+            fromCache.delete()
             var picked: String? = null
             var quality = ""
             var sawTruncated = false
-            val tried = mutableSetOf<String>()
             ScDataSource.noteStorageQuality(track.urn, track.scdMeta?.storage_quality, overwrite = false)
             if (YouTubeImport.isYouTube(track.urn)) {
                 val ok = runCatching { YouTubeImport.downloadTo(track, tmp) }
@@ -511,19 +593,38 @@ object Downloads {
                     tmp.delete()
                 }
             }
-            for ((url, q) in if (picked != null || YouTubeImport.isYouTube(track.urn)) emptySequence() else candidates(track)) {
-                if (!tried.add(url)) continue
-                val storage = ScDataSource.isStorage(url)
-                if (storage && ScDataSource.storageCooling(url)) continue
-                var header: String? = null
-                val ok = runCatching { fetchTo(url, tmp) { header = it } }.getOrDefault(false)
-                if (ok && !truncated(tmp, track.displayDuration, track.urn, track.goPlus) && AudioProbe.inspect(tmp).playable) {
-                    picked = url
-                    quality = if (q != "SQ" && ScDataSource.sourceIsHq(url, track.urn, header)) "HQ" else "SQ"
-                    break
+            val viaNetwork = picked == null && !YouTubeImport.isYouTube(track.urn)
+            val wantedTier = QualityLadder.allowed(QualityLadder.downloadWanted())
+            var cachedTier: Quality? = null
+            if (viaNetwork) {
+                cachedTier = CachedCopy.extract(track.urn, fromCache)?.takeIf { usable(fromCache, track) }
+                if (cachedTier == null) {
+                    fromCache.delete()
+                } else if (cachedTier.rank >= wantedTier.rank && fromCache.renameTo(tmp)) {
+                    picked = "cache://${cachedTier.label}"
+                    quality = cachedTier.badge
+                    Logs.add("download", "${track.title.take(24)} → pinned from cache (${cachedTier.badge})")
                 }
-                if (ok) sawTruncated = true
-                tmp.delete()
+            }
+            if (viaNetwork && picked == null) {
+                val verdict = QualityLadder.Verdict()
+                val upper = QualityLadder.upperTiers(wantedTier).isNotEmpty()
+                val found = try {
+                    TrackTurns.withTurn(if (upper) priority else TrackTurns.Priority.PLAYBACK) {
+                        fetchBest(track, tmp, verdict) { sawTruncated = true }
+                    }
+                } finally {
+                    verdict.settle()
+                }
+                if (cachedTier != null && (found == null || cachedTier.rank > found.tier.rank)) {
+                    java.nio.file.Files.move(fromCache.toPath(), tmp.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                    picked = "cache://${cachedTier.label}"
+                    quality = cachedTier.badge
+                    Logs.add("download", "${track.title.take(24)} → network gave nothing better, pinned cached ${cachedTier.badge}")
+                } else if (found != null) {
+                    picked = found.url
+                    quality = found.tier.badge
+                }
             }
             if (picked == null) {
                 DownloadFailures.record(track.urn)
@@ -542,7 +643,7 @@ object Downloads {
             Logs.add(
                 "download",
                 "${track.title.take(24)} → $quality $ext ${target.length() / 1024} KB " +
-                    "@${picked.substringAfter("://").substringBefore('/')}",
+                    "@${audioSourceLabel(picked)}",
             )
             DownloadFailures.clear(track.urn)
             runCatching { downloadArt(track) }
@@ -557,6 +658,7 @@ object Downloads {
             tmp.delete()
             false
         } finally {
+            fromCache.delete()
             inProgress = inProgress - track.urn
             queued = queued - track.urn
         }
@@ -606,7 +708,11 @@ object Downloads {
             notifyProgress(done, total, job.playlistUrn, job.playlistTitle, single)
             for (t in pending) {
                 if (job.key != null && job.key in cancelledKeys) break
-                val ok = if (job.upgrade) upgradeOne(t) else download(t)
+                val ok = when {
+                    job.upgrade -> upgradeOne(t, TrackTurns.Priority.BULK, QualityLadder.upgradeWanted())
+                    job.key != null && !single -> download(t, TrackTurns.Priority.BULK)
+                    else -> download(t, TrackTurns.Priority.BACKGROUND)
+                }
                 done++
                 if (ok) saved++ else failed++
                 notifyProgress(done, total, job.playlistUrn, job.playlistTitle, single)
@@ -690,11 +796,18 @@ object Downloads {
         )
     }
 
-    suspend fun remove(urn: String): Unit = removeAll(listOf(urn))
+    suspend fun remove(urn: String): Unit = removeAll(listOf(urn), demote = true)
 
-    suspend fun removeAll(urns: Collection<String>): Unit = withContext(Dispatchers.IO) {
+    suspend fun removeAll(urns: Collection<String>, demote: Boolean = false): Unit = withContext(Dispatchers.IO) {
         if (urns.isEmpty()) return@withContext
         for (urn in urns) {
+            if (demote && !YouTubeImport.isYouTube(urn)) {
+                val file = fileFor(urn)
+                if (file.exists() && looksLikeAudio(file)) {
+                    val tier = Quality.fromLabel(storedQuality(urn))
+                    if (ScDataSource.adoptSpool(urn, file, tier)) Logs.add("download", "$urn back to the stream cache (${tier.badge})")
+                }
+            }
             val base = baseName(urn)
             audioExts.forEach { File(dir, "$base.$it").delete() }
             artFor(urn).delete()

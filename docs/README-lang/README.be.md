@@ -209,20 +209,28 @@
 
 | Дамен | Для чаго |
 |---|---|
-| `api.scnative.space`, `api-star.scnative.space` | API |
-| `stream.scnative.space`, `stream-star.scnative.space` | аўдыё |
-| `storage.scnative.space`, `storage-star.scnative.space`, `s3.scnative.space` | сховішча трэкаў |
-| `images.scnative.space` | вокладкі |
-| `pay.scnative.space` | аплата STAR |
-| `health.scnative.space` | праверка сувязі |
-| `call-*.scnative.space` | «Сетка карыстальнікаў» |
-| `*.relay.scnative.space` | рэзервовыя маршруты |
+| `api.scnative.dev`, `api-star.scnative.dev` | API |
+| `stream.scnative.dev`, `stream-star.scnative.dev` | аўдыё |
+| `storage.scnative.dev`, `storage-star.scnative.dev`, `s3.scnative.dev` | сховішча трэкаў |
+| `images.scnative.dev` | вокладкі |
+| `pay.scnative.dev` | аплата STAR |
+| `health.scnative.dev` | праверка сувязі |
+| `call-*.scnative.dev` | «Сетка карыстальнікаў» |
+| `*.relay.scnative.dev` | рэзервовыя маршруты |
 | `soundcloud.com`, `api-v2.soundcloud.com`, `*.sndcdn.com` | прамая загрузка трэка з SoundCloud |
 
 Пратакол уваходу па QR: [qr-link-protocol.md](https://github.com/zxcloli666/SoundCloud-Desktop/blob/main/docs/qr-link-protocol.md) у рэпазіторыі дэсктопа.
 
 ---
 
+
+## Статыстыка
+
+<p align="center">
+<img src="https://zxcloli666.github.io/download-history/okeydw_SoundCloud-Android.svg" alt="Гісторыя спампоўванняў" />
+</p>
+
+---
 
 ## Ліцэнзія
 

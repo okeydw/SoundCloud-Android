@@ -39,7 +39,10 @@ object StorageHealth {
         try {
             val file = ScDataSource.knownStorageFile ?: PROBE_FILE
             val list = withContext(Dispatchers.IO) {
-                val client = ScDataSource.storageClient(Api.http)
+                val client = Api.http.newBuilder().cache(null)
+                    .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                    .callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
                 coroutineScope {
                     targets().map { (base, star) ->
                         async {

@@ -74,53 +74,53 @@ private fun SheetFrame(title: String, onClose: () -> Unit, content: @Composable 
     }
 }
 
-private object LyricsCache {
-    val map = java.util.concurrent.ConcurrentHashMap<String, LyricsResponse>()
-}
-
 @Composable
 fun LyricsSheet(urn: String, title: String, controller: MediaController, onClose: () -> Unit) {
-    var data by remember(urn) { mutableStateOf(LyricsCache.map[urn]) }
-    var loading by remember(urn) { mutableStateOf(data == null) }
+    val lyrics = rememberLyrics(urn)
+    val data = lyrics.data
+    val loading = lyrics.loading
 
-    LaunchedEffect(urn) {
-        if (data != null) return@LaunchedEffect
-        loading = true
-        val res = Api.lyrics(urn)
-        if (res != null) LyricsCache.map[urn] = res
-        data = res
-        loading = false
-    }
 
     SheetFrame(title, onClose) {
-        val synced = remember(data) { data?.syncedLrc?.let { parseLrc(it) }.orEmpty() }
-        val plain = data?.plainText
-        when {
-            loading -> Column(
-                Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                CircularProgressIndicator()
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    stringResource(R.string.lyrics_loading),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
+        Column(Modifier.fillMaxSize()) {
+            if (data?.source == "self_gen" && data.hasText) Text(stringResource(R.string.lyrics_generated), modifier = Modifier.padding(16.dp))
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                val synced = remember(data) { data?.syncedLrc?.let { parseLrc(it) }.orEmpty() }
+                val plain = data?.plainText
+                when {
+                    loading -> Column(
+                        Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            stringResource(if (data?.status == "pending") R.string.lyrics_pending else R.string.lyrics_loading),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    lyrics.failed || data?.status == "pending" -> Column(
+                        Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(stringResource(if (lyrics.failed) R.string.lyrics_failed else R.string.lyrics_pending), textAlign = TextAlign.Center)
+                        androidx.compose.material3.TextButton(onClick = lyrics::retry) { Text(stringResource(R.string.retry_action)) }
+                    }
+                    synced.any { it.text.isNotBlank() } -> SyncedLyrics(synced, controller)
+                    !plain.isNullOrBlank() -> Text(
+                        plain,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+                    )
+                    else -> Text(
+                        stringResource(R.string.lyrics_none),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    )
+                }
             }
-            synced.isNotEmpty() -> SyncedLyrics(synced, controller)
-            !plain.isNullOrBlank() -> Text(
-                plain,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-            )
-            else -> Text(
-                stringResource(R.string.lyrics_none),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(32.dp),
-            )
         }
     }
 }
@@ -153,115 +153,5 @@ private fun SyncedLyrics(lines: List<LyricLine>, controller: MediaController) {
                 modifier = Modifier.fillMaxWidth().clickable { controller.seekTo(line.timeMs) },
             )
         }
-    }
-}
-
-@Composable
-fun EqualizerPanel() {
-    val info = AudioFx.info
-    if (info == null) {
-        Text(
-            stringResource(R.string.eq_unavailable),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        return
-    }
-    val levels = if (Prefs.eqPreset >= 0) {
-        AudioFx.levels(Prefs.eqPreset)
-    } else {
-        val parsed = AudioFx.parseBands(Prefs.eqBands)
-        List(info.bands) { parsed.getOrNull(it) ?: 0 }
-    }
-
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(R.string.equalizer), Modifier.weight(1f), fontWeight = FontWeight.Medium)
-        Switch(
-            checked = Prefs.eqEnabled,
-            onCheckedChange = { Prefs.changeEq(it, Prefs.eqPreset, Prefs.eqBands) },
-        )
-    }
-    Spacer(Modifier.height(8.dp))
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        val activeUser = EqPresets.activeUser()
-        FilterChip(
-            selected = Prefs.eqPreset < 0 && activeUser == null,
-            onClick = { Prefs.changeEq(true, -1, levels.joinToString(",")) },
-            label = { Text(stringResource(R.string.eq_custom)) },
-        )
-        EqPresets.user.forEach { preset ->
-            FilterChip(
-                selected = activeUser == preset,
-                onClick = { EqPresets.use(preset) },
-                label = { Text(preset.name) },
-            )
-        }
-        EqPresets.visibleSystem(info.presets).forEach { (i, name) ->
-            FilterChip(
-                selected = Prefs.eqPreset == i,
-                onClick = { Prefs.changeEq(true, i, Prefs.eqBands) },
-                label = { Text(name) },
-            )
-        }
-    }
-    Spacer(Modifier.height(8.dp))
-    levels.forEachIndexed { band, level ->
-        val hz = info.centerFreqsHz.getOrNull(band) ?: 0
-        val label = if (hz >= 1000) "${hz / 1000}k" else "$hz"
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                label,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.width(44.dp),
-            )
-            Slider(
-                value = level.toFloat(),
-                onValueChange = { v ->
-                    val next = levels.toMutableList().also { it[band] = v.toInt() }
-                    Prefs.changeEq(true, -1, next.joinToString(","))
-                },
-                valueRange = info.minLevel.toFloat()..info.maxLevel.toFloat(),
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "%+.1f".format(level / 100f),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.width(44.dp),
-                textAlign = TextAlign.End,
-            )
-        }
-    }
-    var saving by remember { mutableStateOf(false) }
-    val activeUser = EqPresets.activeUser()
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-        TextButton(onClick = { Prefs.changeEq(Prefs.eqEnabled, -1, List(info.bands) { 0 }.joinToString(",")) }) {
-            Text(stringResource(R.string.color_reset))
-        }
-        TextButton(onClick = { saving = true }) { Text(stringResource(R.string.eq_save_preset)) }
-        if (activeUser != null) {
-            TextButton(onClick = { EqPresets.delete(activeUser.name) }) {
-                Text(stringResource(R.string.eq_delete_preset), color = MaterialTheme.colorScheme.error)
-            }
-        } else if (Prefs.eqPreset >= 0) {
-            TextButton(onClick = { EqPresets.hideSystem(Prefs.eqPreset) }) {
-                Text(stringResource(R.string.eq_delete_preset), color = MaterialTheme.colorScheme.error)
-            }
-        }
-        if (Prefs.eqHidden.isNotEmpty()) {
-            TextButton(onClick = { EqPresets.restoreSystem() }) { Text(stringResource(R.string.eq_restore_presets)) }
-        }
-    }
-    if (saving) {
-        TextInputDialog(
-            title = stringResource(R.string.eq_save_preset),
-            initial = activeUser?.name ?: "",
-            confirm = stringResource(R.string.save),
-            onDismiss = { saving = false },
-        ) { name -> EqPresets.save(name, levels.joinToString(",")) }
     }
 }

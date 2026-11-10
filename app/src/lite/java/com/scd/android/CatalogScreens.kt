@@ -121,30 +121,16 @@ fun CatalogArtistScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Tr
     var albums by remember(id) { mutableStateOf<List<ArtistAlbum>>(emptyList()) }
     var tab by remember(id) { mutableStateOf(CatalogTab.Tracks) }
     var sort by remember(id) { mutableStateOf("popular") }
-    var tracks by remember(id, sort) { mutableStateOf<List<Track>>(emptyList()) }
-    var page by remember(id, sort) { mutableIntStateOf(0) }
-    var hasMore by remember(id, sort) { mutableStateOf(false) }
-    var loading by remember(id, sort) { mutableStateOf(false) }
-    var blocking by remember { mutableStateOf(false) }
-
-    fun load(p: Int) {
-        if (loading) return
-        loading = true
-        scope.launch {
-            runCatching { CatalogRepo.tracksPage(id, sort, p) }.onSuccess { (list, more) ->
-                tracks = if (p == 0) list else (tracks + list).distinctBy { it.urn }
-                page = p
-                hasMore = more
-            }
-            loading = false
-        }
-    }
+    val pager = remember(id, sort) { TrackPager(scope) { page, _ -> CatalogRepo.tracksPage(id, sort, page) } }
+    val tracks = pager.items
+    val loading = pager.loading
+    var blocking by remember(id) { mutableStateOf(false) }
 
     LaunchedEffect(id) {
         runCatching { Api.catalogArtist(id) }.onSuccess { artist = it }.onFailure { failed = true }
         runCatching { Api.catalogArtistAlbums(id) }.onSuccess { albums = it }
     }
-    LaunchedEffect(id, sort) { load(0) }
+    LaunchedEffect(pager) { pager.refresh() }
 
     val a = artist
     Column(Modifier.fillMaxSize()) {
@@ -171,7 +157,7 @@ fun CatalogArtistScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Tr
             }
             return@Column
         }
-        LazyColumn(Modifier.fillMaxSize()) {
+        LiteList {
             item {
                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     AsyncImage(
@@ -182,6 +168,7 @@ fun CatalogArtistScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Tr
                     )
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.catalog_card), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(a.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2)
                         val meta = listOfNotNull(
                             a.country?.takeIf { it.isNotBlank() },
@@ -195,7 +182,7 @@ fun CatalogArtistScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Tr
                     Button(
                         onClick = {
                             val list = (tracks.ifEmpty { a.popular_tracks }).filter(Playback::playable)
-                            if (list.isNotEmpty()) Playback.play(controller, list, list.first(), source = "catalog:$id")
+                            if (list.isNotEmpty()) Playback.play(controller, list, list.first(), source = "catalog:$id", more = { pager.all() })
                         },
                         modifier = Modifier.weight(1f),
                     ) {
@@ -206,7 +193,7 @@ fun CatalogArtistScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Tr
                     Spacer(Modifier.width(8.dp))
                     val shuffled = Playback.shuffledFrom("catalog:$id")
                     OutlinedButton(onClick = {
-                        Playback.toggleShuffle(controller, "catalog:$id", tracks.ifEmpty { a.popular_tracks })
+                        Playback.toggleShuffle(controller, "catalog:$id", tracks.ifEmpty { a.popular_tracks }, more = { pager.all() })
                     }) {
                         Icon(
                             painterResource(if (shuffled) R.drawable.ic_shuffle_on else R.drawable.ic_shuffle),
@@ -216,16 +203,28 @@ fun CatalogArtistScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Tr
                         )
                     }
                 }
-                val main = a.mainScUsers.firstOrNull()
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (main != null) {
-                        AssistChip(
-                            onClick = { NavEvents.openScUser(main) },
-                            label = { Text(stringResource(R.string.catalog_sc_profile)) },
-                            leadingIcon = { Icon(painterResource(R.drawable.ic_user), null, modifier = Modifier.size(16.dp)) },
-                        )
+                val accounts = remember(a) { a.linkedScAccounts }
+                if (accounts.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.catalog_sc_accounts),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+                    )
+                    ArtistActions {
+                        accounts.forEach { account ->
+                            AssistChip(
+                                onClick = { NavEvents.openScUser(account.sc_user_id) },
+                                label = { Text(artistAccountLabel(account, accounts)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_user), null, modifier = Modifier.size(16.dp)) },
+                            )
+                        }
                     }
-                    SocialLinks(a.socials) { label, open -> AssistChip(onClick = open, label = { Text(label) }) }
+                }
+                if (a.socials.isNotEmpty()) {
+                    ArtistActions(Modifier.padding(top = 8.dp)) {
+                        SocialLinks(a.socials) { label, open -> AssistChip(onClick = open, label = { Text(label) }) }
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
                 val tabs = buildList {
@@ -263,15 +262,12 @@ fun CatalogArtistScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Tr
                             }
                         }
                     }
-                    items(tracks, key = { "t:" + it.urn }) { t -> TrackRow(track = t, onClick = { Playback.play(controller, tracks, t, source = "catalog:$id") }) }
+                    items(tracks, key = { "t:" + it.urn }) { t -> TrackRow(track = t, onClick = { Playback.play(controller, tracks, t, source = "catalog:$id", more = { pager.all() }) }) }
                     if (loading && tracks.isEmpty()) item { CenterSpinner() }
-                    if (hasMore && tracks.isNotEmpty()) {
-                        item {
-                            LaunchedEffect(tracks.size) { load(page + 1) }
-                            CenterSpinner()
-                        }
+                    if (pager.hasMore || pager.error != null) {
+                        item { TrackPageFooter(pager) }
                     }
-                    if (!loading && tracks.isEmpty()) {
+                    if (!loading && tracks.isEmpty() && pager.error == null) {
                         item { Text(stringResource(R.string.artist_no_tracks), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp)) }
                     }
                 }
@@ -325,7 +321,7 @@ fun AlbumScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Track) -> 
             return@Column
         }
         val tracks = al.tracks.filter { !it.urn.startsWith("wanted:") }
-        LazyColumn(Modifier.fillMaxSize()) {
+        LiteList {
             item {
                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TrackArtwork(al.cover_url, 120.dp, 10.dp)
@@ -377,7 +373,7 @@ private fun AuthorStatsList(mine: AuthorStats?, failed: Boolean, onPlay: (List<T
         return
     }
     val tops = mine.tracks.take(50)
-    LazyColumn(Modifier.fillMaxSize()) {
+    LiteList {
         item {
             Spacer(Modifier.height(10.dp))
             Text(stringResource(R.string.stats_author_all_time), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
@@ -459,7 +455,7 @@ fun StatsScreen(onBack: () -> Unit, onPlay: (List<Track>, Track) -> Unit) {
             return@Column
         }
         val tops = s.topTracks.map { it.asTrack() }
-        LazyColumn(Modifier.fillMaxSize()) {
+        LiteList {
             item {
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -3,14 +3,6 @@ package com.scd.android
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContentTransitionScope
-import androidx.compose.animation.ContentTransform
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -50,10 +42,6 @@ import androidx.compose.ui.unit.dp
 object Motion {
     const val duration = 320
 
-    fun <S> overlay(): AnimatedContentTransitionScope<S>.() -> ContentTransform = {
-        (fadeIn(tween(duration)) + scaleIn(tween(duration), initialScale = 0.97f)) togetherWith
-            (fadeOut(tween(duration * 2 / 3)) + scaleOut(tween(duration), targetScale = 1.01f))
-    }
 }
 
 @Composable

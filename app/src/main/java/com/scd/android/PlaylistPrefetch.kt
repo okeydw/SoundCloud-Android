@@ -77,8 +77,8 @@ object PlaylistPrefetch {
         while (page < MAX_PAGES) {
             val res = Api.playlistTracks(urn, page, fresh = true)
             val last = !res.has_more || res.collection.isEmpty() || page == MAX_PAGES - 1
-            PlaylistSnapshots.record(urn, page, res.collection, !last)
-            if (last) break
+            PlaylistSnapshots.record(urn, page, res.collection, !last, res.snapshotReady)
+            if (last || !res.snapshotReady) break
             page++
         }
     }

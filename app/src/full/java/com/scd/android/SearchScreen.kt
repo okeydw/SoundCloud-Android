@@ -99,7 +99,7 @@ fun SearchScreenGlass() {
         if (Tiles.items.isEmpty() && !offline) Tiles.load(0)
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = dockContentPadding()) {
+    GlassList {
         item(key = "head", contentType = "head") {
             SearchHead(onSubmit = {
                 focus.clearFocus()

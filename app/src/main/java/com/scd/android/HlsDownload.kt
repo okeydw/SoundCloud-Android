@@ -5,16 +5,10 @@ import okhttp3.Request
 import java.io.File
 import java.io.IOException
 import java.net.URI
-import java.util.concurrent.Callable
-import java.util.concurrent.Executors
-import java.util.concurrent.Future
-import java.util.concurrent.TimeUnit
 
 object HlsDownload {
     const val PREFIX = "hls:"
-    private const val WINDOW = 3
 
-    private val pool = Executors.newFixedThreadPool(WINDOW * 2) { r -> Thread(r, "hls-segment").apply { isDaemon = true } }
 
     fun isHls(url: String): Boolean = url.startsWith(PREFIX)
 
@@ -33,7 +27,16 @@ object HlsDownload {
     private fun resolve(base: String, ref: String): String =
         if (ref.startsWith("http://") || ref.startsWith("https://")) ref else runCatching { URI(base).resolve(ref).toString() }.getOrDefault(ref)
 
-    private fun parse(text: String, base: String): Pair<String?, List<String>> {
+    private data class Playlist(val init: String?, val segments: List<String>, val durationMs: Long?)
+
+    internal fun durationMs(text: String): Long? {
+        val durations = text.lineSequence().map { it.trim() }.filter { it.startsWith("#EXTINF:") }
+            .map { it.substringAfter(':').substringBefore(',').toDoubleOrNull() }.toList()
+        if (durations.isEmpty() || durations.any { it == null || !it.isFinite() || it <= 0.0 }) return null
+        return (durations.sumOf { it!! } * 1000).toLong()
+    }
+
+    private fun parse(text: String, base: String): Playlist {
         var init: String? = null
         val segments = mutableListOf<String>()
         for (raw in text.lineSequence()) {
@@ -49,7 +52,7 @@ object HlsDownload {
             if (line.isEmpty() || line.startsWith("#")) continue
             segments += resolve(base, line)
         }
-        return init to segments
+        return Playlist(init, segments, durationMs(text))
     }
 
     private fun ByteArray.hasEnca(): Boolean {
@@ -83,17 +86,19 @@ object HlsDownload {
         return best
     }
 
-    private fun playlist(client: OkHttpClient, manifestUrl: String): Pair<String?, List<String>> {
+    private fun playlist(client: OkHttpClient, manifestUrl: String): Playlist {
         val text = get(client, manifestUrl).decodeToString()
         val media = variant(text, manifestUrl) ?: return parse(text, manifestUrl)
         return parse(get(client, media).decodeToString(), media)
     }
 
-    fun writeTo(client: OkHttpClient, manifestUrl: String, target: File) {
-        val (init, segments) = playlist(client, manifestUrl)
+    fun writeTo(client: OkHttpClient, manifestUrl: String, target: File, expectedMs: Long = 0L) {
+        val (init, segments, duration) = playlist(client, manifestUrl)
         if (segments.isEmpty()) throw IOException("hls: no segments")
+        if (duration != null && expectedMs > 45_000L && duration + maxOf(4_000L, expectedMs / 25) < expectedMs) {
+            throw IOException("hls: short ${duration / 1000}s of ${expectedMs / 1000}s")
+        }
         target.parentFile?.mkdirs()
-        val inflight = ArrayDeque<Future<ByteArray>>()
         try {
             target.outputStream().buffered().use { out ->
                 if (init != null) {
@@ -101,34 +106,11 @@ object HlsDownload {
                     if (head.hasEnca()) throw IOException("hls: encrypted")
                     out.write(head)
                 }
-                var next = 0
-                fun fill() {
-                    while (next < segments.size && inflight.size < WINDOW) {
-                        val url = segments[next++]
-                        inflight.addLast(pool.submit(Callable { get(client, url) }))
-                    }
-                }
-                fill()
-                while (inflight.isNotEmpty()) {
-                    if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException("hls cancelled")
-                    out.write(inflight.removeFirst().get(45, TimeUnit.SECONDS))
-                    fill()
-                }
+                SegmentDownload.write(client, segments, out)
             }
-        } catch (e: java.util.concurrent.ExecutionException) {
-            target.delete()
-            throw (e.cause as? IOException) ?: IOException("hls segment: ${e.cause?.javaClass?.simpleName}")
-        } catch (e: java.util.concurrent.TimeoutException) {
-            target.delete()
-            throw java.net.SocketTimeoutException("hls segment timeout")
-        } catch (e: InterruptedException) {
-            target.delete()
-            throw java.io.InterruptedIOException("hls cancelled")
         } catch (e: Exception) {
             target.delete()
             throw e
-        } finally {
-            inflight.forEach { it.cancel(true) }
         }
         if (!Downloads.looksLikeAudio(target)) {
             target.delete()

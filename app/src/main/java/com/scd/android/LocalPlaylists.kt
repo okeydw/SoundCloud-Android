@@ -243,7 +243,7 @@ object LocalPlaylists {
         var adopted = emptyList<String>()
         edit(p.id) { cur ->
             val known = cur.tracks.associateBy { it.urn }
-            var merged = remote.distinctBy { it.urn }
+            var merged = (if (complete) remote else remote + cur.tracks).distinctBy { it.urn }
             val remoteUrns = merged.mapTo(HashSet()) { it.urn }
             if (cur.isLocalOrigin && !cur.pulledOnce && complete) {
                 val pending = cur.ops.mapNotNullTo(HashSet()) { it.track }
@@ -289,11 +289,13 @@ object LocalPlaylists {
         val out = mutableListOf<Track>()
         var page = 0
         var complete = false
+        var snapshotReady = true
         while (page < PULL_PAGES) {
             val res = Api.playlistTracks(remote, page, fresh = fresh || page > 0)
             out += res.collection
+            snapshotReady = snapshotReady && res.snapshotReady
             if (!res.has_more || res.collection.isEmpty()) {
-                complete = true
+                complete = snapshotReady && !res.has_more
                 break
             }
             page++
@@ -318,7 +320,7 @@ object LocalPlaylists {
         try {
             val remote = fetchRemote()
             if (remote != null) reconcile(remote.first, remote.second)
-            all.filter { it.remoteUrn == null && !it.createAccepted && !it.deleted && !it.localOnly && (remote != null || it.createAttempts == 0) }
+            all.filter { it.remoteUrn == null && !it.createAccepted && !it.deleted && !it.localOnly && (remote?.second == true || it.createAttempts == 0) }
                 .forEach { sendCreate(it) }
             all.filter { it.remoteUrn != null && it.ops.isNotEmpty() }.forEach { replay(it) }
             all.filter { pullable(it) && it.ops.isEmpty() && !it.tracksLoaded && it.tracks.isNotEmpty() }
@@ -379,6 +381,7 @@ object LocalPlaylists {
         val out = mutableListOf<Playlist>()
         var page = 0
         var complete = false
+        var snapshotReady = true
         while (page < 40) {
             val res = runCatching { Api.myPlaylists(page, 50, fresh = true) }.getOrElse {
                 if (it is kotlinx.coroutines.CancellationException) throw it
@@ -386,8 +389,9 @@ object LocalPlaylists {
                 return null
             }
             out += res.collection
+            snapshotReady = snapshotReady && res.snapshotReady
             if (!res.has_more || res.collection.isEmpty()) {
-                complete = true
+                complete = snapshotReady && !res.has_more
                 break
             }
             page++
@@ -417,7 +421,7 @@ object LocalPlaylists {
                         claimed += match.urn
                         q = q.copy(remoteUrn = match.urn, createAccepted = true)
                         Logs.add("playlist", "${q.title.take(30)}: found on server as ${match.urn}")
-                    } else if (now - q.createSentAt > RECREATE_AFTER_MS && q.createAttempts < MAX_CREATE_ATTEMPTS) {
+                    } else if (complete && now - q.createSentAt > RECREATE_AFTER_MS && q.createAttempts < MAX_CREATE_ATTEMPTS) {
                         q = q.copy(createAccepted = false)
                         Logs.add("playlist", "${q.title.take(30)}: still not on server after 3 days, will send again")
                     }

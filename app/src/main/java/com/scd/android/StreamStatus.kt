@@ -62,6 +62,15 @@ object PendingLink {
 
 object SessionState {
 
+    var reconnect by mutableStateOf(false)
+        private set
+
+    fun requireReconnect() {
+        if (Api.sessionId != null) reconnect = true
+    }
+
+    fun dismissReconnect() { reconnect = false }
+
     var expired by mutableStateOf(false)
         private set
     var fromStream by mutableStateOf(false)

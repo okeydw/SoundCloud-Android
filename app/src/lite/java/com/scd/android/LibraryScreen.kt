@@ -181,7 +181,7 @@ fun LibraryScreen(
             }
 
             val printLikes = Library.soundprint
-            LazyColumn(Modifier.fillMaxSize()) {
+            LiteList {
                 if (printLikes.isNotEmpty()) {
                     item {
                         SoundprintCard(

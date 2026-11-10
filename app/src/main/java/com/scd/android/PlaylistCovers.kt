@@ -66,9 +66,4 @@ object PlaylistCovers {
         sp?.edit()?.remove(urn)?.apply()
     }
 
-    fun move(from: String, to: String) {
-        val path = map.remove(from) ?: return
-        map[to] = path
-        sp?.edit()?.remove(from)?.putString(to, path)?.apply()
-    }
 }

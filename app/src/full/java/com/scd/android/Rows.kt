@@ -124,7 +124,7 @@ fun GlassTrackRow(
                     Icon(painterResource(R.drawable.ic_check), null, tint = p.accent, modifier = Modifier.size(13.dp))
                     Spacer(Modifier.width(5.dp))
                 }
-                Text(track.user?.username ?: "", style = GlassType.small, color = p.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TrackArtistNames(track, style = GlassType.small, color = p.text2)
             }
         }
         Spacer(Modifier.width(8.dp))
@@ -195,7 +195,7 @@ fun TrackCard(track: Track, onClick: () -> Unit, width: Dp = 138.dp) {
         }
         Spacer(Modifier.height(8.dp))
         Text(track.title, style = GlassType.small.copy(fontWeight = FontWeight.SemiBold), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(track.user?.username ?: "", style = GlassType.small, color = p.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        TrackArtistNames(track, style = GlassType.small, color = p.text2)
     }
 }
 
@@ -261,109 +261,6 @@ fun ArtistRowGlass(name: String, avatar: String?, subtitle: String?, onClick: ()
             Text(name, style = GlassType.rowTitle, color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (subtitle != null) Text(subtitle, style = GlassType.small, color = p.text2, maxLines = 1)
         }
-    }
-}
-
-@Stable
-class TrackPager(private val scope: CoroutineScope, private val loader: suspend (Int, Boolean) -> Pair<List<Track>, Boolean>) {
-    var items by mutableStateOf<List<Track>>(emptyList())
-    var loading by mutableStateOf(false)
-        private set
-    var hasMore by mutableStateOf(false)
-        private set
-    var error by mutableStateOf<String?>(null)
-        private set
-    private var page = 0
-    private var generation = 0
-    private var freshAt = 0L
-    private var syncing = false
-
-    fun refresh() {
-        if (loading) return
-        loading = true
-        val gen = ++generation
-        freshAt = System.currentTimeMillis()
-        scope.launch {
-            try {
-                val (batch, more) = loader(0, false)
-                if (gen == generation) {
-                    items = batch.distinctBy { it.urn }
-                    hasMore = more
-                    page = 0
-                    error = null
-                }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                error = e.message
-            } finally {
-                loading = false
-            }
-            syncHead(gen)
-        }
-    }
-
-    fun refreshIfStale(maxAgeMs: Long = 5 * 60_000L) {
-        if (Prefs.offline || loading || syncing || System.currentTimeMillis() - freshAt < maxAgeMs) return
-        freshAt = System.currentTimeMillis()
-        val gen = generation
-        scope.launch { syncHead(gen) }
-    }
-
-    private suspend fun syncHead(gen: Int) {
-        if (Prefs.offline || syncing) return
-        syncing = true
-        try {
-            val (batch, more) = runCatching { loader(0, true) }.getOrNull() ?: return
-            if (gen != generation || batch.isEmpty()) return
-            freshAt = System.currentTimeMillis()
-            if (page == 0) {
-                items = batch.distinctBy { it.urn }
-                hasMore = more
-            } else {
-                items = (batch + items).distinctBy { it.urn }
-            }
-            error = null
-        } finally {
-            syncing = false
-        }
-    }
-
-    fun loadMore() {
-        if (loading || !hasMore) return
-        loading = true
-        val gen = generation
-        scope.launch {
-            try {
-                val next = page + 1
-                val (batch, more) = loader(next, false)
-                if (gen == generation) {
-                    items = (items + batch).distinctBy { it.urn }
-                    page = next
-                    hasMore = more
-                }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                if (gen == generation) hasMore = false
-            } finally {
-                loading = false
-            }
-        }
-    }
-
-    suspend fun all(): List<Track> {
-        var more = hasMore
-        var p = page
-        var acc = items
-        while (more && acc.size < 10_000) {
-            p++
-            val (batch, next) = runCatching { loader(p, false) }.getOrNull() ?: break
-            acc = (acc + batch).distinctBy { it.urn }
-            more = next
-        }
-        items = acc
-        page = p
-        hasMore = false
-        return acc
     }
 }
 

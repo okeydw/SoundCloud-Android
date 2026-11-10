@@ -5,8 +5,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-val appVersionName = "0.4.5"
-val appVersionCode = 10
+val appVersionName = "0.4.6"
+val appVersionCode = 11
 
 android {
     namespace = "com.scd.android"
@@ -100,7 +100,6 @@ android {
     lint {
         abortOnError = true
         checkReleaseBuilds = false
-        baseline = file("lint-baseline.xml")
         htmlReport = true
         textReport = true
     }

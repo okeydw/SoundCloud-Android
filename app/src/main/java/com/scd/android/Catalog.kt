@@ -65,6 +65,17 @@ data class CatalogArtist(
     val related_artists: List<RelatedArtist> = emptyList(),
 ) {
     val mainScUsers: List<String> get() = sc_accounts.filter { it.role == "main" }.map { it.sc_user_id }
+
+    val linkedScAccounts: List<ArtistScAccount>
+        get() = sc_accounts.mapNotNull { account ->
+            soundCloudUserId(account.sc_user_id)?.let { account.copy(sc_user_id = it, role = account.role.trim().lowercase(java.util.Locale.ROOT)) }
+        }.sortedWith(compareBy<ArtistScAccount> {
+            when (it.role) {
+                "main" -> 0
+                "demo" -> 1
+                else -> 2
+            }
+        }.thenByDescending { it.verified }).distinctBy { it.sc_user_id }
 }
 
 @Serializable
@@ -191,14 +202,16 @@ object CatalogRepo {
     suspend fun tracksPage(id: String, sort: String, page: Int, role: String = "any"): Pair<List<Track>, Boolean> {
         val res = Api.catalogArtistTracks(id, role, sort, page, PAGE)
         val real = res.collection.filter { !it.urn.startsWith("wanted:") }
-        return real to (real.size >= PAGE)
+        return real to res.collection.isNotEmpty()
     }
 
-    fun scUserUrn(id: String) = "soundcloud:users:$id"
+    fun scUserUrn(id: String) = soundCloudUserId(id)?.let { "soundcloud:users:$it" }
 
     fun findCatalogFor(userUrn: String, tracks: List<Track>): EnrichmentArtist? {
-        val id = scIdOf(userUrn) ?: return null
-        return tracks.asSequence().mapNotNull { it.catalogArtist }.firstOrNull { scIdOf(it.sc_user_id) == id }
+        val id = soundCloudUserId(userUrn) ?: return null
+        return tracks.asSequence().flatMap { track ->
+            sequenceOf(track.enrichment?.primary_artist) + track.enrichment?.participants.orEmpty().asSequence().map { it.artist }
+        }.filterNotNull().firstOrNull { it.id.isNotBlank() && soundCloudUserId(it.sc_user_id) == id }
     }
 
     fun formatListen(ms: Long): Pair<Long, Long> {

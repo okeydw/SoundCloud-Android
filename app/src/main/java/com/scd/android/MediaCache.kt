@@ -60,7 +60,6 @@ private class DynamicLruEvictor(private val maxBytes: () -> Long) : CacheEvictor
 
 @OptIn(UnstableApi::class)
 object MediaCache {
-
     @Volatile
     private var cache: SimpleCache? = null
     private var evictor: DynamicLruEvictor? = null
@@ -164,6 +163,26 @@ object MediaCache {
     }
 
     fun keyCount(): Int = cache?.keys?.size ?: 0
+
+    fun copyFully(urn: String, dest: File): Boolean {
+        val c = cache ?: return false
+        for (key in listOf(urn, "$urn|hq")) {
+            val length = contentLength(key)
+            if (length <= 0L) continue
+            if (!runCatching { c.isCached(key, 0L, length) }.getOrDefault(false)) continue
+            val spans = runCatching { c.getCachedSpans(key).sortedBy { it.position } }.getOrNull() ?: continue
+            val copied = runCatching {
+                dest.parentFile?.mkdirs()
+                dest.outputStream().use { out ->
+                    spans.forEach { span -> span.file?.inputStream()?.use { it.copyTo(out) } }
+                }
+                dest.length() == length
+            }.getOrDefault(false)
+            if (copied) return true
+            dest.delete()
+        }
+        return false
+    }
 
     fun scanSnippets(tmpDir: File, skipUrn: String?, step: () -> Unit = {}): Pair<Int, Int> {
         val c = cache ?: return 0 to 0

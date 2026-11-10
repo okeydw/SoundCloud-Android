@@ -28,7 +28,7 @@ object Recommendations {
     val ORDER = listOf("for_you", "top_artists", "fresh_drops", "same_vibe", "adjacent", "deep_cuts", "discover")
     const val FALLBACK = "tiles"
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     private var file: File? = null
 
     var shelves by mutableStateOf<List<Shelf>>(emptyList())
@@ -98,10 +98,14 @@ object Recommendations {
                 Triple(id, idsOf(obj), inline)
             }
         if (clusters.isEmpty()) return emptyList()
-        val needed = clusters.filter { it.third == null }.flatMap { it.second }.distinct()
+        val needed = clusters.flatMap { (_, ids, inline) ->
+            val known = inline.orEmpty().map { ApiContract.trackId(it.urn) }.toSet()
+            ids.filterNot { it in known }
+        }.distinct()
         val byId = hydrate(needed)
         val shelves = clusters.mapNotNull { (id, ids, inline) ->
-            val tracks = inline ?: ids.mapNotNull { byId[it] }
+            val available = byId + inline.orEmpty().associateBy { ApiContract.trackId(it.urn) }
+            val tracks = if (ids.isEmpty()) inline.orEmpty() else ids.mapNotNull { available[it] }
             val usable = tracks.filter { Playback.playable(it) && !it.hidden }.distinctBy { it.urn }
             if (usable.isEmpty()) null else Shelf(id, usable)
         }

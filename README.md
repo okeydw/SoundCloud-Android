@@ -21,7 +21,7 @@
 <p align="center">
 <b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">Desktop версия</a>] · [<a href="https://github.com/okeydw/SoundCloud-iOS">iOS версия</a>]</b><br> 
 <b>Неофициальный клиент SoundCloud для Android</b><br>
-Без рекламы · Без капчи · Без цензуры · Доступно в России
+Без рекламы · Без капчи · Без цензуры
 </p>
 
 <p align="center">

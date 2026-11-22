@@ -21,7 +21,7 @@
 <p align="center">
 <b>[<a href="https://github.com/zxcloli666/SoundCloud-Desktop">데스크톱 버전</a>] · [<a href="https://github.com/okeydw/SoundCloud-iOS">iOS 버전</a>]</b><br>
 <b>Android용 비공식 SoundCloud 클라이언트</b><br>
-광고 없음 · 캡차 없음 · 검열 없음 · 러시아에서 사용 가능
+광고 없음 · 캡차 없음 · 검열 없음
 </p>
 
 <p align="center">

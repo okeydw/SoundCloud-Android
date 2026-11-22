@@ -1,8 +1,6 @@
 ## [0.4.7] **Superlikes, albums and SD cards**
 [Русский](../CHANGELOG.md)
 
-> sound works for me on One UI 9. If yours is still silent, send the log and metrics from Settings → About
-
 <h1>Added </h1>
 
 - Superlikes. Double-tap the like button to give a track one

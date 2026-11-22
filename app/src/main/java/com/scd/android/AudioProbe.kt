@@ -6,7 +6,7 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.MediaExtractorCompat
+import androidx.media3.inspector.MediaExtractorCompat
 import java.io.File
 
 class AudioInfo(
@@ -24,6 +24,7 @@ object AudioProbe {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        AudioNormalize.init(context)
     }
 
     private class Scan(val ok: Boolean, val ms: Long?, val problem: String?, val declaredMs: Long? = null)

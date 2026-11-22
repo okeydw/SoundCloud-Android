@@ -15,14 +15,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 object Playback {
 
-    fun playable(t: Track) = !t.starLocked && (!t.unavailable || Prefs.playBlocked) && (!t.external || Downloads.isDownloaded(t.urn))
+    fun playable(t: Track) = (!t.unavailable || Prefs.playBlocked) && (!t.external || Downloads.isDownloaded(t.urn))
 
     var source by mutableStateOf<String?>(null)
         private set
 
     fun shuffledFrom(key: String): Boolean = source == key && NowPlaying.shuffle && NowPlaying.urn != null
 
-    fun offlineReady(t: Track): Boolean = Downloads.isDownloaded(t.urn) || MediaCache.holds(t.urn) || ScDataSource.hasSpooled(t.urn)
+    fun offlineReady(t: Track): Boolean = Downloads.localFile(t.urn) != null || MediaCache.holds(t.urn) || ScDataSource.hasSpooled(t.urn)
 
     private fun queueOf(list: List<Track>): List<Track> {
         val offline = Prefs.offline
@@ -63,6 +63,9 @@ object Playback {
         LocalRadio.stopTrackRadio()
         if (p.shuffleModeEnabled) p.shuffleModeEnabled = false
         val (arranged, start) = ShuffleQueue.arrange(queue, index)
+        listOfNotNull(arranged.getOrNull(start), arranged.getOrNull(start + 1), arranged.getOrNull(start - 1)).forEach {
+            WaveCache.prefetch(it.urn, it.waveform_url)
+        }
         p.setMediaItems(arranged.map { it.toMediaItem() }, start, if (arranged.getOrNull(start)?.urn == track.urn) startMs else 0L)
         p.prepare()
         p.play()
@@ -145,10 +148,10 @@ object Playback {
         radioJob?.cancel()
         radioBusy = true
         source = null
-        generation++
+        val request = ++generation
         extendJob?.cancel()
         radioJob = App.scope.launch {
-            val added = runCatching { buildRadio(player, seed) }.getOrElse {
+            val added = runCatching { buildRadio(player, seed, request) }.getOrElse {
                 if (it is kotlinx.coroutines.CancellationException) throw it
                 Logs.add("radio", "failed: ${it.javaClass.simpleName} ${it.message?.take(80) ?: ""}")
                 0
@@ -160,7 +163,7 @@ object Playback {
         }
     }
 
-    private suspend fun buildRadio(player: Player, seed: Track): Int {
+    private suspend fun buildRadio(player: Player, seed: Track, request: Long): Int {
         fun usable(list: List<Track>) = list.distinctBy { it.urn }.filter {
             it.urn != seed.urn && playable(it) && !it.hidden
         }
@@ -185,20 +188,15 @@ object Playback {
             LocalRadio.stopTrackRadio()
             return 0
         }
-        withContext(Dispatchers.Main) {
+        return withContext(Dispatchers.Main) {
+            if (request != generation || player.currentMediaItem?.mediaId != seed.urn) return@withContext 0
             NowPlaying.autoContinue = true
             val cur = player.currentMediaItemIndex
-            if (player.currentMediaItem?.mediaId != seed.urn) {
-                player.setMediaItems(listOf(seed.toMediaItem()) + add.map { it.toMediaItem() }, 0, 0)
-                player.prepare()
-                player.play()
-            } else {
-                if (player.mediaItemCount > cur + 1) player.removeMediaItems(cur + 1, player.mediaItemCount)
-                player.addMediaItems(add.map { it.toMediaItem() })
-            }
+            if (player.mediaItemCount > cur + 1) player.removeMediaItems(cur + 1, player.mediaItemCount)
+            player.addMediaItems(add.map { it.toMediaItem() })
+            Logs.add("radio", "+${add.size} from $source")
+            add.size
         }
-        Logs.add("radio", "+${add.size} from $source")
-        return add.size
     }
 
     fun playNext(player: Player?, track: Track): Boolean {

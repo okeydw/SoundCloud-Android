@@ -54,9 +54,8 @@ object SessionGuard {
                 ScDataSource.forgetResolved()
                 withContext(Dispatchers.Main) {
                     controller?.let { c ->
-                        if (c.playerError != null || c.playbackState == Player.STATE_IDLE) {
+                        if (c.playWhenReady && c.currentMediaItem != null && c.playbackState == Player.STATE_IDLE) {
                             c.prepare()
-                            c.play()
                         }
                     }
                 }
@@ -200,6 +199,7 @@ object Startup {
         if (Prefs.offline) return
         App.scope.launch {
             launch { runCatching { Api.subscription() }.onSuccess { Prefs.saveStar(it.premium) } }
+            launch { runCatching { Likes.refreshSuperlikes() } }
             launch {
                 runCatching { Api.me() }.onSuccess { me ->
                     me.urn?.takeIf { it.isNotEmpty() }?.let { Prefs.saveUserUrn(it) }
@@ -207,10 +207,7 @@ object Startup {
             }
             launch {
                 delay(600)
-                val since = Likes.snapshot()
-                runCatching { Api.likedTracks(0, 100, fresh = true) }.onSuccess { res ->
-                    if (res.complete) Likes.replaceAll(res.collection, since) else Likes.seed(res.collection)
-                }
+                runCatching { Library.refreshLikes() }
                 delay(5_000)
                 LikesAutoCache.run(app)
             }
@@ -219,7 +216,6 @@ object Startup {
                 LocalPlaylists.sync()
                 runCatching { Api.likedPlaylists() }
                 delay(400)
-                runCatching { Api.likedTracks() }
                 runCatching { Api.history() }
                 delay(15_000)
                 PlaylistPrefetch.run(app)
@@ -282,9 +278,11 @@ object Health {
                     Prefs.setOfflineAuto(false)
                     Logs.add("net", "network is back → online")
                     toast(context, R.string.offline_auto_off)
+                    App.scope.launch { runCatching { Likes.refreshSuperlikes() } }
                     PlaylistPrefetch.run(context)
                 }
             }
+            if (net && ok && !Prefs.offline) Likes.sync()
             kotlinx.coroutines.withTimeoutOrNull(if (netLostAt != 0L || serverLostAt != 0L || (auto && Prefs.offline)) 4_000L else 12_000L) { kicks.receive() }
         }
     }

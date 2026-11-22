@@ -109,8 +109,13 @@ fun LibraryScreen(
 
     LaunchedEffect(Unit) { Library.refreshProfile(offline) }
     LaunchedEffect(Unit) { Library.loadSoundprint() }
-    LaunchedEffect(view) {
-        if (view == LibView.Root) Library.refreshPlaylists(offline)
+    var playlistsPending by remember { mutableStateOf(false) }
+    LaunchedEffect(view, offline) {
+        if (view == LibView.Root) {
+            try {
+                CatalogRead.observe({ playlistsPending = true }) { Library.refreshPlaylists(offline) }
+            } finally { playlistsPending = false }
+        }
     }
 
     if (showSettings) {
@@ -166,10 +171,7 @@ fun LibraryScreen(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )
-                        if (Prefs.star) {
-                            Spacer(Modifier.width(8.dp))
-                            StarBadge()
-                        }
+                        if (Prefs.star) { Spacer(Modifier.width(6.dp)); StarBadge() }
                     }
                 }
                 IconButton(onClick = { showCreate = true }) {
@@ -203,7 +205,22 @@ fun LibraryScreen(
                 item {
                     LibRow(R.drawable.ic_download, stringResource(R.string.downloads)) { view = LibView.Downloaded }
                 }
-                items(LocalPlaylists.visible, key = { "own:" + it.id }) { p ->
+                if (playlistsPending) {
+                    item(key = "playlists:waiting") {
+                        Text(stringResource(R.string.catalog_waiting), Modifier.padding(16.dp))
+                    }
+                }
+                val albums = LocalPlaylists.visible.filter { it.savedAlbum }
+                val remoteAlbums = Library.likedPlaylists.distinctBy { it.urn }.filter { pl -> pl.isAlbum && albums.none { it.source == "album:${pl.urn}" } }
+                if (albums.isNotEmpty() || remoteAlbums.isNotEmpty()) {
+                    item { Text(stringResource(R.string.search_albums), Modifier.padding(16.dp), style = MaterialTheme.typography.titleMedium) }
+                    items(albums.map { it.asPlaylist() } + remoteAlbums, key = { "album:" + it.urn }) { p ->
+                        LibRow(R.drawable.ic_album, p.title, playlist = p) {
+                            view = LibView.PlaylistView(p.urn, p.title, LocalPlaylists.owns(p.urn))
+                        }
+                    }
+                }
+                items(LocalPlaylists.visible.filterNot { it.savedAlbum }, key = { "own:" + it.id }) { p ->
                     LibRow(
                         R.drawable.ic_music,
                         p.title,
@@ -215,7 +232,7 @@ fun LibraryScreen(
                         view = LibView.PlaylistView(p.id, p.title)
                     }
                 }
-                items(Library.likedPlaylists.distinctBy { it.urn }, key = { "liked:" + it.urn }) { p ->
+                items(Library.likedPlaylists.filterNot { it.isAlbum }.distinctBy { it.urn }, key = { "liked:" + it.urn }) { p ->
                     LibRow(
                         R.drawable.ic_music,
                         p.title,
@@ -262,6 +279,7 @@ fun LibraryScreen(
             dimUndownloaded = offline,
             downloadAll = !offline,
             loader = { page, fresh -> Library.likedPage(page, fresh, offline) },
+            likes = true,
         )
 
         LibView.Downloaded -> LibTracks(
@@ -272,6 +290,7 @@ fun LibraryScreen(
 
         LibView.HistoryView -> LibTracks(
             title = stringResource(R.string.history),
+            history = true,
             onBack = { view = LibView.Root },
             dimUndownloaded = offline,
             loader = { page, fresh -> Library.historyPage(page, fresh, offline) },
@@ -465,9 +484,13 @@ private fun LibTracks(
     onReorder: ((List<String>) -> Unit)? = null,
     shuffleKey: String? = null,
     removeDownloadsOf: String? = null,
+    likes: Boolean = false,
+    history: Boolean = false,
 ) {
     val controller = LocalMediaController.current
+    val sorting = rememberTrackSort(listKey ?: shuffleKey ?: title)
     var reordering by remember { mutableStateOf(false) }
+    var reorderLikes by remember { mutableStateOf<List<Track>?>(null) }
     val pickCover = coverUrn?.let { rememberCoverPicker(it) }
     var items by remember { mutableStateOf<List<Track>>(emptyList()) }
     var confirmClear by remember { mutableStateOf(false) }
@@ -475,6 +498,7 @@ private fun LibTracks(
     var page by remember { mutableStateOf(0) }
     var hasMore by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
+    var pending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var notSaved by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
@@ -485,14 +509,28 @@ private fun LibTracks(
     val context = LocalContext.current
 
     val generation = remember { java.util.concurrent.atomic.AtomicInteger() }
+    var cachedRows by remember { mutableStateOf(emptyList<Track>()) }
     var freshAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(likes, history, Prefs.offline) {
+        if (likes || history) Library.cachedRows(likes) { cachedRows = it }
+    }
 
     suspend fun syncHead(gen: Int) {
         if (Prefs.offline) return
-        val (batch, more) = runCatching { loader(0, true) }.getOrNull() ?: return
-        if (gen != generation.get() || batch.isEmpty()) return
+        val (batch, more) = try {
+            CatalogRead.observe({ if (gen == generation.get()) pending = true }) {
+                if (!likes && !history && coverUrn == null && sorting.order.active) collectTrackPages { loader(it, it == 0) } to false else loader(0, true)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return
+        } finally {
+            if (gen == generation.get()) pending = false
+        }
+        if (gen != generation.get() || (batch.isEmpty() && !likes && !history)) return
         freshAt = System.currentTimeMillis()
-        if (page == 0) {
+        if (page == 0 || (likes && !more)) {
             items = batch
             hasMore = more
         } else {
@@ -501,7 +539,7 @@ private fun LibTracks(
         error = null
     }
 
-    suspend fun everything(): List<Track> {
+    suspend fun everything(strict: Boolean = false): List<Track> {
         var acc = items
         var p = page
         var more = hasMore
@@ -512,13 +550,20 @@ private fun LibTracks(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (strict) throw e
                 break
             }
             acc = (acc + batch).distinctBy { it.urn }
             more = next
         }
+        if (strict) check(!more) { "The list is too large to load at once" }
         return acc.filter(visible)
     }
+
+    fun arranged(tracks: List<Track>): List<Track> = if (coverUrn != null) tracks else sorting.tracks(
+        if (likes && sorting.order.mode == TrackSort.ORIGINAL) Likes.ordered(tracks) else tracks,
+        newestFirst = true,
+    )
 
     fun load(p: Int) {
         if (loading) return
@@ -529,18 +574,23 @@ private fun LibTracks(
             error = null
             notSaved = false
             try {
-                val (batch, more) = loader(p, false)
+                val (batch, more) = CatalogRead.observe({ pending = true }) {
+                    loader(p, false)
+                }
                 if (gen == generation.get()) {
                     items = if (p == 0) batch else (items + batch).distinctBy { it.urn }
                     page = p
                     hasMore = more
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Library.NotSavedOfflineException) {
                 notSaved = true
             } catch (e: Exception) {
                 error = e.message
             } finally {
                 loading = false
+                pending = false
             }
             if (p == 0) syncHead(gen)
         }
@@ -563,8 +613,8 @@ private fun LibTracks(
         if (live.isNotEmpty() || items.isNotEmpty()) items = live
     }
 
-    LaunchedEffect(hasMore, page, loading) {
-        if (!hasMore || loading || items.isEmpty() || items.size >= 1000) return@LaunchedEffect
+    LaunchedEffect(hasMore, page, loading, sorting.busy) {
+        if (likes || !hasMore || loading || sorting.busy || items.isEmpty() || items.size >= 1000) return@LaunchedEffect
         val gen = generation.get()
         val next = page + 1
         val (batch, more) = runCatching { loader(next, false) }.getOrNull() ?: return@LaunchedEffect
@@ -829,6 +879,14 @@ private fun LibTracks(
             }
         }
 
+        reorderLikes?.let { tracks ->
+            ReorderDialog(tracks, onDismiss = { reorderLikes = null }) { order ->
+                Likes.reorder(order)
+                sorting.order = TrackOrder()
+                reorderLikes = null
+            }
+        }
+
         if (reordering && onReorder != null) {
             ReorderDialog(liveTracks ?: items, onDismiss = { reordering = false }) { order ->
                 reordering = false
@@ -930,7 +988,35 @@ private fun LibTracks(
             }
         }
 
-        val shown = items.filter(visible)
+        if (pending) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(12.dp))
+                Text(stringResource(R.string.catalog_waiting), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        if (coverUrn == null) TrackSortBar(
+            sorting,
+            loading = loading,
+            onReorder = if (likes && items.size > 1) suspend {
+                generation.incrementAndGet()
+                val all = everything(strict = true)
+                items = all
+                hasMore = false
+                reorderLikes = Likes.ordered(all)
+            } else null,
+        ) { mode ->
+            if (hasMore) {
+                generation.incrementAndGet()
+                val all = collectTrackPages { loader(it, false) }
+                items = all
+                hasMore = false
+            }
+            sorting.loadMetadata(items, mode)
+        }
+        val rows = if ((hasMore || (loading && items.isEmpty())) && cachedRows.isNotEmpty()) (items + cachedRows).distinctBy { it.urn } else items
+        val shown = arranged((if (likes) Likes.visible(rows) else rows).filter(visible))
         val trailing: (@Composable (Track) -> Unit)? = when {
             rowTrailing != null -> rowTrailing
             onRemoveTrack != null -> @Composable { track: Track -> PlaylistTrackMenu(track, onRemove = { onRemoveTrack(track) }) }
@@ -943,7 +1029,7 @@ private fun LibTracks(
             emptyText = if (notSaved) stringResource(R.string.playlist_not_offline) else emptyText ?: stringResource(R.string.search_empty),
             canLoadMore = hasMore,
             onLoadMore = { load(page + 1) },
-            onPlay = { Playback.play(controller, shown, it, source = shuffleKey, more = { everything() }) },
+            onPlay = { Playback.play(controller, shown, it, source = shuffleKey, more = { arranged(everything()) }) },
             dimUndownloaded = dimUndownloaded,
             rowTrailing = trailing,
             onRemove = onRemoveTrack,
@@ -961,7 +1047,7 @@ private fun PlaylistTrackMenu(track: Track, onRemove: () -> Unit) {
             Icon(painterResource(R.drawable.ic_more_vert), iconLabel(R.drawable.ic_more_vert), modifier = Modifier.size(20.dp))
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
+            if (!track.external) DropdownMenuItem(
                 text = { Text(stringResource(if (liked) R.string.notif_unlike else R.string.notif_like)) },
                 leadingIcon = {
                     Icon(painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart), null, modifier = Modifier.size(18.dp))

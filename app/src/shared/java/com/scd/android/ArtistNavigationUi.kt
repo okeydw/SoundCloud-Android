@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.dp
 fun ArtistActions(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     FlowRow(
         modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, androidx.compose.ui.Alignment.CenterHorizontally),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) { content() }
 }

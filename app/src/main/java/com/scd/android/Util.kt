@@ -7,6 +7,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import java.io.File
 
+private const val ORIGINAL_TITLE = "original_track_title"
+
 private object QueuedTracks {
     private val map = object : LinkedHashMap<String, Track>(256, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Track>?): Boolean = size > 6000
@@ -25,16 +27,19 @@ fun Track.toMediaItem(): MediaItem {
     val gp = goPlus
     if (gp) ScDataSource.markGoPlus(urn)
     ScDataSource.noteStorageQuality(urn, scdMeta?.storage_quality)
-    ScDataSource.expectDuration(urn, displayDuration)
+    val durationMs = displayDuration
+    ScDataSource.expectDuration(urn, durationMs)
     val localArt = Downloads.artPathOrNull(urn)
     val artwork = localArt?.let { File(it).toUri() } ?: Api.artworkUrl(artwork_url)?.toUri()
+    val artists = titleCredits()
     return MediaItem.Builder()
         .setMediaId(urn)
         .setUri(local?.toUri() ?: Api.streamUrl(urn).toUri())
         .setMediaMetadata(
             MediaMetadata.Builder()
-                .setTitle(title)
+                .setTitle(formattedTrackTitle(title, user?.username.orEmpty(), artists))
                 .setArtist(user?.username)
+                .setDurationMs(durationMs.takeIf { it > 0 })
                 .setArtworkUri(artwork)
                 .apply {
                     if (artwork == null) {
@@ -45,12 +50,14 @@ fun Track.toMediaItem(): MediaItem {
                 }
                 .setExtras(
                     Bundle().apply {
+                        putString(ORIGINAL_TITLE, title)
+                        if (artists.isNotEmpty()) putStringArrayList("credited_artists", ArrayList(artists))
                         putString("artist_urn", user?.urn)
                         putString("artwork_url", artwork_url)
                         putString("waveform_url", waveform_url)
                         putString("permalink_url", permalink_url)
                         putString("genre", genre)
-                        putLong("duration", displayDuration)
+                        putLong("duration", durationMs)
                         putBoolean("go_plus", gp)
                     }
                 )
@@ -59,11 +66,26 @@ fun Track.toMediaItem(): MediaItem {
         .build()
 }
 
+val MediaMetadata.originalTitle: String?
+    get() = extras?.getString(ORIGINAL_TITLE) ?: title?.toString()
+
+val MediaMetadata.formattedTitle: String
+    get() = formattedTrackTitle(originalTitle.orEmpty(), artist?.toString().orEmpty(), extras?.getStringArrayList("credited_artists").orEmpty())
+
+fun MediaItem.withCurrentTitle(): MediaItem {
+    val md = mediaMetadata
+    val original = md.originalTitle ?: return this
+    val display = md.formattedTitle
+    if (display == md.title?.toString()) return this
+    val extras = Bundle(md.extras ?: Bundle.EMPTY).apply { putString(ORIGINAL_TITLE, original) }
+    return buildUpon().setMediaMetadata(md.buildUpon().setTitle(display).setExtras(extras).build()).build()
+}
+
 fun MediaItem.toTrackOrNull(): Track? {
     if (mediaId.isEmpty()) return null
     QueuedTracks.get(mediaId)?.let { return it }
     val md = mediaMetadata
-    val title = md.title?.toString() ?: return null
+    val title = md.originalTitle ?: return null
     return Track(
         urn = mediaId,
         title = title,

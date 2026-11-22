@@ -129,9 +129,10 @@
 
 - **音浪与推荐** - 基于点赞和收听历史的自研推荐系统
 - **搜索** - 曲目、艺人、播放列表、专辑以及氛围搜索（神经网络根据上下文挑选曲目）
-- **播放器** - 随机播放、循环、播放队列、歌词、喜欢与不喜欢
+- **播放器** - 随机播放、循环、播放队列、歌词、喜欢与不喜欢。在展开的播放器中点击艺人姓名可打开其主页；在曲目列表中点击姓名则会播放曲目。
 - **均衡器** - 内置预设，也可以创建自己的预设
 - **播放列表** - 与 SoundCloud 同步的本地播放列表，可公开或私密，拖动即可调整曲目顺序并保存
+- **排序与喜欢歌曲的顺序** - 在“我”的歌曲列表上方，通过小图标按标题、艺人、时长等字段排序。“更改顺序”可手动移动喜欢的歌曲，顺序保存在设备上并用于播放。播放列表中没有排序控件。
 - **历史与统计** - 收听时长、热门曲目和艺人、按天和按小时的图表
 - **个人主页** - 关注与取消关注，SoundCloud 主页中的链接
 - **SoundCloud Auto（测试版）** - 创建连接蓝牙设备时的场景
@@ -139,6 +140,7 @@
 ### 离线模式
 
 - 下载曲目和播放列表，带缓存的离线模式
+- **HLS 修复** - 自动检查旧下载，也可通过“设置 → 存储 → 检查完整性”手动检查。重新封装音频以重建跳转索引，无需重新编码；联网时会重新下载不完整的文件。检查结果会显示仍需修复的文件数。
 - 手动设置缓存上限和清理时间
 - 同时安装两个版本时，Full 和 Lite 共享下载和播放列表（测试版，部分可用）
 
@@ -189,9 +191,9 @@
 **构建：** JDK 17，Android SDK 35。
 
 ```bash
-./gradlew assembleLiteDebug assembleFullDebug   # APK 位于 app/build/outputs/apk/<flavor>/debug/
-./gradlew testLiteDebugUnitTest                 # 单元测试
-./gradlew lintLiteDebug                         # lint（baseline：./gradlew updateLintBaseline）
+./gradlew assembleLiteDebug assembleFullDebug         # APK 位于 app/build/outputs/apk/<flavor>/debug/
+./gradlew testLiteDebugUnitTest testFullDebugUnitTest # 单元测试
+./gradlew lintLiteDebug lintFullDebug                 # lint（baseline：./gradlew updateLintBaseline）
 ```
 
 **源码：**

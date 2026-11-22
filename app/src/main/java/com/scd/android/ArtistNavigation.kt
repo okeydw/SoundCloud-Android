@@ -14,13 +14,15 @@ sealed interface ArtistDestination {
 
 data class TrackArtistLink(val name: String, val destination: ArtistDestination?)
 
+internal fun Track.creditedArtists(): List<EnrichmentArtist> = buildList {
+    enrichment?.primary_artist?.let { add(it) }
+    enrichment?.participants.orEmpty()
+        .filter { it.role in setOf("primary", "co_primary", "co-primary", "featured") }
+        .forEach { add(it.artist) }
+}.filter { it.name.isNotBlank() }
+
 fun Track.artistLinks(): List<TrackArtistLink> {
-    val artists = buildList {
-        enrichment?.primary_artist?.let { add(it) }
-        enrichment?.participants.orEmpty()
-            .filter { it.role in setOf("primary", "co_primary", "co-primary", "featured") }
-            .forEach { add(it.artist) }
-    }.filter { it.name.isNotBlank() }
+    val artists = creditedArtists()
     if (artists.isEmpty()) {
         val uploader = user ?: return emptyList()
         if (uploader.username.isBlank()) return emptyList()

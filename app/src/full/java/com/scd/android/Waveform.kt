@@ -6,10 +6,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -26,36 +24,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-fun fakeWave(urn: String?, bars: Int): List<Float> {
-    var seed = (urn ?: "x").hashCode().toLong() and 0xffffffffL
-    return List(bars) { i ->
-        seed = (seed * 1103515245L + 12345L) and 0x7fffffffL
-        val noise = (seed % 1000) / 1000f
-        val shape = 0.55f + 0.35f * kotlin.math.sin(i / bars.toFloat() * 9.4f)
-        (0.18f + 0.62f * noise * shape + 0.12f).coerceIn(0.12f, 1f)
-    }
-}
-
 @Composable
 fun rememberWaveSamples(urn: String?, waveformUrl: String?, bars: Int): List<Float> {
-    var samples by remember(urn, bars) { mutableStateOf(WaveCache.get(urn)?.let { resample(it, bars) }) }
-    LaunchedEffect(urn, waveformUrl) {
-        if (samples != null || urn == null) return@LaunchedEffect
-        val url = waveformUrl ?: runCatching { Api.trackByUrn(urn).waveform_url }.getOrNull() ?: return@LaunchedEffect
-        val loaded = runCatching { Api.waveform(url) }.getOrNull() ?: return@LaunchedEffect
-        WaveCache.put(urn, loaded)
-        samples = resample(loaded, bars)
-    }
-    return samples ?: remember(urn, bars) { fakeWave(urn, bars) }
-}
-
-private fun resample(src: List<Float>, bars: Int): List<Float> {
-    if (src.size == bars || src.isEmpty()) return src
-    return List(bars) { i ->
-        val a = i * src.size / bars
-        val b = ((i + 1) * src.size / bars).coerceAtLeast(a + 1).coerceAtMost(src.size)
-        src.subList(a, b).average().toFloat()
-    }
+    val samples = rememberTrackWaveform(urn, waveformUrl)
+    return remember(samples, bars) { waveBars(samples, bars) }
 }
 
 private fun DrawScope.bars(samples: List<Float>, color: Color, height: Float, gap: Float, mirror: Boolean, brush: Brush? = null) {
@@ -90,7 +62,7 @@ fun Waveform(
     val p = LocalGlass.current
     val muted = p.text.copy(alpha = 0.26f)
     var drag by remember { mutableFloatStateOf(-1f) }
-    val seek by rememberUpdatedState(onSeek)
+    val seek by rememberUpdatedState(onSeek.takeUnless { Together.isGuest })
     val total = if (reflection) height * 1.35f else height
     val glowSamples = remember(samples) { samples.map { (it * 1.12f).coerceAtMost(1.05f) } }
     Spacer(
@@ -98,7 +70,7 @@ fun Waveform(
             .fillMaxWidth()
             .height(total)
             .then(
-                if (onSeek != null) {
+                if (onSeek != null && !Together.isGuest) {
                     Modifier
                         .pointerInput(Unit) {
                             detectTapGestures { o -> seek?.invoke((o.x / size.width).coerceIn(0f, 1f)) }

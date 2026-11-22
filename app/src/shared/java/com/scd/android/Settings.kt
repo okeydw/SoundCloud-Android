@@ -1,5 +1,18 @@
 package com.scd.android
 
+import android.app.ActivityOptions
+import android.companion.CompanionDeviceManager
+import android.os.Build
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.ActivityOptionsCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.semantics.Role
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -438,6 +451,18 @@ fun SettingsScreen(
                         stringResource(R.string.immersive_artwork_hint),
                         Prefs.immersiveArtwork,
                     ) { Prefs.changeImmersiveArtwork(it) }
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitch(
+                        stringResource(R.string.hide_title_artists),
+                        stringResource(R.string.hide_title_artists_hint),
+                        Prefs.hideTitleArtists,
+                    ) { Prefs.changeHideTitleArtists(it) }
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitch(
+                        stringResource(R.string.keep_player_awake),
+                        stringResource(R.string.keep_player_awake_hint),
+                        Prefs.keepPlayerAwake,
+                    ) { Prefs.changeKeepPlayerAwake(it) }
 
                     Spacer(Modifier.height(8.dp))
                     var iconOpen by remember { mutableStateOf(false) }
@@ -486,13 +511,24 @@ fun SettingsScreen(
                 }
 
                 Sec.STORAGE -> {
+                    DownloadVolumePicker()
+                    Spacer(Modifier.height(12.dp))
                     val downloadedSet = Downloads.downloaded
                     val tracks = Downloads.tracks()
                     var usedTracks by remember { mutableStateOf(0L) }
-                    LaunchedEffect(downloadedSet) {
-                        usedTracks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            tracks.sumOf { Downloads.fileFor(it.urn).length() }
+                    var internalTracks by remember { mutableStateOf(0L) }
+                    LaunchedEffect(downloadedSet, Downloads.moveProgress?.running) {
+                        val sizes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            var internal = 0L
+                            val total = tracks.sumOf {
+                                val bytes = Downloads.fileFor(it.urn).length()
+                                if (Downloads.volumes.saved(it.urn) == Downloads.volumes.internal) internal += bytes
+                                bytes
+                            }
+                            total to internal
                         }
+                        usedTracks = sizes.first
+                        internalTracks = sizes.second
                     }
                     var cacheBump by remember { mutableStateOf(0) }
                     var cacheBytes by remember { mutableStateOf(0L) }
@@ -504,7 +540,7 @@ fun SettingsScreen(
                     val stat = remember { runCatching { android.os.StatFs(ctx.filesDir.path) }.getOrNull() }
                     val total = stat?.totalBytes ?: 0L
                     val free = stat?.availableBytes ?: 0L
-                    val usedOther = (total - free - usedTracks - cacheBytes).coerceAtLeast(0L)
+                    val usedOther = (total - free - internalTracks - cacheBytes).coerceAtLeast(0L)
 
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.storage_downloaded), Modifier.weight(1f), fontWeight = FontWeight.Medium)
@@ -512,9 +548,9 @@ fun SettingsScreen(
                     }
 
                     Spacer(Modifier.height(12.dp))
-                    val barTotal = (usedTracks + cacheBytes + usedOther + free).toFloat().coerceAtLeast(1f)
+                    val barTotal = (internalTracks + cacheBytes + usedOther + free).toFloat().coerceAtLeast(1f)
                     val minSlice = barTotal * 0.03f
-                    val trackWeight = if (usedTracks > 0) maxOf(usedTracks.toFloat(), minSlice) else 0f
+                    val trackWeight = if (internalTracks > 0) maxOf(internalTracks.toFloat(), minSlice) else 0f
                     val cacheWeight = if (cacheBytes > 0) maxOf(cacheBytes.toFloat(), minSlice) else 0f
                     val cacheColor = MaterialTheme.colorScheme.tertiary
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp))) {
@@ -524,7 +560,7 @@ fun SettingsScreen(
                         if (free > 0) Box(Modifier.weight(free.toFloat()).height(12.dp).background(MaterialTheme.colorScheme.surfaceVariant))
                     }
                     Spacer(Modifier.height(10.dp))
-                    StorageLegend(MaterialTheme.colorScheme.primary, stringResource(R.string.storage_used_tracks), fmtBytes(usedTracks))
+                    StorageLegend(MaterialTheme.colorScheme.primary, stringResource(R.string.storage_used_tracks), fmtBytes(internalTracks))
                     StorageLegend(cacheColor, stringResource(R.string.storage_cache), fmtBytes(cacheBytes))
                     StorageLegend(MaterialTheme.colorScheme.onSurfaceVariant, stringResource(R.string.storage_other), fmtBytes(usedOther))
                     StorageLegend(MaterialTheme.colorScheme.surfaceVariant, stringResource(R.string.storage_free), fmtBytes(free))
@@ -739,11 +775,7 @@ fun SettingsScreen(
                         Integrity.last?.let { report ->
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                when {
-                                    report.removed == 0 -> stringResource(R.string.integrity_clean, report.checked)
-                                    report.redownload > 0 -> stringResource(R.string.integrity_fixed_redownload, report.removed, report.redownload)
-                                    else -> stringResource(R.string.integrity_fixed, report.removed)
-                                },
+                                stringResource(R.string.integrity_result, report.checked, report.repaired + report.removed, report.remaining),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Medium,
                             )
@@ -751,11 +783,6 @@ fun SettingsScreen(
                     }
 
                     Spacer(Modifier.height(8.dp))
-                    SettingSwitch(
-                        stringResource(R.string.play_blocked),
-                        stringResource(R.string.play_blocked_hint),
-                        Prefs.playBlocked,
-                    ) { Prefs.changePlayBlocked(it) }
 
                     Spacer(Modifier.height(8.dp))
                     SettingSwitch(
@@ -1223,6 +1250,50 @@ private fun NetworkSection() {
 }
 
 @Composable
+private fun DownloadVolumePicker() {
+    val volumes = Downloads.volumes
+    var selected by remember { mutableStateOf(volumes.selected) }
+    var open by remember { mutableStateOf(false) }
+    val internal = stringResource(R.string.storage_internal)
+    val choices = remember(open) { volumes.available() }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(stringResource(R.string.download_destination), Modifier.weight(1f))
+        Box {
+            TextButton(enabled = Downloads.moveProgress?.running != true, onClick = { open = true }) {
+                Text(if (selected.isEmpty()) internal else choices[selected] ?: stringResource(R.string.storage_disconnected))
+                Icon(painterResource(R.drawable.ic_chevron_down), null, modifier = Modifier.size(18.dp))
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                (mapOf("" to internal) + choices).forEach { (path, label) ->
+                    DropdownMenuItem(text = { Text(label) }, onClick = {
+                        volumes.selected = path
+                        selected = path
+                        open = false
+                    })
+                }
+            }
+        }
+    }
+    val progress = Downloads.moveProgress?.takeIf { it.selection == selected }
+    val connected = selected.isEmpty() || selected in choices
+    val remaining = remember(selected, Downloads.downloaded, progress?.running) {
+        val folder = selected.ifEmpty { volumes.internal.path }
+        val unfinished = volumes.unfinished()
+        Downloads.downloaded.count { volumes.saved(it).path != folder || it in unfinished }
+    }
+    if (remaining > 0 || progress != null) {
+        TextButton(enabled = connected && remaining > 0 && progress?.running != true, onClick = { Downloads.moveDownloads(selected) }) {
+            Text(stringResource(R.string.move_downloads))
+        }
+        if (progress != null && progress.total > 0) {
+            val status = if (progress.running) stringResource(R.string.move_downloads_progress, progress.done, progress.total)
+                else stringResource(R.string.move_downloads_result, progress.moved, progress.total - progress.moved)
+            Text(status, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
 private fun StorageStatusBlock() {
     Text(stringResource(R.string.storage_status_title), fontWeight = FontWeight.Medium)
     Text(
@@ -1313,6 +1384,10 @@ private fun RelayRow(
 private fun CarSection() {
     val ctx = LocalContext.current
     var permissionTick by remember { mutableStateOf(0) }
+    LifecycleResumeEffect(ctx) {
+        permissionTick++
+        onPauseOrDispose {}
+    }
     val askBluetooth = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { permissionTick++ }
@@ -1346,6 +1421,10 @@ private fun CarSection() {
     val paired = remember(permissionTick, needsPermission) { CarAutoplay.pairedDevices(ctx) }
     val names = paired.associate { it.address to it.name }
     val scenarios = CarScenarios.all
+    if (!needsPermission && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S &&
+        ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_COMPANION_DEVICE_SETUP)) {
+        CarBackgroundAccess(scenarios)
+    }
     var editing by remember { mutableStateOf<CarScenario?>(null) }
 
     Spacer(Modifier.height(12.dp))
@@ -1393,6 +1472,119 @@ private fun CarSection() {
             onGrant = { requestPermission() },
             onDismiss = { editing = null },
         )
+    }
+}
+
+@androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.S)
+@Suppress("DEPRECATION")
+@Composable
+private fun CarBackgroundAccess(scenarios: List<CarScenario>) {
+    val activity = LocalActivity.current ?: return
+    val manager = remember(activity) { activity.getSystemService(CompanionDeviceManager::class.java) } ?: return
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var granted by remember(manager) { mutableStateOf(false) }
+    var request by remember { mutableStateOf<Any?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    var paired by remember { mutableStateOf(emptyList<PairedDevice>()) }
+    var pickDevice by remember { mutableStateOf(false) }
+
+    fun fail(reason: String) {
+        request = null
+        failed = true
+        Logs.add("car", "device association: ${reason.take(120)}")
+    }
+    fun refresh() {
+        try {
+            granted = if (Build.VERSION.SDK_INT >= 33) manager.myAssociations.isNotEmpty() else manager.associations.isNotEmpty()
+            if (granted) {
+                request = null
+                failed = false
+            }
+        } catch (e: RuntimeException) {
+            fail(e.javaClass.simpleName)
+        }
+    }
+    LifecycleResumeEffect(manager) {
+        refresh()
+        onPauseOrDispose {}
+    }
+    DisposableEffect(manager) { onDispose { request = null } }
+    LaunchedEffect(request, lifecycle) {
+        val token = request ?: return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            kotlinx.coroutines.delay(60_000)
+            if (request === token) fail("system dialog timed out")
+        }
+    }
+    val launcher = androidx.activity.compose.rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        request = null
+        refresh()
+        if (!granted && (result.resultCode != android.app.Activity.RESULT_CANCELED ||
+                result.data?.hasExtra(ActivityResultContracts.StartIntentSenderForResult.EXTRA_SEND_INTENT_EXCEPTION) == true)) {
+            fail("system dialog returned ${result.resultCode}")
+        }
+    }
+    fun associate(address: String? = null) {
+        val configured = if (scenarios.any { it.anyDevice }) emptySet() else scenarios.flatMap { it.devices.keys }.toSet()
+        paired = CarAutoplay.pairedDevices(activity).filter { configured.isEmpty() || it.address in configured }
+        val addresses = when {
+            address != null -> setOf(address)
+            configured.isNotEmpty() -> configured
+            paired.size == 1 -> setOf(paired.single().address)
+            else -> emptySet()
+        }
+        val token = Any()
+        request = token
+        failed = false
+        Logs.add("car", "requesting device association (${addresses.size} address filters)")
+        try {
+            requestCarAssociation(activity, manager, addresses, onPending = { sender ->
+                if (request !== token) return@requestCarAssociation
+                if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                    fail("settings screen is no longer active")
+                    return@requestCarAssociation
+                }
+                val options = if (Build.VERSION.SDK_INT >= 34) ActivityOptionsCompat.makeBasic()
+                    .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED) else null
+                try {
+                    launcher.launch(IntentSenderRequest.Builder(sender).build(), options)
+                } catch (e: RuntimeException) {
+                    fail(e.javaClass.simpleName)
+                }
+            }, onCreated = { if (request === token) refresh() }, onError = { if (request === token) fail(it) })
+        } catch (e: RuntimeException) {
+            fail(e.javaClass.simpleName)
+        }
+    }
+    val hint = when {
+        failed -> R.string.car_background_failed
+        request != null -> R.string.car_background_wait
+        else -> R.string.car_background_hint
+    }
+    SettingSwitch(stringResource(R.string.car_background), stringResource(hint), granted, enabled = request == null) { enable ->
+        if (enable) associate() else try {
+            if (Build.VERSION.SDK_INT >= 33) manager.myAssociations.forEach { manager.disassociate(it.id) }
+            else manager.associations.forEach { manager.disassociate(it) }
+            refresh()
+        } catch (e: RuntimeException) {
+            fail(e.javaClass.simpleName)
+        }
+    }
+    if (failed && paired.size > 1) {
+        TextButton(onClick = { pickDevice = true }) { Text(stringResource(R.string.car_devices)) }
+    }
+    if (pickDevice) {
+        AppDialog({ pickDevice = false }) {
+            Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+                Text(stringResource(R.string.car_devices), style = MaterialTheme.typography.titleMedium)
+                paired.forEach { device ->
+                    TextButton(onClick = {
+                        pickDevice = false
+                        associate(device.address)
+                    }) { Text(device.name) }
+                }
+            }
+        }
     }
 }
 
@@ -1755,14 +1947,15 @@ private fun SettingSwitch(
     enabled: Boolean = true,
     onChange: (Boolean) -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+        .padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).alpha(if (enabled) 1f else 0.5f)) {
             Text(title, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(2.dp))
             Text(hint, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, enabled = enabled, onCheckedChange = onChange)
+        Switch(checked = checked, enabled = enabled, onCheckedChange = null)
     }
 }
 

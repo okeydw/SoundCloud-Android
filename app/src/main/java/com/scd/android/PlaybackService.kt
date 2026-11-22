@@ -60,6 +60,7 @@ class PlaybackService : MediaLibraryService() {
                 .setFlags(androidx.media3.datasource.cache.CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
             prefetchFactory = cached
             Logs.add("player", "media cache on")
+            Integrity.startAutomatic(this)
             RoutingDataSource.Factory(local, cached)
         }.getOrElse { e ->
             Logs.add("player", "media cache off: ${e.javaClass.simpleName}: ${e.message}")
@@ -94,12 +95,20 @@ class PlaybackService : MediaLibraryService() {
         player.repeatMode = Prefs.repeatMode.coerceIn(0, 2)
         ShuffleQueue.onChanged = { scope.launch(Dispatchers.Main) { updateCustomLayout() } }
 
+        fun refreshCurrentTitle() {
+            val item = player.currentMediaItem ?: return
+            val updated = item.withCurrentTitle()
+            if (updated !== item) player.replaceMediaItem(player.currentMediaItemIndex, updated)
+        }
+
         player.addListener(object : Player.Listener {
             override fun onTimelineChanged(timeline: Timeline, reason: Int) {
                 notifyLibraryChanged()
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                refreshCurrentTitle()
+                Prefs.activateTrackEq(mediaItem?.mediaId)
                 PlayerWidgets.publish(this@PlaybackService, player)
                 reportListenEvent(mediaItem?.mediaId, reason)
                 historyJob?.cancel()
@@ -176,6 +185,9 @@ class PlaybackService : MediaLibraryService() {
         }
 
         updateCustomLayout()
+        scope.launch(Dispatchers.Main) {
+            androidx.compose.runtime.snapshotFlow { Prefs.hideTitleArtists }.collect { refreshCurrentTitle() }
+        }
         scope.launch(Dispatchers.Main) {
             androidx.compose.runtime.snapshotFlow { Likes.urns }.collect { updateCustomLayout() }
         }
@@ -391,7 +403,9 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun updateCustomLayout() {
-        mediaSession?.setCustomLayout(ImmutableList.of(shuffleButton(), likeButton()))
+        val buttons = ImmutableList.builder<CommandButton>().add(shuffleButton())
+        if (isScUrn(mediaSession?.player?.currentMediaItem?.mediaId.orEmpty())) buttons.add(likeButton())
+        mediaSession?.setCustomLayout(buttons.build())
     }
 
     private var historyJob: kotlinx.coroutines.Job? = null
@@ -412,6 +426,7 @@ class PlaybackService : MediaLibraryService() {
                 } else if (urn != null && evUrn == null) {
                     evUrn = urn
                 }
+                PlayerWidgets.updateProgress(this@PlaybackService, player)
                 kotlinx.coroutines.delay(2_000)
             }
         }
@@ -501,7 +516,7 @@ class PlaybackService : MediaLibraryService() {
         lastReportedUrn = urn
 
         val md = mediaItem.mediaMetadata
-        val title = md.title?.toString() ?: return
+        val title = md.originalTitle ?: return
         scope.launch {
             runCatching {
                 Api.postHistory(
@@ -527,6 +542,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        Prefs.activateTrackEq(null)
         prefetchWriter?.cancel()
         Together.detachPlayer()
         brain?.stop()

@@ -385,7 +385,7 @@ private fun LazyListScope.suggestions(
         ) {
             Icon(painterResource(R.drawable.ic_search), null, tint = p.text3, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(14.dp))
-            Text(t.title, style = GlassType.body, color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(t.displayTitle, style = GlassType.body, color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Text(t.user?.username ?: "", style = GlassType.small, color = p.text3, maxLines = 1)
         }
     }
@@ -474,7 +474,7 @@ private fun WallTile(track: Track, size: Dp, hero: Boolean, time: State<Float>?,
                     .background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f))),
             )
             Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
-                Text(track.title, style = GlassType.rowTitle.copy(fontSize = 19.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(track.displayTitle, style = GlassType.rowTitle.copy(fontSize = 19.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(track.user?.username ?: "", style = GlassType.small, color = Color.White.copy(alpha = 0.78f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }

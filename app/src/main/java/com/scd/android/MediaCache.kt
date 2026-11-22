@@ -189,24 +189,31 @@ object MediaCache {
         var checked = 0
         var removed = 0
         val tmp = File(tmpDir, "integrity.m4a")
-        for (key in c.keys.toList()) {
+        for (key in c.keys.sortedByDescending { it.endsWith("|hq") }) {
             step()
             val urn = key.substringBefore('|')
-            if (urn == skipUrn) continue
+            if (urn == skipUrn || urn == NowPlaying.urn) continue
             val length = contentLength(key)
-            if (length !in 1..2_500_000L) continue
+            if (length <= 0L) continue
             if (!runCatching { c.isCached(key, 0L, length) }.getOrDefault(false)) continue
             val spans = runCatching { c.getCachedSpans(key).sortedBy { it.position } }.getOrNull() ?: continue
             val copied = runCatching {
                 tmp.outputStream().use { out -> spans.forEach { span -> span.file?.inputStream()?.use { it.copyTo(out) } } }
                 tmp.length() == length
             }.getOrDefault(false)
-            val ms = if (copied) ScDataSource.durationOf(tmp) else null
+            val expected = DurationCache.get(urn)
+            val repacked = copied && AudioNormalize.repair(tmp, expected)
+            val info = if (copied) AudioProbe.inspect(tmp) else null
+            if (repacked && urn != NowPlaying.urn && ScDataSource.adoptSpool(urn, tmp, ServedQuality.of(urn) ?: Quality.SQ)) {
+                checked++
+                removed++
+                continue
+            }
             tmp.delete()
+            val ms = info?.ms
             if (ms == null) continue
             checked++
-            val expected = DurationCache.get(urn)
-            if (ScDataSource.isSnippetLength(ms) && (expected == 0L || ms < expected - 5_000L)) {
+            if (urn != NowPlaying.urn && AudioProbe.shortReason(info, length, expected) != null) {
                 if (runCatching { c.removeResource(key) }.isSuccess) removed++
             }
         }

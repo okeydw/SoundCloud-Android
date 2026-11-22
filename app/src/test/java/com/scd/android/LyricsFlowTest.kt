@@ -49,4 +49,16 @@ class LyricsFlowTest {
         assertFalse(LyricsResponse(syncedLrc = "[00:01]\n[00:02]   ").hasText)
         assertTrue(LyricsResponse(syncedLrc = "[00:01]Words").hasText)
     }
+
+    @Test fun textArrivingAfterTheOldPollingLimitIsStillShown() = runBlocking {
+        var calls = 0
+        val waits = mutableListOf<Long>()
+        val result = awaitLyrics(fetch = {
+            if (++calls <= 25) LyricsResponse(status = "pending")
+            else LyricsResponse(status = "found", plainText = "Words")
+        }, pause = { waits += it })
+        assertEquals(26, calls)
+        assertTrue(result!!.hasText)
+        assertTrue(waits.all { it in 5_000L..30_000L })
+    }
 }

@@ -129,9 +129,10 @@ Danach folgt die Anmeldung, entweder über SoundCloud oder per QR-Code aus der D
 
 - **Welle und Empfehlungen** - eigenes Empfehlungssystem auf Basis deiner Likes und deines Hörverlaufs
 - **Suche** - Tracks, Künstler, Playlists, Alben und Vibe-Suche (ein neuronales Netz wählt Tracks passend zum Kontext)
-- **Player** - Shuffle, Wiederholen, Warteschlange, Songtexte, Likes und Dislikes
+- **Player** - Shuffle, Wiederholen, Warteschlange, Songtexte, Likes und Dislikes. Tippe im ausgeklappten Player auf den Künstlernamen, um das Profil zu öffnen. In Tracklisten startet ein Tippen auf den Namen den Track.
 - **Equalizer** - fertige Presets und eigene Presets
 - **Playlists** - eigene lokale Playlists mit Synchronisierung zu SoundCloud, öffentlich oder privat, die Reihenfolge lässt sich per Drag and Drop ändern und wird gespeichert
+- **Sortierung und Reihenfolge der Likes** - ein kompaktes Symbol über den Titeln unter „Ich“: Titel, Interpret, Dauer und weitere Felder. Über „Reihenfolge ändern“ lassen sich Likes manuell verschieben; die Reihenfolge wird auf dem Gerät gespeichert und bei der Wiedergabe verwendet. Playlists haben keine Sortierfunktion.
 - **Verlauf und Statistik** - Hörzeit, Top-Tracks und Top-Künstler, Diagramme nach Tagen und Stunden
 - **Profile** - folgen und entfolgen, Links aus dem SoundCloud-Profil
 - **SoundCloud Auto (Beta)** - Szenarien für die Verbindung mit Bluetooth-Geräten
@@ -139,6 +140,7 @@ Danach folgt die Anmeldung, entweder über SoundCloud oder per QR-Code aus der D
 ### Offline-Modus
 
 - Tracks und Playlists herunterladen, Offline-Modus mit Cache
+- **HLS-Reparatur** - automatische Prüfung älterer Downloads und manuell unter „Einstellungen → Speicher → Integrität prüfen“. Der Container wird ohne erneute Audiokodierung neu gepackt und der Index für das Springen innerhalb des Tracks wiederhergestellt. Unvollständige Kopien werden bei bestehender Verbindung erneut geladen. Das Ergebnis zeigt noch offene Reparaturen.
 - Cache-Limit und Zeitpunkt zum Leeren manuell einstellbar
 - Gemeinsame Downloads und Playlists zwischen Full und Lite, wenn beide installiert sind (Beta, funktioniert teilweise)
 
@@ -189,9 +191,9 @@ Alle Änderungen stehen in [CHANGELOG.md](../../CHANGELOG.md).
 **Build:** JDK 17, Android SDK 35.
 
 ```bash
-./gradlew assembleLiteDebug assembleFullDebug   # APK in app/build/outputs/apk/<flavor>/debug/
-./gradlew testLiteDebugUnitTest                 # Unit-Tests
-./gradlew lintLiteDebug                         # Lint (mit Baseline: ./gradlew updateLintBaseline)
+./gradlew assembleLiteDebug assembleFullDebug         # APK in app/build/outputs/apk/<flavor>/debug/
+./gradlew testLiteDebugUnitTest testFullDebugUnitTest # Unit-Tests
+./gradlew lintLiteDebug lintFullDebug                 # Lint (mit Baseline: ./gradlew updateLintBaseline)
 ```
 
 **Quellcode:**

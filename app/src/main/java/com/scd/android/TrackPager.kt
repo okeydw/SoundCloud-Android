@@ -14,10 +14,13 @@ class TrackPager(private val scope: CoroutineScope, private val loader: suspend 
         private set
     var hasMore by mutableStateOf(false)
         private set
+    var pending by mutableStateOf(false)
+        private set
     var error by mutableStateOf<String?>(null)
         private set
     var page by mutableIntStateOf(0)
         private set
+    var acceptEmptyRefresh = false
     private val gate = Mutex()
     private var freshAt = 0L
 
@@ -28,15 +31,15 @@ class TrackPager(private val scope: CoroutineScope, private val loader: suspend 
         scope.launch {
             try {
                 gate.withLock {
-                    val (batch, more) = loader(0, false)
+                    val (batch, more) = CatalogRead.observe({ pending = true }) { loader(0, false) }
                     items = batch.distinctBy { it.urn }
                     page = 0
                     hasMore = more
                     freshAt = System.currentTimeMillis()
                     if (!Prefs.offline) {
                         try {
-                            val (fresh, freshMore) = loader(0, true)
-                            if (fresh.isNotEmpty()) {
+                            val (fresh, freshMore) = CatalogRead.observe({ pending = true }) { loader(0, true) }
+                            if (fresh.isNotEmpty() || acceptEmptyRefresh) {
                                 items = fresh.distinctBy { it.urn }
                                 hasMore = freshMore
                             }
@@ -46,7 +49,7 @@ class TrackPager(private val scope: CoroutineScope, private val loader: suspend 
                 }
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) { error = e.message ?: "Load failed"
-            } finally { loading = false }
+            } finally { loading = false; pending = false }
         }
     }
 
@@ -60,10 +63,10 @@ class TrackPager(private val scope: CoroutineScope, private val loader: suspend 
         loading = true
         error = null
         scope.launch {
-            try { gate.withLock { appendPage() }
+            try { gate.withLock { CatalogRead.observe({ pending = true }) { appendPage() } }
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) { error = e.message ?: "Load failed"
-            } finally { loading = false }
+            } finally { loading = false; pending = false }
         }
     }
 
@@ -88,6 +91,6 @@ class TrackPager(private val scope: CoroutineScope, private val loader: suspend 
         } catch (e: Exception) {
             error = e.message ?: "Load failed"
             throw e
-        } finally { loading = false }
+        } finally { loading = false; pending = false }
     }
 }

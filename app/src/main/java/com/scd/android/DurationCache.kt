@@ -21,6 +21,8 @@ object DurationCache {
 
     fun get(urn: String): Long = map[urn] ?: 0L
 
+    fun snapshot(): Map<String, Long> = map.toMap()
+
     private val asked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val gate = kotlinx.coroutines.sync.Semaphore(3)
 

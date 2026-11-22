@@ -6,6 +6,28 @@ import kotlinx.serialization.json.Json
 import kotlin.math.pow
 
 @Serializable
+internal data class TrackEqSetting(
+    val enabled: Boolean,
+    val gains: List<Double>,
+    val preset: String,
+    val preamp: Double?,
+    val playback: TrackPlaybackSetting? = null,
+)
+
+@Serializable
+internal data class TrackPlaybackSetting(
+    val rate: Float = SpeedPitch.RATE_DEFAULT,
+    val pitchMode: String = SpeedPitch.MODE_AUTO,
+    val semitones: Float = 0f,
+) {
+    fun normalized() = TrackPlaybackSetting(
+        SpeedPitch.clampRate(rate),
+        if (pitchMode == SpeedPitch.MODE_MANUAL) SpeedPitch.MODE_MANUAL else SpeedPitch.MODE_AUTO,
+        SpeedPitch.clampSemitones(semitones),
+    )
+}
+
+@Serializable
 data class EqCustomPreset(
     val id: String,
     val name: String,
@@ -132,6 +154,7 @@ object EqPresets {
 
     fun applyCar(key: String) {
         if (key == NONE) return
+        Prefs.suspendTrackEq()
         if (Prefs.carEqBackup() == null) {
             Prefs.setCarEqBackup(
                 listOf(
@@ -160,6 +183,7 @@ object EqPresets {
         val gains = parts[2].split(',').mapNotNull { it.trim().toDoubleOrNull() }
         Prefs.changeEqCurve(gains, parts[1].ifBlank { CUSTOM }, parts[3].toDoubleOrNull())
         Prefs.changeEqEnabled(parts[0] == "1")
+        Prefs.resumeTrackEq()
         Logs.add("car", "equalizer restored")
     }
 

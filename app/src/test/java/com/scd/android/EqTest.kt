@@ -11,6 +11,18 @@ import kotlin.math.pow
 import kotlin.math.sin
 
 class EqTest {
+    @Test
+    fun trackPresetsDistinguishLegacyPlaybackFromAnExplicitDefaultSpeedAndTone() {
+        val json = kotlinx.serialization.json.Json
+        val format = TrackEqSetting.serializer()
+        val legacy = json.decodeFromString(format, """{"enabled":true,"gains":[],"preset":"flat","preamp":null}""")
+        assertNull(legacy.playback)
+        for (playback in listOf(TrackPlaybackSetting(), TrackPlaybackSetting(1.45f, SpeedPitch.MODE_MANUAL, -4.5f))) {
+            val preset = legacy.copy(playback = playback)
+            assertEquals(preset, json.decodeFromString(format, json.encodeToString(format, preset)))
+        }
+    }
+
     private val bassDestroyer = doubleArrayOf(12.0, 12.0, 10.0, 7.0, 3.0, 0.0, -2.0, -4.0, -4.0, -5.0)
     private val gains = doubleArrayOf(5.0, 3.0, 0.0, -2.0, -1.5, 0.0, 2.0, 4.0, -3.0, 1.0)
 

@@ -9,7 +9,7 @@ suspend fun awaitLyrics(
     fetch: suspend () -> LyricsResponse?,
     onPending: (LyricsResponse) -> Unit = {},
     pause: suspend (Long) -> Unit = { delay(it) },
-    attempts: Int = 12,
+    attempts: Int = Int.MAX_VALUE,
 ): LyricsResponse? {
     var last: LyricsResponse? = null
     repeat(attempts) { attempt ->
@@ -17,7 +17,7 @@ suspend fun awaitLyrics(
         val result = last ?: return null
         if (result.hasText || result.status != "pending") return result
         onPending(result)
-        if (attempt < attempts - 1) pause(minOf(5_000L * (attempt + 1), 15_000L))
+        if (attempt < attempts - 1) pause(minOf(5_000L * (attempt.toLong() + 1), 30_000L))
     }
     return last
 }

@@ -129,9 +129,10 @@ Next comes sign-in, either through SoundCloud or with a QR code from the Desktop
 
 - **Wave and recommendations** - our own recommendation system based on your likes and listening history
 - **Search** - tracks, artists, playlists, albums and vibe search (a neural network picks tracks based on context)
-- **Player** - shuffle, repeat, queue, lyrics, likes and dislikes
+- **Player** - shuffle, repeat, queue, lyrics, likes and dislikes. Tap the artist name in the expanded player to open their profile. In track lists, tapping the name plays the track.
 - **Equalizer** - ready-made presets and your own custom preset
 - **Playlists** - your own local playlists synced to SoundCloud, public or private, track order changes by drag and drop and is saved
+- **Sorting and liked-track order** - a compact sorting icon above tracks in the Me categories: title, artist, duration and other fields. Use “Change order” to move liked tracks manually; the order is saved on the device and used for playback. Playlists have no sorting control.
 - **History and stats** - listening time, top tracks and artists, charts by day and by hour
 - **Profiles** - follow and unfollow, links from the SoundCloud profile
 - **SoundCloud Auto (beta)** - scenarios for connecting to Bluetooth devices
@@ -139,6 +140,7 @@ Next comes sign-in, either through SoundCloud or with a QR code from the Desktop
 ### Offline mode
 
 - Download tracks and playlists, offline mode with cache
+- **HLS repair** - automatic checks of older downloads and a manual check under "Settings → Storage → Check integrity". Repacking rebuilds the seek index without re-encoding audio; incomplete copies are downloaded again when online. The result shows how many files still need repair.
 - Manual cache limit and cache reset time
 - Shared downloads and playlists between Full and Lite if both are installed (beta, works selectively)
 
@@ -189,9 +191,9 @@ The full list of changes is in [CHANGELOG.md](../CHANGELOG.en.md).
 **Build:** JDK 17, Android SDK 35.
 
 ```bash
-./gradlew assembleLiteDebug assembleFullDebug   # APK in app/build/outputs/apk/<flavor>/debug/
-./gradlew testLiteDebugUnitTest                 # unit tests
-./gradlew lintLiteDebug                         # lint (with baseline: ./gradlew updateLintBaseline)
+./gradlew assembleLiteDebug assembleFullDebug         # APK in app/build/outputs/apk/<flavor>/debug/
+./gradlew testLiteDebugUnitTest testFullDebugUnitTest # unit tests
+./gradlew lintLiteDebug lintFullDebug                 # lint (with baseline: ./gradlew updateLintBaseline)
 ```
 
 **Sources:**

@@ -32,6 +32,7 @@ data class TrackEnrichment(
     val participants: List<EnrichmentParticipant> = emptyList(),
     val album: EnrichmentAlbum? = null,
     val release_year: Int? = null,
+    val release_date: String? = null,
 )
 
 @Serializable

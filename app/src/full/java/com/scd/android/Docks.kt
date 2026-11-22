@@ -172,30 +172,18 @@ fun LiquidPillDock(
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(md.title?.toString().orEmpty(), style = GlassType.rowTitle, color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(md.formattedTitle, style = GlassType.rowTitle, color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(md.artist?.toString().orEmpty(), style = GlassType.small, color = p.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
-            val liked = Likes.isLiked(urn)
-            Box(
-                Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .pressable {
-                        controller?.currentMediaItem?.toTrackOrNull()?.let { t -> scope.launch { Likes.toggle(t) } }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                    stringResource(if (liked) R.string.notif_unlike else R.string.notif_like),
-                    tint = if (liked) p.accent else p.text2,
-                    modifier = Modifier.size(22.dp),
-                )
+            if (isScUrn(urn)) {
+                controller?.currentMediaItem?.toTrackOrNull()?.let { track ->
+                    TrackLikeButton(track, Modifier.size(40.dp), p.accent, p.text2, 22.dp)
+                }
             }
             Spacer(Modifier.width(6.dp))
-            PlayOrb(playing, 46.dp) { controller?.let { if (it.isPlaying) it.pause() else it.play() } }
+            PlayOrb(playing, 46.dp, enabled = !Together.isGuest) { controller?.let { if (it.isPlaying) it.pause() else it.play() } }
         }
         Box(
             Modifier

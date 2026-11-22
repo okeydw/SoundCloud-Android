@@ -14,7 +14,12 @@ fun TrackPageFooter(pager: TrackPager) {
         if (pager.hasMore && !pager.loading && pager.error == null) pager.loadMore()
     }
     Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-        if (pager.error != null) {
+        if (pager.pending) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text(stringResource(R.string.catalog_waiting), style = MaterialTheme.typography.bodySmall)
+            }
+        } else if (pager.error != null) {
             TextButton(onClick = { if (pager.hasMore) pager.loadMore() else pager.refresh() }) {
                 Text(stringResource(R.string.retry_action))
             }

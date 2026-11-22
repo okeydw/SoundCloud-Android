@@ -82,7 +82,7 @@ object TierSources {
                 val body = res.body ?: return@use Fetched(false, null)
                 val header = res.header("x-audio-quality")?.lowercase()
                 tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
-                ClearMp4.repair(tmp)
+                AudioNormalize.repair(tmp)
                 Fetched(Downloads.looksLikeAudio(tmp), header)
             }
         } catch (e: java.io.IOException) {

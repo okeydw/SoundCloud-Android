@@ -120,7 +120,7 @@ fun WaveMode() {
             if (page >= tracks.size - 4 && !WaveState.loading) WaveState.load(true)
             val initial = first
             first = false
-            if (initial && NowPlaying.urn != null) return@collect
+            if (initial) return@collect
             if (NowPlaying.urn != t.urn && (NowPlaying.urn == null || WaveFeedback.isOwned(NowPlaying.urn) || page > 0)) {
                 Playback.play(controller, tracks, t, autoContinue = true)
             }
@@ -307,7 +307,7 @@ private fun WavePage(track: Track, next: List<Track>, modifier: Modifier, glow: 
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    track.title,
+                    track.displayTitle,
                     style = GlassType.title.copy(fontSize = 29.sp, lineHeight = 32.sp),
                     color = p.text,
                     maxLines = 2,
@@ -335,7 +335,7 @@ private fun WavePage(track: Track, next: List<Track>, modifier: Modifier, glow: 
                                 Artwork(n.artModel("t120x120"), Modifier.size(36.dp), corner = 10.dp)
                                 Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(n.title, style = GlassType.small.copy(fontWeight = FontWeight.SemiBold), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(n.displayTitle, style = GlassType.small.copy(fontWeight = FontWeight.SemiBold), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(n.user?.username ?: "", style = GlassType.small.copy(fontSize = 11.sp), color = p.text2, maxLines = 1)
                                 }
                                 Text(formatDuration(n.displayDuration), style = GlassType.mono, color = p.text3)
@@ -346,11 +346,12 @@ private fun WavePage(track: Track, next: List<Track>, modifier: Modifier, glow: 
             }
             Spacer(Modifier.width(12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                LabeledOrb(
-                    if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart,
-                    stringResource(if (liked) R.string.in_likes else R.string.notif_like),
-                    active = liked,
-                ) { scope.launch { Likes.toggle(track) } }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    TrackLikeOrb(track, 50.dp, 22.dp)
+                    Spacer(Modifier.height(5.dp))
+                    Text(stringResource(if (liked) R.string.in_likes else R.string.notif_like),
+                        style = GlassType.small.copy(fontSize = 11.sp), color = p.text2)
+                }
                 LabeledOrb(
                     if (disliked) R.drawable.ic_thumb_down_filled else R.drawable.ic_thumb_down,
                     stringResource(R.string.not_that),

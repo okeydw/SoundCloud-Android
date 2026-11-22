@@ -52,6 +52,7 @@ private object MeMemory {
     var guest: Boolean? = null
     val tab = androidx.compose.runtime.mutableStateOf(MeTab.Likes)
     val scroll = HashMap<String, androidx.compose.foundation.lazy.LazyListState>()
+    val sorts = HashMap<MeTab, TrackSortState>()
 }
 
 @Composable
@@ -62,25 +63,46 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
     val scope = rememberCoroutineScope()
     if (MeMemory.guest != guest) {
         MeMemory.guest = guest
+        MeMemory.sorts.clear()
         MeMemory.tab.value = if (guest) MeTab.Offline else MeTab.Likes
     }
     var tab by MeMemory.tab
+    val sorting = MeMemory.sorts.getOrPut(tab) { TrackSortState() }
     var showCreate by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    var reorderLikes by remember { mutableStateOf<List<Track>?>(null) }
 
     LaunchedEffect(guest, offline) { if (!guest) Library.refreshProfile(offline) }
     LaunchedEffect(guest) { if (!guest && Library.soundprint.isEmpty()) Library.loadSoundprint() }
-    LaunchedEffect(tab, guest) { if (tab == MeTab.Playlists && !guest) Library.refreshPlaylists(offline) }
+    var playlistsPending by remember { mutableStateOf(false) }
+    LaunchedEffect(tab, guest, offline) {
+        if (tab == MeTab.Playlists && !guest) {
+            try {
+                CatalogRead.observe({ playlistsPending = true }) { Library.refreshPlaylists(offline) }
+            } finally { playlistsPending = false }
+        }
+    }
 
     val saved = Downloads.downloaded
     val offlineTracks = remember(saved) { Downloads.tracks() }
+    val selectedTab = tab
+    var cachedRows by remember(tab, offline, guest) { mutableStateOf(emptyList<Track>()) }
+    LaunchedEffect(tab, offline, guest) {
+        if (!guest && (tab == MeTab.Likes || tab == MeTab.History)) Library.cachedRows(tab == MeTab.Likes) { cachedRows = it }
+    }
     val pager = rememberPaged("me:${tab.name}:$offline:$guest") { page, fresh ->
-        when (tab) {
-            MeTab.Likes -> if (guest) offlineTracks.filter { Likes.isLiked(it.urn) } to false else Library.likedPage(page, fresh, offline)
-            MeTab.History -> if (guest) emptyList<Track>() to false else Library.historyPage(page, fresh, offline)
+        suspend fun batch(p: Int, reload: Boolean): Pair<List<Track>, Boolean> = when (selectedTab) {
+            MeTab.Likes -> if (guest) offlineTracks.filter { Likes.isLiked(it.urn) } to false else Library.likedPage(p, reload, offline)
+            MeTab.History -> if (guest) emptyList<Track>() to false else Library.historyPage(p, reload, offline)
             else -> emptyList<Track>() to false
         }
+        batch(page, fresh)
+    }.also { it.acceptEmptyRefresh = true }
+
+    LaunchedEffect(pager, pager.page, pager.hasMore, pager.loading, sorting.order.active, Likes.manualOrder) {
+        if (pager.hasMore && !pager.loading && pager.error == null &&
+            (sorting.order.active || (selectedTab == MeTab.Likes && Likes.manualOrder.urns.isNotEmpty()))) pager.loadMore()
     }
 
     val filter = remember(tab) { LocalFilter() }
@@ -94,8 +116,16 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
     val list = when (tab) {
         MeTab.Offline -> offlineTracks
         MeTab.Playlists -> emptyList()
-        else -> pager.items
+        else -> {
+            val rows = if (pager.hasMore || (pager.loading && pager.items.isEmpty())) (pager.items + cachedRows).distinctBy { it.urn } else pager.items
+            if (tab == MeTab.Likes) Likes.visible(rows) else rows
+        }
     }
+
+    fun arranged(tracks: List<Track>): List<Track> = sorting.tracks(
+        if (selectedTab == MeTab.Likes && sorting.order.mode == TrackSort.ORIGINAL) Likes.ordered(tracks) else tracks,
+        newestFirst = true,
+    )
 
     fun playMix() {
         val pool = Library.soundprint.ifEmpty { pager.items }.ifEmpty { offlineTracks }
@@ -125,8 +155,14 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
                 onSelect = { tab = MeTab.entries[it] },
             )
         }
+        if (tab == MeTab.Playlists && playlistsPending) {
+            item(key = "playlists:waiting") {
+                Text(stringResource(R.string.catalog_waiting), Modifier.padding(20.dp))
+            }
+        }
         when (tab) {
             MeTab.Playlists -> playlistsTab(
+                pending = playlistsPending,
                 guest = guest,
                 offline = offline,
                 onCreate = { showCreate = true },
@@ -136,7 +172,21 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
             else -> {
                 item(key = "toolbar:${tab.name}", contentType = "toolbar") {
                     val total = if (tab == MeTab.Likes && !guest) maxOf(Likes.urns.size, list.size) else list.size
-                    ListToolbar(count = total, downloaded = list.count { Downloads.isDownloaded(it.urn) }) {
+                    val downloaded = if (tab == MeTab.Likes) saved.count(Likes.urns::contains) else list.count { it.urn in saved }
+                    ListToolbar(count = total, downloaded = downloaded) {
+                        TrackSortBar(
+                            sorting,
+                            loading = pager.loading && tab != MeTab.Offline,
+                            actionScope = scope,
+                            onReorder = if (tab == MeTab.Likes && list.size > 1) suspend {
+                                reorderLikes = Likes.ordered(pager.all())
+                            } else null,
+                        ) { mode ->
+                            if (selectedTab != MeTab.Offline && pager.hasMore) {
+                                fullList = pager.all()
+                            }
+                            sorting.loadMetadata(if (selectedTab == MeTab.Offline) offlineTracks else pager.items, mode)
+                        }
                         if (list.isNotEmpty() || filter.open) LocalSearchOrb(filter)
                         if (tab == MeTab.History && !offline && list.isNotEmpty()) {
                             IconOrb(R.drawable.ic_trash, stringResource(R.string.history_clear), size = 44.dp, iconSize = 18.dp) { confirmClear = true }
@@ -146,8 +196,9 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
                         }
                     }
                 }
-                val source = if (tab == MeTab.Offline) list else fullList ?: list
-                val shown = if (filter.active) filterTracks(source, filter.query) else list
+                val source = list
+                val filtered = if (filter.active) filterTracks(source, filter.query) else list
+                val shown = arranged(filtered)
                 if (filter.open) {
                     item(key = "search:${tab.name}", contentType = "search") {
                         LocalSearchField(filter, if (filter.active) shown.size else null)
@@ -157,7 +208,7 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
                     shown,
                     onPlay = { t ->
                         val paged = !filter.active && (tab == MeTab.Likes || tab == MeTab.History)
-                        Playback.play(controller, shown, t, more = if (paged) suspend { pager.all() } else null)
+                        Playback.play(controller, shown, t, more = if (paged) suspend { arranged(pager.all()) } else null)
                     },
                     dimUndownloaded = offline && tab != MeTab.Offline,
                 )
@@ -166,7 +217,7 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
                         if (tab != MeTab.Offline && fullList == null) Spinner() else EmptyState(R.drawable.ic_search, stringResource(R.string.local_search_empty))
                     }
                 }
-                if (!filter.active && tab != MeTab.Offline && (pager.hasMore || pager.error != null)) {
+                if (!filter.active && tab != MeTab.Offline && (pager.hasMore || pager.error != null || pager.pending)) {
                     item(key = "more:${tab.name}") {
                         TrackPageFooter(pager)
                     }
@@ -199,6 +250,14 @@ fun MeScreen(offline: Boolean, onSignOut: () -> Unit, guest: Boolean) {
                     }
                 }
             }
+        }
+    }
+
+    reorderLikes?.let { tracks ->
+        ReorderDialog(tracks, onDismiss = { reorderLikes = null }) { order ->
+            Likes.reorder(order)
+            MeMemory.sorts[MeTab.Likes]?.order = TrackOrder()
+            reorderLikes = null
         }
     }
 
@@ -281,18 +340,7 @@ private fun MeHero(guest: Boolean, onPlay: () -> Unit, onMenu: () -> Unit) {
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        if (Prefs.star) StarBadgeGlass()
-                        if (Prefs.star && Prefs.hqStreaming) {
-                            Text(
-                                "HQ",
-                                style = GlassType.eyebrow.copy(letterSpacing = androidx.compose.ui.unit.TextUnit.Unspecified),
-                                color = p.text2,
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .border(0.75.dp, p.borderHi, CircleShape)
-                                    .padding(horizontal = 8.dp, vertical = 3.dp),
-                            )
-                        }
+                        if (Prefs.star && !guest) StarBadgeGlass()
                         if (guest) GlassChip(stringResource(R.string.me_guest), icon = R.drawable.ic_no_wifi)
                     }
                     Spacer(Modifier.height(4.dp))
@@ -327,6 +375,7 @@ private fun MeHero(guest: Boolean, onPlay: () -> Unit, onMenu: () -> Unit) {
 }
 
 private fun LazyListScope.playlistsTab(
+    pending: Boolean,
     guest: Boolean,
     offline: Boolean,
     onCreate: () -> Unit,
@@ -354,7 +403,8 @@ private fun LazyListScope.playlistsTab(
             }
         }
     }
-    val own = LocalPlaylists.visible
+    val albums = LocalPlaylists.visible.filter { it.savedAlbum }
+    val own = LocalPlaylists.visible.filterNot { it.savedAlbum }
     if (own.isNotEmpty()) {
         item(key = "pl:own:h") { MeSection(R.string.me_your_playlists) }
         items(own, key = { "own:" + it.id }, contentType = { "playlist" }) { pl ->
@@ -369,7 +419,15 @@ private fun LazyListScope.playlistsTab(
             )
         }
     }
-    val liked = Library.likedPlaylists.distinctBy { it.urn }
+    val remote = Library.likedPlaylists.distinctBy { it.urn }
+    val remoteAlbums = remote.filter { pl -> pl.isAlbum && albums.none { it.source == "album:${pl.urn}" } }
+    val liked = remote.filterNot { it.isAlbum }
+    if (albums.isNotEmpty() || remoteAlbums.isNotEmpty()) {
+        item(key = "pl:albums:h") { MeSection(R.string.search_albums) }
+        items(albums.map { it.asPlaylist() } + remoteAlbums, key = { "album:" + it.urn }, contentType = { "playlist" }) { pl ->
+            PlaylistRowGlass(playlist = pl, title = pl.title, subtitle = stringResource(R.string.tracks_count, pl.track_count), onClick = { onOpen(pl) })
+        }
+    }
     if (liked.isNotEmpty()) {
         item(key = "pl:liked:h") { MeSection(R.string.liked_playlists) }
         items(liked, key = { "liked:" + it.urn }, contentType = { "playlist" }) { pl ->
@@ -388,7 +446,7 @@ private fun LazyListScope.playlistsTab(
             ArtistRowGlass(a.username, a.avatar_url, stringResource(R.string.artist_label)) { onArtist(a.urn) }
         }
     }
-    if (own.isEmpty() && liked.isEmpty() && artists.isEmpty()) {
+    if (!pending && own.isEmpty() && liked.isEmpty() && albums.isEmpty() && remoteAlbums.isEmpty() && artists.isEmpty()) {
         item(key = "pl:empty") { EmptyState(R.drawable.ic_music, stringResource(R.string.me_empty_playlists)) }
     }
 }

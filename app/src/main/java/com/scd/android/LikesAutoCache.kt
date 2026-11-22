@@ -27,10 +27,12 @@ object LikesAutoCache {
         if (job?.isActive == true) return
         job = App.scope.launch {
             val pending = mutableListOf<Track>()
+            val known = Library.recentLikes()
+            if (known != null) pending += known.take(2000).filter { !Downloads.isDownloaded(it.urn) }
             var page = 0
-            while (page < 40) {
+            while (known == null && page < 40) {
                 val res = runCatching { Api.likedTracks(page, 50) }.getOrNull() ?: break
-                pending += res.collection.filter { !Downloads.isDownloaded(it.urn) && !it.starLocked }
+                pending += res.collection.filter { !Downloads.isDownloaded(it.urn) }
                 if (!res.has_more) break
                 page++
             }

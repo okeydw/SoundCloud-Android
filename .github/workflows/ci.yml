@@ -52,7 +52,7 @@ jobs:
       - name: Lint
         run: |
           set -o pipefail
-          ./gradlew lintLiteDebug 2>&1 | tee -a gradle-out.log
+          ./gradlew lintLiteDebug lintFullDebug 2>&1 | tee -a gradle-out.log
 
       - name: Upload lint report
         uses: actions/upload-artifact@v4
@@ -65,7 +65,7 @@ jobs:
       - name: Unit tests
         run: |
           set -o pipefail
-          ./gradlew testLiteDebugUnitTest 2>&1 | tee -a gradle-out.log
+          ./gradlew testLiteDebugUnitTest testFullDebugUnitTest 2>&1 | tee -a gradle-out.log
 
       - name: YouTube live check
         continue-on-error: true

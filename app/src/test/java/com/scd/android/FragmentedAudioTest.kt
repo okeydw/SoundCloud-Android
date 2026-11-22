@@ -8,8 +8,10 @@ import androidx.media3.extractor.ExtractorOutput
 import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
+import androidx.media3.extractor.DiscardingTrackOutput
 import androidx.media3.extractor.mp4.FragmentedMp4Extractor
 import androidx.media3.extractor.text.SubtitleParser
+import androidx.media3.extractor.ts.AdtsExtractor
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -26,7 +28,7 @@ class FragmentedAudioTest {
     private fun scan(bytes: ByteArray, extractor: Extractor): SeekMap {
         var map: SeekMap? = null
         extractor.init(object : ExtractorOutput {
-            override fun track(id: Int, type: Int): TrackOutput = error("index-only fixture")
+            override fun track(id: Int, type: Int): TrackOutput = DiscardingTrackOutput()
             override fun endTracks() = Unit
             override fun seekMap(seekMap: SeekMap) { map = seekMap }
         })
@@ -68,5 +70,16 @@ class FragmentedAudioTest {
     @Test fun aSingleTenSecondFragmentRemainsAPreview() {
         val extractor = FragmentedMp4Extractor(SubtitleParser.Factory.UNSUPPORTED, AudioExtractors.FRAGMENTED_FLAGS)
         assertEquals(10_000_000L, scan(segment(0, 10_000), extractor).durationUs)
+    }
+
+    @Test fun aDownloadedAdtsFileExposesDurationAndASeekablePosition() {
+        val header = byteArrayOf(0xff.toByte(), 0xf1.toByte(), 0x50, 0x80.toByte(), 0x08, 0x1f, 0xfc.toByte())
+        val frame = header + ByteArray(64 - header.size)
+        val audio = ByteArray(frame.size * 128) { frame[it % frame.size] }
+        val extractor = AdtsExtractor(AudioExtractors.ADTS_FLAGS)
+        val result = scan(audio, extractor)
+        assertTrue(result.isSeekable)
+        assertTrue(result.durationUs in 2_900_000L..3_100_000L)
+        assertTrue(result.getSeekPoints(2_000_000L).first.position in 1L until audio.size.toLong())
     }
 }

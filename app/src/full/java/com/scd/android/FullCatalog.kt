@@ -1,5 +1,7 @@
 package com.scd.android
 
+import androidx.compose.material3.minimumInteractiveComponentSize
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -113,13 +115,13 @@ fun CatalogArtistDetail(id: String) {
                     )
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        WhiteButton(stringResource(R.string.play_all), R.drawable.ic_play, Modifier.weight(1f)) {
+                        IconOrb(R.drawable.ic_play, stringResource(R.string.play_all), size = 48.dp, iconSize = 22.dp) {
                             val list = tracks.ifEmpty { a.popular_tracks }.filter(Playback::playable)
                             if (list.isNotEmpty()) Playback.play(controller, list, list.first(), source = "catalog:$id", more = { pager.all() })
                         }
                         Spacer(Modifier.width(10.dp))
                         val shuffled = Playback.shuffledFrom("catalog:$id")
-                        IconOrb(if (shuffled) R.drawable.ic_shuffle_on else R.drawable.ic_shuffle, stringResource(R.string.notif_shuffle), size = 48.dp, active = shuffled) {
+                        IconOrb(if (shuffled) R.drawable.ic_shuffle_on else R.drawable.ic_shuffle, stringResource(R.string.notif_shuffle), size = 48.dp, iconSize = 22.dp, active = shuffled) {
                             Playback.toggleShuffle(controller, "catalog:$id", tracks.ifEmpty { a.popular_tracks }.filter(Playback::playable), more = { pager.all() })
                         }
                         if (Prefs.userUrn != null) {
@@ -128,7 +130,7 @@ fun CatalogArtistDetail(id: String) {
                             IconOrb(
                                 R.drawable.ic_block,
                                 stringResource(if (blocked) R.string.unblock else R.string.block),
-                                size = 48.dp,
+                                size = 48.dp, iconSize = 22.dp,
                                 active = blocked,
                                 tint = if (blocked) Color(0xFFFF5A5F) else null,
                             ) {
@@ -145,7 +147,7 @@ fun CatalogArtistDetail(id: String) {
                             accounts.forEach { account ->
                                 GlassChip(
                                     artistAccountLabel(account, accounts),
-                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    modifier = Modifier.minimumInteractiveComponentSize().heightIn(min = 42.dp),
                                     icon = R.drawable.ic_user,
                                     onClick = { NavEvents.openScUser(account.sc_user_id) },
                                 )
@@ -250,9 +252,9 @@ fun AlbumDetail(id: String) {
     val nav = LocalNav.current
     val controller = LocalController.current
     val p = LocalGlass.current
-    var album by remember(id) { mutableStateOf<CatalogAlbum?>(null) }
+    var album by remember(id) { mutableStateOf(LocalPlaylists.cachedAlbum(id)) }
     var failed by remember(id) { mutableStateOf(false) }
-    LaunchedEffect(id) { runCatching { Api.catalogAlbum(id) }.onSuccess { album = it }.onFailure { failed = true } }
+    LaunchedEffect(id, Prefs.offline) { if (Prefs.offline) { failed = album == null; return@LaunchedEffect }; runCatching { Api.catalogAlbum(id) }.onSuccess { album = it }.onFailure { failed = true } }
     val al = album
     val tracks = remember(al) { al?.tracks.orEmpty().filter { !it.urn.startsWith("wanted:") } }
     val aura = remember(tracks, p.accent) { auraColors(tracks, p.accent) }
@@ -275,17 +277,13 @@ fun AlbumDetail(id: String) {
                         GlassChip(pa.name, icon = R.drawable.ic_mic, onClick = { nav.push(Screen.CatalogS(pa.id)) })
                     }
                     Spacer(Modifier.height(14.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val playable = tracks.filter(Playback::playable)
-                        WhiteButton(stringResource(R.string.play_all), R.drawable.ic_play, Modifier.weight(1f)) {
-                            if (playable.isNotEmpty()) Playback.play(controller, playable, playable.first(), source = "album:$id")
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        val shuffled = Playback.shuffledFrom("album:$id")
-                        IconOrb(if (shuffled) R.drawable.ic_shuffle_on else R.drawable.ic_shuffle, stringResource(R.string.notif_shuffle), size = 48.dp, active = shuffled) {
-                            Playback.toggleShuffle(controller, "album:$id", playable)
-                        }
+                    val playable = tracks.filter(Playback::playable)
+                    WhiteButton(stringResource(R.string.play_all), R.drawable.ic_play, Modifier.fillMaxWidth()) {
+                        if (playable.isNotEmpty()) Playback.play(controller, playable, playable.first(), source = "album:$id")
                     }
+                    Spacer(Modifier.height(10.dp))
+                    AlbumActions("album:catalog:$id", al.title, al.cover_url, SavedAlbumInfo(al.type, primaryArtist = al.primary_artist, year = al.release_year),
+                        shuffled = Playback.shuffledFrom("album:$id"), shuffle = { Playback.toggleShuffle(controller, "album:$id", playable) }) { tracks }
                 }
             }
             Spacer(Modifier.height(14.dp))
@@ -363,7 +361,7 @@ fun StatsDetail() {
                     }
                     if (s.timeline.isNotEmpty()) {
                         Spacer(Modifier.height(18.dp))
-                        Eyebrow(stringResource(R.string.stats_timeline), color = p.text3)
+                        Eyebrow(timelineLabel(s.unit), color = p.text3)
                         Spacer(Modifier.height(8.dp))
                         TimelineChart(remember(s) { s.filledTimeline() }, p.accent, p.fillTop)
                     }

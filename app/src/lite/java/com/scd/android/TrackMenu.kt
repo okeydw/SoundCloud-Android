@@ -57,7 +57,7 @@ fun TrackMenuDialog(track: Track, onDismiss: () -> Unit, onPlay: () -> Unit, onR
                 Spacer(Modifier.width(12.dp))
                 SelectionContainer(Modifier.weight(1f)) {
                     Column {
-                        Text(track.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(track.displayTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(
                             track.user?.username ?: "",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -92,9 +92,15 @@ fun TrackMenuDialog(track: Track, onDismiss: () -> Unit, onPlay: () -> Unit, onR
                     }
                 }
             }
+            rememberTrackAlbum(track)?.let { album ->
+                MenuRow(R.drawable.ic_album, listOf(stringResource(R.string.kind_album), album.title).filter { it.isNotBlank() }.joinToString(" · ")) {
+                    onDismiss()
+                    if (album.playlist != null) NavEvents.openPlaylist(album.id, album.title) else NavEvents.openAlbum(album.id)
+                }
+            }
             MenuRow(R.drawable.ic_plus, stringResource(R.string.add_to_playlist)) { picking = true }
             val liked = Likes.isLiked(track.urn)
-            MenuRow(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart, stringResource(if (liked) R.string.notif_unlike else R.string.notif_like)) {
+            if (!track.external) MenuRow(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart, stringResource(if (liked) R.string.notif_unlike else R.string.notif_like)) {
                 onDismiss()
                 App.scope.launch { Likes.toggle(track) }
             }

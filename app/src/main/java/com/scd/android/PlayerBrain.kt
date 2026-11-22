@@ -24,6 +24,8 @@ class PlayerBrain(
     private var streamRetries = 0
     private var resumeRetries = 0
     private var skipped = 0
+    private var outputRetried = false
+    private var hqTimeout: Job? = null
 
     private var curUrn: String? = null
     private var curPos = 0L
@@ -32,6 +34,8 @@ class PlayerBrain(
     private var fadeJob: Job? = null
     private var sleepJob: Job? = null
     private var snippetCheckJob: Job? = null
+    private var alternativeJob: Job? = null
+    private val alternativeTried = mutableSetOf<String>()
 
     private var crossVol = 1f
 
@@ -51,9 +55,10 @@ class PlayerBrain(
                 player.replaceMediaItem(i, mi.buildUpon().setUri(uri).build())
             }
         }
-        if (player.currentMediaItem?.mediaId == urn) player.seekTo(player.currentMediaItemIndex, position)
-        player.prepare()
-        player.play()
+        if (player.currentMediaItem?.mediaId == urn) {
+            player.seekTo(player.currentMediaItemIndex, position)
+            player.prepare()
+        }
     }
 
     private fun redownload(urn: String) {
@@ -77,9 +82,7 @@ class PlayerBrain(
             }
             return
         }
-        val wasPlaying = player.isPlaying
         swapLocal(urn, file, position)
-        if (!wasPlaying) player.pause()
     }
 
     private fun describe(error: PlaybackException): String {
@@ -94,6 +97,17 @@ class PlayerBrain(
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun start() {
+        Downloads.onFileMoved = { urn, old, new ->
+            val current = player.currentMediaItemIndex
+            val position = player.currentPosition
+            for (i in 0 until player.mediaItemCount) {
+                val item = player.getMediaItemAt(i)
+                if (item.mediaId == urn && item.localConfiguration?.uri == old.toUri()) {
+                    player.replaceMediaItem(i, item.buildUpon().setUri(new.toUri()).build())
+                    if (i == current) player.seekTo(i, position)
+                }
+            }
+        }
         player.addListener(this)
         curUrn = player.currentMediaItem?.mediaId
         scope.launch(Dispatchers.Main) {
@@ -145,6 +159,13 @@ class PlayerBrain(
     }
 
     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+        if (playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) {
+            outputRetried = false
+            val error = player.playerError
+            if (player.playbackState == Player.STATE_IDLE && error != null && PlayerRecovery.isAudioOutputError(error.errorCode)) {
+                player.prepare()
+            }
+        }
         if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM && SleepTimer.endOfTrack) {
             SleepTimer.cancel()
             player.volume = crossVol
@@ -153,6 +174,9 @@ class PlayerBrain(
     }
 
     fun stop() {
+        hqTimeout?.cancel()
+        Downloads.onFileMoved = null
+        alternativeJob?.cancel()
         player.removeListener(this)
         positionJob?.cancel()
         fillJob?.cancel()
@@ -184,6 +208,16 @@ class PlayerBrain(
         }
     }
 
+    override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+        val reason = when (playbackSuppressionReason) {
+            Player.PLAYBACK_SUPPRESSION_REASON_NONE -> return
+            Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS -> "audio focus loss"
+            Player.PLAYBACK_SUPPRESSION_REASON_UNSUITABLE_AUDIO_OUTPUT -> "unsuitable audio output"
+            else -> playbackSuppressionReason.toString()
+        }
+        Logs.add("audio", "playback suppressed: $reason")
+    }
+
     override fun onPlaybackStateChanged(playbackState: Int) {
         if (playbackState == Player.STATE_ENDED && SleepTimer.endOfTrack) SleepTimer.cancel()
         if (playbackState == Player.STATE_READY) {
@@ -193,10 +227,16 @@ class PlayerBrain(
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        alternativeJob?.cancel()
+        alternativeJob = null
         snippetCheckJob?.cancel()
         val prevUrn = curUrn
         val prevPos = curPos
         curUrn = mediaItem?.mediaId
+        if (prevUrn != curUrn) {
+            hqTimeout?.cancel()
+            outputRetried = false
+        }
         curPos = 0L
         if (prevUrn != null && prevUrn != curUrn) {
             Downloads.upgradeInBackground(prevUrn)
@@ -232,12 +272,13 @@ class PlayerBrain(
                 Logs.add("player", "track cut off at ${prevPos / 1000}s of ${expected / 1000}s → refetching")
                 val back = player.previousMediaItemIndex
                 if (back != C.INDEX_UNSET) {
-                    player.pause()
                     scope.launch(Dispatchers.Main) {
                         withContext(Dispatchers.IO) { ScDataSource.invalidateNow(prevUrn) }
+                        if (!player.playWhenReady || player.currentMediaItem != mediaItem ||
+                            back != player.previousMediaItemIndex || player.getMediaItemAt(back).mediaId != prevUrn
+                        ) return@launch
                         player.seekTo(back, 0L)
                         player.prepare()
-                        player.play()
                     }
                     return
                 }
@@ -255,6 +296,24 @@ class PlayerBrain(
     }
 
     override fun onPlayerError(error: PlaybackException) {
+        if (PlayerRecovery.isAudioOutputError(error.errorCode)) {
+            val item = player.currentMediaItem
+            val audio = context.getSystemService(android.media.AudioManager::class.java)
+            val mediaVolume = audio?.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+            Logs.add("audio", "${describe(error)}, output=${Prefs.audioOutput.substringBefore(':')}, mediaVolume=$mediaVolume, playerVolume=${player.volume}")
+            if (item == null || !player.playWhenReady) return
+            if (outputRetried) {
+                player.pause()
+                android.widget.Toast.makeText(context, R.string.audio_output_failed, android.widget.Toast.LENGTH_LONG).show()
+            } else {
+                outputRetried = true
+                scope.launch(Dispatchers.Main) {
+                    if (player.playWhenReady && player.currentMediaItem == item && player.playerError === error) player.prepare()
+                }
+            }
+            return
+        }
+        if (alternativeJob?.isActive == true || !player.playWhenReady) return
         val cause = error.cause
         val httpCode = (cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
         val noSource = NoPlayableSourceException.matches(error) ||
@@ -267,7 +326,6 @@ class PlayerBrain(
             Logs.add("player", "${error.errorCodeName} at ${position / 1000}s → resume")
             player.seekTo(position)
             player.prepare()
-            player.play()
             return
         }
 
@@ -275,7 +333,7 @@ class PlayerBrain(
         val urn = item?.mediaId
         val scheme = item?.localConfiguration?.uri?.scheme?.lowercase()
         val local = scheme != null && scheme != "http" && scheme != "https"
-        if (urn != null && item != null && local) {
+        if (urn != null && local) {
             val path = item.localConfiguration?.uri?.path
             val current = Downloads.localFile(urn)
             if (current != null && path != null && current.path != path && localSwaps.add("$urn ${current.path}")) {
@@ -294,7 +352,6 @@ class PlayerBrain(
                 redownload(urn)
                 player.replaceMediaItem(player.currentMediaItemIndex, item.buildUpon().setUri(Api.streamUrl(urn)).build())
                 player.prepare()
-                player.play()
                 return
             }
         }
@@ -309,11 +366,10 @@ class PlayerBrain(
                     playableFile(urn)
                 }
                 Logs.add("player", "$why → ${if (file != null) "playing downloaded file" else "clearing track cache and retrying"}")
-                if (idx >= player.mediaItemCount || player.getMediaItemAt(idx).mediaId != urn) return@launch
+                if (!player.playWhenReady || player.currentMediaItemIndex != idx || player.currentMediaItem != item) return@launch
                 if (file != null) player.replaceMediaItem(idx, player.getMediaItemAt(idx).buildUpon().setUri(file.toUri()).build())
                 player.seekTo(idx, position)
                 player.prepare()
-                player.play()
             }
             return
         }
@@ -336,10 +392,51 @@ class PlayerBrain(
             }
             player.setMediaItems(rebuilt, idx, pos)
             player.prepare()
-            player.play()
             return
         }
 
+        val track = item?.toTrackOrNull()
+        if (noSource && track != null && !Prefs.offline && Together.room == null &&
+            isScUrn(track.urn) && track.urn !in alternativeTried && AlternativeUpload.query(track) != null
+        ) {
+            if (alternativeTried.size > 300) alternativeTried.clear()
+            alternativeTried.add(track.urn)
+            val session = Api.sessionId
+            val index = player.currentMediaItemIndex
+            alternativeJob = scope.launch(Dispatchers.Main) {
+                val request = kotlinx.coroutines.currentCoroutineContext()[Job]
+                try {
+                    val copy = AlternativeUpload.find(track)
+                    if (Api.sessionId != session || player.currentMediaItemIndex != index ||
+                        player.currentMediaItem != item || Prefs.offline || Together.room != null
+                    ) return@launch
+                    alternativeJob = null
+                    if (copy == null) {
+                        if (player.playWhenReady) failPlayback(error)
+                        return@launch
+                    }
+                    alternativeTried.add(copy.urn)
+                    val play = player.playWhenReady
+                    val resumeAt = player.currentPosition.coerceIn(0L, maxOf(copy.duration, copy.full_duration ?: 0L))
+                    Logs.add("player", "alternative upload ${track.urn} → ${copy.urn}")
+                    player.replaceMediaItem(index, copy.toMediaItem())
+                    player.seekTo(index, resumeAt)
+                    player.prepare()
+                    player.playWhenReady = play
+                    android.widget.Toast.makeText(context,
+                        context.getString(R.string.playing_another_upload, copy.title), android.widget.Toast.LENGTH_LONG).show()
+                } finally {
+                    if (alternativeJob === request) alternativeJob = null
+                }
+            }
+            return
+        }
+        failPlayback(error)
+    }
+
+    private fun failPlayback(error: PlaybackException) {
+        val cause = error.cause
+        val httpCode = (cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
         player.currentMediaItem?.mediaId?.let { ScDataSource.invalidate(it) }
         if (player.hasNextMediaItem() && skipped < 3) {
             Logs.add("player", "track won't play → next")
@@ -348,7 +445,6 @@ class PlayerBrain(
             resumeRetries = 0
             player.seekToNext()
             player.prepare()
-            player.play()
             return
         }
 
@@ -408,18 +504,34 @@ class PlayerBrain(
         if (!checked) {
             snippetCheckJob?.cancel()
             snippetCheckJob = scope.launch(Dispatchers.Main) {
+                var repaired: java.io.File? = null
                 val complete = withContext(Dispatchers.IO) {
                     runCatching {
                         val file = if (local) uri?.path?.let { java.io.File(it) }
                             else uri?.let { ScDataSource.spooledFile(urn, it.toString()) }
+                        if (file != null && Downloads.fileAccess.use(urn) { AudioNormalize.repair(file, expected) }) {
+                            MediaCache.remove(urn)
+                            repaired = file
+                        }
                         val info = file?.let { AudioProbe.inspect(it) }
                         info != null && info.playable && (info.ms ?: 0L) > actual + 4_000L &&
                             AudioProbe.shortReason(info, file.length(), expected) == null
                     }.getOrDefault(false)
                 }
                 if (player.currentMediaItem != item) return@launch
+                if (complete && repaired != null) {
+                    Logs.add("player", "HLS index rebuilt → reopening repaired audio")
+                    val index = player.currentMediaItemIndex
+                    val position = player.currentPosition
+                    val resume = player.playWhenReady
+                    player.replaceMediaItem(index, item.buildUpon().setUri(repaired!!.toUri()).build())
+                    player.seekTo(index, position)
+                    player.prepare()
+                    player.playWhenReady = resume
+                    return@launch
+                }
                 if (complete) {
-                    Logs.add("player", "short fragment index, full audio verified → keeping track")
+                    Logs.add("player", "full samples with a short index; container repair unavailable")
                     return@launch
                 }
                 retryIfSnippet(checked = true)
@@ -442,7 +554,6 @@ class PlayerBrain(
                 if (cur?.mediaId == urn) {
                     player.replaceMediaItem(i, cur.buildUpon().setUri(Api.streamUrl(urn)).build())
                     player.prepare()
-                    player.play()
                 }
             }
             return
@@ -454,7 +565,7 @@ class PlayerBrain(
             return
         }
 
-        if (!Prefs.star || !Prefs.hqStreaming || urn in snippetHandled) {
+        if (urn in snippetHandled) {
             if (previewUrns.add(urn)) {
                 Logs.add("player", "only a ${actual / 1000}s preview of ${expected / 1000}s is available, not keeping it cached")
                 android.widget.Toast.makeText(context, context.getString(R.string.preview_only), android.widget.Toast.LENGTH_SHORT).show()
@@ -466,21 +577,21 @@ class PlayerBrain(
         ScDataSource.forceHq(urn, true)
         ScDataSource.invalidate(urn)
         val index = player.currentMediaItemIndex
-        player.replaceMediaItem(index, item.buildUpon().setUri(Api.streamUrl(urn, hq = true)).build())
+        val hqItem = item.buildUpon().setUri(Api.streamUrl(urn, hq = true)).build()
+        player.replaceMediaItem(index, hqItem)
         player.prepare()
-        player.play()
 
-        scope.launch(Dispatchers.Main) {
+        hqTimeout?.cancel()
+        hqTimeout = scope.launch(Dispatchers.Main) {
             delay(30_000)
-            if (player.currentMediaItem?.mediaId == urn && !player.isPlaying) {
+            if (player.currentMediaItem == hqItem && player.currentMediaItemIndex == index &&
+                PlayerRecovery.waitingForAudio(player.playWhenReady, player.playbackState)
+            ) {
                 Logs.add("player", "hq retry timed out → back to normal path")
                 ScDataSource.forceHq(urn, false)
                 val i = player.currentMediaItemIndex
-                player.currentMediaItem?.let {
-                    player.replaceMediaItem(i, it.buildUpon().setUri(Api.streamUrl(urn)).build())
-                }
+                player.replaceMediaItem(i, hqItem.buildUpon().setUri(Api.streamUrl(urn)).build())
                 player.prepare()
-                player.play()
             }
         }
     }
@@ -501,7 +612,7 @@ class PlayerBrain(
         if (count == 0 || player.currentMediaItemIndex < count - tail) return
         val existing = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }.toSet()
         fun usable(list: List<Track>) = list.filter {
-            it.urn !in existing && !it.starLocked && (!it.unavailable || Prefs.playBlocked) &&
+            it.urn !in existing && (!it.unavailable || Prefs.playBlocked) &&
                 !it.hidden
         }
         var add = emptyList<Track>()

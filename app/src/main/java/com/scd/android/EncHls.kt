@@ -45,6 +45,7 @@ object EncHls {
             target.delete()
             throw e
         }
+        AudioNormalize.repair(target)
         if (!Downloads.looksLikeAudio(target)) {
             target.delete()
             throw IOException("enchls: not audio")

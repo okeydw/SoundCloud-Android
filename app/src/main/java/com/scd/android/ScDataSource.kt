@@ -692,7 +692,7 @@ class ScDataSource(private val client: OkHttpClient) : BaseDataSource(true) {
                 tmp.parentFile?.mkdirs()
                 tmp.outputStream().use { out -> src.byteStream().copyTo(out) }
             }
-            ClearMp4.repair(tmp)
+            AudioNormalize.repair(tmp)
             if (!Downloads.looksLikeAudio(tmp)) throw IOException("spooled body is not audio (${tmp.length()} B)")
             if (cacheFile.exists()) cacheFile.delete()
             if (!tmp.renameTo(cacheFile)) throw IOException("cache rename failed")
@@ -813,19 +813,29 @@ class ScDataSource(private val client: OkHttpClient) : BaseDataSource(true) {
 
         fun adoptSpool(urn: String, file: File, tier: Quality): Boolean {
             val dir = cacheDir ?: return false
-            invalidateNow(urn)
             val target = File(dir, spoolNameFor(urn, "sq"))
-            val moved = runCatching {
-                target.delete()
-                file.renameTo(target) || run {
-                    file.copyTo(target, overwrite = true)
-                    file.delete()
+            if (!file.isFile || file.length() == 0L) return false
+            if (file.absoluteFile != target.absoluteFile) {
+                val staged = runCatching { File.createTempFile("spool-adopt-", ".part", dir) }.getOrNull() ?: return false
+                val moved = runCatching {
+                    file.copyTo(staged, overwrite = true)
+                    if (staged.length() != file.length() || staged.length() == 0L) return@runCatching false
+                    java.nio.file.Files.move(staged.toPath(), target.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
                     true
+                }.getOrDefault(false)
+                staged.delete()
+                if (!moved) return false
+                file.delete()
+            }
+            resolvedAlt.remove(urn)
+            totals.remove(urn)
+            totals.remove("$urn|hq")
+            runCatching { MediaCache.remove(urn) }
+            for (variant in listOf("sq", "hq")) {
+                val old = File(dir, spoolNameFor(urn, variant))
+                if (old != target) {
+                    runCatching { old.delete() }
                 }
-            }.getOrDefault(false)
-            if (!moved || !target.isFile || target.length() == 0L) {
-                target.delete()
-                return false
             }
             markPlayed(target)
             ServedQuality.record(urn, tier)
@@ -930,14 +940,27 @@ class ScDataSource(private val client: OkHttpClient) : BaseDataSource(true) {
 
         fun scanSpools(skipUrn: String?, step: () -> Unit = {}): Pair<Int, Int> {
             val skip = skipUrn?.let { u -> setOf(spoolNameFor(u, "sq"), spoolNameFor(u, "hq")) }.orEmpty()
+            val expected = DurationCache.snapshot().flatMap { (urn, ms) ->
+                listOf("sq", "hq").map { spoolNameFor(urn, it) to (urn to ms) }
+            }.toMap()
             var checked = 0
             var removed = 0
             for (f in spoolFiles()) {
                 step()
                 if (f.name in skip) continue
+                val known = expected[f.name]
+                if (known?.first == NowPlaying.urn) continue
+                if (known != null && AudioNormalize.repair(f, known.second)) {
+                    MediaCache.remove(known.first)
+                    totals.remove(known.first)
+                    totals.remove("${known.first}|hq")
+                    removed++
+                }
                 val ms = probeMs(f) ?: continue
                 checked++
-                if (isSnippetLength(ms) && f.delete()) removed++
+                if (known == null) continue
+                if (known.first == NowPlaying.urn) continue
+                if (AudioProbe.shortReason(AudioInfo(true, ms), f.length(), known.second) != null && f.delete()) removed++
             }
             return checked to removed
         }
@@ -976,7 +999,9 @@ class ScDataSource(private val client: OkHttpClient) : BaseDataSource(true) {
 
         private fun isBadSource(url: String): Boolean {
             val at = badSources[url] ?: return false
-            if (System.currentTimeMillis() - at < 15 * 60_000L) return true
+            if (System.currentTimeMillis() - at < 15 * 60_000L) {
+                return true
+            }
             badSources.remove(url)
             return false
         }
@@ -1055,7 +1080,9 @@ class ScDataSource(private val client: OkHttpClient) : BaseDataSource(true) {
         }
 
         fun markGoPlus(urn: String) {
-            if (goPlusUrns.size > 1000) goPlusUrns.clear()
+            if (goPlusUrns.size > 1000) {
+                goPlusUrns.clear()
+            }
             goPlusUrns[urn] = true
         }
 
@@ -1229,7 +1256,9 @@ class ScDataSource(private val client: OkHttpClient) : BaseDataSource(true) {
             }
 
             val budget = budgetBytes()
-            if (budget == Long.MAX_VALUE) return
+            if (budget == Long.MAX_VALUE) {
+                return
+            }
             var total = files.sumOf { it.length() }
             if (total <= budget) return
             for (f in files.sortedBy { it.lastModified() }) {

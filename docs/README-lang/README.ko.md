@@ -129,9 +129,10 @@
 
 - **웨이브와 추천** - 좋아요와 감상 기록을 바탕으로 한 자체 추천 시스템
 - **검색** - 트랙, 아티스트, 플레이리스트, 앨범, 바이브 검색 (신경망이 맥락에 맞춰 트랙을 골라 줍니다)
-- **플레이어** - 셔플, 반복, 재생 대기열, 가사, 좋아요와 싫어요
+- **플레이어** - 셔플, 반복, 재생 대기열, 가사, 좋아요와 싫어요. 펼친 플레이어에서 아티스트 이름을 누르면 프로필이 열립니다. 트랙 목록에서는 이름을 눌러도 트랙이 재생됩니다.
 - **이퀄라이저** - 기본 프리셋과 나만의 프리셋 만들기
 - **플레이리스트** - SoundCloud와 동기화되는 나만의 로컬 플레이리스트, 공개 또는 비공개, 드래그로 트랙 순서를 바꾸면 저장됩니다
+- **정렬과 좋아요 순서** - «나»의 트랙 목록 위에 있는 작은 정렬 아이콘에서 제목, 아티스트, 길이 등을 선택할 수 있습니다. «순서 변경»으로 좋아요한 곡을 직접 옮기면 기기에 저장된 순서대로 재생됩니다. 플레이리스트에는 정렬 메뉴가 없습니다.
 - **기록과 통계** - 감상 시간, 인기 트랙과 아티스트, 일별 및 시간별 그래프
 - **프로필** - 팔로우와 언팔로우, SoundCloud 프로필의 링크
 - **SoundCloud Auto (베타)** - 블루투스 기기 연결 시나리오 만들기
@@ -139,6 +140,7 @@
 ### 오프라인 모드
 
 - 트랙과 플레이리스트 다운로드, 캐시를 쓰는 오프라인 모드
+- **HLS 복구** - 이전 다운로드를 자동으로 검사하고 «설정 → 저장공간 → 무결성 검사»에서 직접 검사할 수도 있습니다. 오디오를 다시 인코딩하지 않고 컨테이너를 재구성해 탐색 인덱스를 복구합니다. 연결되어 있으면 불완전한 파일을 다시 다운로드하며, 결과에는 복구가 필요한 나머지 파일 수가 표시됩니다.
 - 캐시 한도와 캐시 초기화 시점 직접 설정
 - 두 버전이 모두 설치된 경우 Full과 Lite 사이 다운로드와 플레이리스트 공유 (베타, 일부만 동작)
 
@@ -189,9 +191,9 @@
 **빌드:** JDK 17, Android SDK 35.
 
 ```bash
-./gradlew assembleLiteDebug assembleFullDebug   # APK는 app/build/outputs/apk/<flavor>/debug/ 에 생성
-./gradlew testLiteDebugUnitTest                 # 유닛 테스트
-./gradlew lintLiteDebug                         # lint (baseline: ./gradlew updateLintBaseline)
+./gradlew assembleLiteDebug assembleFullDebug         # APK는 app/build/outputs/apk/<flavor>/debug/ 에 생성
+./gradlew testLiteDebugUnitTest testFullDebugUnitTest # 유닛 테스트
+./gradlew lintLiteDebug lintFullDebug                 # lint (baseline: ./gradlew updateLintBaseline)
 ```
 
 **소스:**

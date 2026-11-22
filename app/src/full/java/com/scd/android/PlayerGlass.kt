@@ -48,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -72,6 +73,7 @@ import kotlin.math.roundToInt
 
 @Composable
 fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
+    KeepPlayerAwake()
     val p = LocalGlass.current
     val fx = LocalFx.current
     val nav = LocalNav.current
@@ -132,6 +134,7 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
         Modifier
             .fillMaxSize()
             .offset { IntOffset(0, dragY.value.roundToInt().coerceAtLeast(0)) }
+            .clipToBounds()
             .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {},
     ) {
         if (immersive) {
@@ -221,7 +224,7 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
                         }
                         .pointerInput(urn) {
                             detectTapGestures(onDoubleTap = {
-                                val t = currentTrack() ?: return@detectTapGestures
+                                val t = currentTrack()?.takeUnless { it.external } ?: return@detectTapGestures
                                 scope.launch { if (!Likes.isLiked(t.urn)) Likes.toggle(t) }
                                 scope.launch {
                                     heart.snapTo(0f)
@@ -259,16 +262,16 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 SlidingTrack(swipe, preview.current, Modifier.weight(1f)) { md ->
                   Column {
+                    val artistTrack = if (swipe.window == null || md === swipe.window?.current) currentTrack() else null
                     Text(
-                        md.title?.toString().orEmpty(),
+                        artistTrack?.takeIf { it.enrichment != null }?.displayTitle ?: md.formattedTitle,
                         style = GlassType.title,
                         color = p.text,
                         maxLines = 1,
                         modifier = Modifier.basicMarquee(),
                     )
                     Spacer(Modifier.height(4.dp))
-                    val artistTrack = currentTrack()
-                    if (artistTrack != null && (swipe.window == null || md === swipe.window?.current)) {
+                    if (artistTrack != null) {
                         TrackArtistNames(
                             artistTrack,
                             style = GlassType.body.copy(fontSize = 16.sp),
@@ -291,15 +294,10 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
                     }
                 }
                 }
-                Spacer(Modifier.width(12.dp))
-                val liked = urn != null && Likes.isLiked(urn)
-                IconOrb(
-                    if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart,
-                    stringResource(if (liked) R.string.notif_unlike else R.string.notif_like),
-                    size = 52.dp,
-                    iconSize = 22.dp,
-                    active = liked,
-                ) { currentTrack()?.let { t -> scope.launch { Likes.toggle(t) } } }
+                if (urn != null && isScUrn(urn)) {
+                    Spacer(Modifier.width(12.dp))
+                    currentTrack()?.let { TrackLikeOrb(it, 52.dp, 22.dp) }
+                }
             }
 
             Spacer(Modifier.height(14.dp))
@@ -315,11 +313,15 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
                 },
                 height = 52.dp,
                 reflection = fx.reflection,
-                onSeek = { f -> seekFraction(f) },
+                onSeek = if (Together.isGuest) null else { f -> seekFraction(f) },
             )
             TimeRow(apiDuration)
 
             Spacer(Modifier.height(10.dp))
+            if (Together.isGuest) {
+                GlassChip(stringResource(R.string.together_you_guest), icon = R.drawable.ic_lock)
+                Spacer(Modifier.height(8.dp))
+            }
             Transport(controller)
             Spacer(Modifier.weight(0.4f))
             Spacer(Modifier.height(12.dp))
@@ -349,7 +351,7 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
 
     if (showMenu) {
         val t = currentTrack()
-        GlassSheet({ showMenu = false }, NowPlaying.title.ifBlank { null }) {
+        GlassSheet({ showMenu = false }, (t?.displayTitle ?: NowPlaying.title).ifBlank { null }) {
             SheetAction(R.drawable.ic_music, stringResource(R.string.queue)) {
                 showMenu = false
                 showQueue = true
@@ -374,6 +376,13 @@ fun PlayerGlass(controller: MediaController, onClose: () -> Unit) {
                 showSleep = true
             }
             if (t != null) {
+                rememberTrackAlbum(t, resolve = false)?.let { album ->
+                    SheetAction(R.drawable.ic_album, listOf(stringResource(R.string.kind_album), album.title).filter { it.isNotBlank() }.joinToString(" · ")) {
+                        showMenu = false
+                        onClose()
+                        nav.push(album.playlist?.let { Screen.PlaylistS(it) } ?: Screen.AlbumS(album.id))
+                    }
+                }
                 SheetAction(R.drawable.ic_plus, stringResource(R.string.add_to_playlist)) {
                     showMenu = false
                     picking = t
@@ -440,7 +449,6 @@ private fun PlayerChips(urn: String?, track: Track?, offlineQuality: String?, on
     ) {
         if (genre != null) GlassChip(genre, dot = genreColor(genre.lowercase()))
         if (Prefs.streamTags || Prefs.streamDebug) GlassChip(qualityText(urn, saved, offlineQuality), mono = true)
-        if (track?.goPlus == true) StarBadgeGlass()
         if (YouTubeImport.isYouTube(urn)) GlassChip(stringResource(R.string.youtube_badge), dot = YouTubeNeon.core)
         when {
             saved -> GlassChip(stringResource(R.string.offline_chip), icon = R.drawable.ic_download)
@@ -508,7 +516,7 @@ private fun Transport(controller: MediaController) {
             }
         }
         PlainButton(R.drawable.ic_prev, stringResource(R.string.cd_prev), size = 34.dp, tint = p.text) { controller.seekToPrevious() }
-        PlayOrb(NowPlaying.isPlaying, 80.dp) { if (controller.isPlaying) controller.pause() else controller.play() }
+        PlayOrb(NowPlaying.isPlaying, 80.dp, enabled = !Together.isGuest) { if (controller.isPlaying) controller.pause() else controller.play() }
         PlainButton(R.drawable.ic_next, stringResource(R.string.cd_next), size = 34.dp, tint = p.text) { controller.seekToNextMediaItem() }
         Box(contentAlignment = Alignment.Center) {
             PlainButton(
@@ -531,10 +539,10 @@ private fun Transport(controller: MediaController) {
 }
 
 @Composable
-private fun PlainButton(icon: Int, label: String, size: androidx.compose.ui.unit.Dp = 24.dp, tint: Color, dot: Boolean = false, onClick: () -> Unit) {
+private fun PlainButton(icon: Int, label: String, size: androidx.compose.ui.unit.Dp = 24.dp, tint: Color, dot: Boolean = false, enabled: Boolean = !Together.isGuest, onClick: () -> Unit) {
     val p = LocalGlass.current
     Box(
-        Modifier.size(56.dp).clip(CircleShape).pressable(onClick = onClick),
+        Modifier.size(56.dp).graphicsLayer { alpha = if (enabled) 1f else 0.35f }.clip(CircleShape).pressable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(painterResource(icon), label, tint = tint, modifier = Modifier.size(size))
@@ -572,12 +580,13 @@ private fun BottomDock(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         DockAction(R.drawable.ic_lyrics, stringResource(R.string.dock_lyrics), enabled = lyrics, onClick = onLyrics)
-        DockAction(R.drawable.ic_mix, stringResource(R.string.dock_radio), active = radioBusy, enabled = !radioBusy, onClick = onRadio)
+        DockAction(R.drawable.ic_mix, stringResource(R.string.dock_radio), active = radioBusy, enabled = !radioBusy && !Together.isGuest, onClick = onRadio)
         DockAction(R.drawable.ic_equalizer, stringResource(R.string.equalizer), active = eqOn, onClick = onEq)
         DockAction(
             if (disliked) R.drawable.ic_thumb_down_filled else R.drawable.ic_thumb_down,
             stringResource(R.string.not_that),
             tint = if (disliked) Color(0xFFFF6B6B) else null,
+            enabled = !Together.isGuest,
             onClick = onDislike,
         )
     }
@@ -651,7 +660,7 @@ private fun QueueSheet(controller: MediaController, onDismiss: () -> Unit) {
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(md.title?.toString() ?: "", style = GlassType.rowTitle.copy(fontSize = 14.sp), color = if (isCurrent) p.accent else p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(md.formattedTitle, style = GlassType.rowTitle.copy(fontSize = 14.sp), color = if (isCurrent) p.accent else p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(md.artist?.toString() ?: "", style = GlassType.small, color = p.text2, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         if (!isCurrent) {

@@ -43,7 +43,7 @@ fun PlaylistScreen(
     var loading by remember(playlist.urn) { mutableStateOf(false) }
     var notSaved by remember(playlist.urn) { mutableStateOf(false) }
     var dropping by remember(playlist.urn) { mutableStateOf<List<String>?>(null) }
-    val whole: suspend () -> List<Track> = { Library.playlistAll(playlist.urn, Prefs.offline) }
+    val whole: suspend () -> List<Track> = { collectTrackPages { Library.playlistPage(playlist.urn, it, fresh = false, offline = Prefs.offline) } }
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val liked = LikedPlaylists.isLiked(playlist.urn)
@@ -82,13 +82,7 @@ fun PlaylistScreen(
     }
 
     LaunchedEffect(playlist.urn, hasMore, page, loading) {
-        if (!hasMore || loading || tracks.isEmpty() || tracks.size >= 1000) return@LaunchedEffect
-        val next = page + 1
-        val res = runCatching { Library.playlistPage(playlist.urn, next, fresh = false, offline = Prefs.offline) }.getOrNull()
-            ?: return@LaunchedEffect
-        tracks = (tracks + res.first).distinctBy { it.urn }
-        page = next
-        hasMore = res.second
+        if (hasMore && !loading && tracks.isNotEmpty() && tracks.size < 1000) load(page + 1)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -156,7 +150,7 @@ fun PlaylistScreen(
                     }
                 }
             }
-            if (tracks.isNotEmpty()) {
+            if (tracks.isNotEmpty() && !playlist.isAlbum && own?.savedAlbum != true) {
                 val shuffled = Playback.shuffledFrom(playlist.urn)
                 IconButton(onClick = { Playback.toggleShuffle(controller, playlist.urn, tracks, more = whole) }) {
                     Icon(
@@ -180,7 +174,7 @@ fun PlaylistScreen(
             val allDownloaded = tracks.isNotEmpty() && !hasMore &&
                 tracks.all { Downloads.isDownloaded(it.urn) }
             val downloading = playlist.urn in Downloads.activeLists
-            when {
+            if (!playlist.isAlbum) when {
                 downloading -> IconButton(onClick = { Downloads.cancelList(context, playlist.urn) }) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 }
@@ -197,6 +191,9 @@ fun PlaylistScreen(
                 }
             }
         }
+        if (playlist.isAlbum || own?.savedAlbum == true) AlbumActions(own?.source ?: "album:${playlist.urn}", playlist.title, playlist.artwork_url,
+            info = own?.albumInfo ?: SavedAlbumInfo(playlist.kind, playlist.user), onRemoved = { if (own?.savedAlbum == true) onBack() },
+            shuffled = Playback.shuffledFrom(playlist.urn), shuffle = { Playback.toggleShuffle(controller, playlist.urn, tracks, more = whole) }, load = whole)
         dropping?.let { urns ->
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { dropping = null },

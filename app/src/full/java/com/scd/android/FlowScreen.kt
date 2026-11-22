@@ -33,7 +33,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,7 +51,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import kotlinx.coroutines.launch
 
 @Composable
 fun greetingText(): String {
@@ -246,14 +244,13 @@ fun SoundprintGlass(liked: List<Track>, onGenre: (GenreShare) -> Unit, onPlay: (
 private fun EstuaryDeck(onOpenWave: () -> Unit) {
     val p = LocalGlass.current
     val controller = LocalController.current
-    val scope = rememberCoroutineScope()
     val wave = WaveState.tracks
     val playingWave = NowPlaying.urn != null && WaveFeedback.isOwned(NowPlaying.urn)
     val resumed = wave.firstOrNull { it.urn == WaveState.lastUrn }
     val head = resumed ?: wave.firstOrNull()
     val resumeAt = if (resumed != null) WaveState.lastPositionMs else 0L
     val urn = if (playingWave) NowPlaying.urn else head?.urn
-    val title = if (playingWave) NowPlaying.title else head?.title
+    val title = if (playingWave) NowPlaying.title else head?.displayTitle
     val artist = if (playingWave) NowPlaying.artist else head?.user?.username
     val art: Any? = if (playingWave) NowPlaying.artworkUri else head?.artModel("t250x250")
     val genre = (if (playingWave) NowPlaying.genre else head?.genre)?.takeIf { it.isNotBlank() }
@@ -303,16 +300,8 @@ private fun EstuaryDeck(onOpenWave: () -> Unit) {
                         }
                     }
                 }
-                val liked = urn != null && Likes.isLiked(urn)
-                IconOrb(
-                    if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart,
-                    stringResource(if (liked) R.string.notif_unlike else R.string.notif_like),
-                    size = 44.dp,
-                    active = liked,
-                ) {
-                    val t = if (playingWave) controller?.currentMediaItem?.toTrackOrNull() else head
-                    if (t != null) scope.launch { Likes.toggle(t) }
-                }
+                val track = if (playingWave) controller?.currentMediaItem?.toTrackOrNull() else head
+                track?.let { TrackLikeOrb(it, 44.dp) }
             }
             Spacer(Modifier.height(14.dp))
             Waveform(

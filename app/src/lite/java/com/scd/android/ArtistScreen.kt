@@ -106,7 +106,7 @@ fun ArtistScreen(
                         painterResource(R.drawable.ic_wave),
                         stringResource(R.string.artist_radio),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(22.dp),
                     )
                 }
             }
@@ -123,7 +123,7 @@ fun ArtistScreen(
                         painterResource(if (following) R.drawable.ic_following else R.drawable.ic_follow),
                         stringResource(if (following) R.string.unfollow else R.string.follow),
                         tint = if (following) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(22.dp),
                     )
                 }
             }
@@ -137,7 +137,7 @@ fun ArtistScreen(
                         painterResource(R.drawable.ic_block),
                         stringResource(if (blocked) R.string.unblock else R.string.block),
                         tint = if (blocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(22.dp),
                     )
                 }
             }
@@ -148,7 +148,7 @@ fun ArtistScreen(
                         painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
                         stringResource(if (liked) R.string.notif_unlike else R.string.notif_like),
                         tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(22.dp),
                     )
                 }
             }

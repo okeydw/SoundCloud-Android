@@ -184,22 +184,22 @@ fun CatalogArtistScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Tr
                             val list = (tracks.ifEmpty { a.popular_tracks }).filter(Playback::playable)
                             if (list.isNotEmpty()) Playback.play(controller, list, list.first(), source = "catalog:$id", more = { pager.all() })
                         },
-                        modifier = Modifier.weight(1f),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
                     ) {
-                        Icon(painterResource(R.drawable.ic_play), null, modifier = Modifier.size(18.dp))
+                        Icon(painterResource(R.drawable.ic_play), null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.play_all))
                     }
                     Spacer(Modifier.width(8.dp))
                     val shuffled = Playback.shuffledFrom("catalog:$id")
-                    OutlinedButton(onClick = {
+                    IconButton(onClick = {
                         Playback.toggleShuffle(controller, "catalog:$id", tracks.ifEmpty { a.popular_tracks }, more = { pager.all() })
                     }) {
                         Icon(
                             painterResource(if (shuffled) R.drawable.ic_shuffle_on else R.drawable.ic_shuffle),
                             stringResource(R.string.notif_shuffle),
                             tint = if (shuffled) MaterialTheme.colorScheme.primary else LocalContentColor.current,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(22.dp),
                         )
                     }
                 }
@@ -310,9 +310,10 @@ private fun LazyListScope.albumItems(albums: List<ArtistAlbum>) {
 @Composable
 fun AlbumScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Track) -> Unit) {
     BackHandler(onBack = onBack)
-    var album by remember(id) { mutableStateOf<CatalogAlbum?>(null) }
+    val controller = LocalMediaController.current
+    var album by remember(id) { mutableStateOf(LocalPlaylists.cachedAlbum(id)) }
     var failed by remember(id) { mutableStateOf(false) }
-    LaunchedEffect(id) { runCatching { Api.catalogAlbum(id) }.onSuccess { album = it }.onFailure { failed = true } }
+    LaunchedEffect(id, Prefs.offline) { if (Prefs.offline) { failed = album == null; return@LaunchedEffect }; runCatching { Api.catalogAlbum(id) }.onSuccess { album = it }.onFailure { failed = true } }
     val al = album
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(al?.title ?: "…", onBack)
@@ -348,6 +349,8 @@ fun AlbumScreen(id: String, onBack: () -> Unit, onPlay: (List<Track>, Track) -> 
                 ) { Text(stringResource(R.string.play_all)) }
                 Spacer(Modifier.height(8.dp))
             }
+            item { AlbumActions("album:catalog:$id", al.title, al.cover_url, SavedAlbumInfo(al.type, primaryArtist = al.primary_artist, year = al.release_year),
+                shuffled = Playback.shuffledFrom("album:$id"), shuffle = { Playback.toggleShuffle(controller, "album:$id", tracks.filter(Playback::playable)) }) { tracks } }
             items(tracks, key = { "t:" + it.urn }) { t -> TrackRow(track = t, onClick = { onPlay(tracks, t) }) }
             if (tracks.isEmpty()) {
                 item { Text(stringResource(R.string.catalog_album_empty), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp)) }
@@ -406,7 +409,7 @@ private fun AuthorStatsList(mine: AuthorStats?, failed: Boolean, onPlay: (List<T
                 TrackArtwork(Api.artworkUrl(t.artwork_url, "t120x120"), 44.dp)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    Text(t.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                     Text(formatDuration(t.displayDuration), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                 }
                 if (mine.counted) {
@@ -468,7 +471,7 @@ fun StatsScreen(onBack: () -> Unit, onPlay: (List<Track>, Track) -> Unit) {
                     StatTile(s.totals.artists.toString(), stringResource(R.string.stats_artists), statsDelta(s.totals.artists, s.previous?.artists), Modifier.weight(1f))
                 }
                 if (s.timeline.isNotEmpty()) {
-                    SectionTitle(stringResource(R.string.stats_timeline))
+                    SectionTitle(timelineLabel(s.unit))
                     TimelineChart(remember(s) { s.filledTimeline() }, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.surfaceVariant)
                 }
                 if (s.rhythm.isNotEmpty()) {
@@ -492,7 +495,7 @@ fun StatsScreen(onBack: () -> Unit, onPlay: (List<Track>, Track) -> Unit) {
                     TrackArtwork(Api.artworkUrl(t.artworkUrl, "t120x120"), 44.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                        Text(formattedTrackTitle(t.title, t.artistName), maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                         Text(t.artistName, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                     }
                     Text(stringResource(R.string.stats_plays_n, t.plays.toInt()), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)

@@ -54,7 +54,9 @@ object Api {
     }
 
     fun storeSession(context: Context, id: String?) {
+        val switched = sessionId != id
         sessionId = id
+        if (switched) Likes.reset()
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY_SESSION, id).apply()
         if (id == null && ::http.isInitialized) {
@@ -194,9 +196,9 @@ object Api {
         e is java.net.ConnectException || e is java.net.UnknownHostException ||
             e is javax.net.ssl.SSLHandshakeException || e is java.net.NoRouteToHostException
 
-    private suspend fun mutate(method: String, path: String, body: okhttp3.RequestBody?): String =
+    private suspend fun mutate(method: String, path: String, body: okhttp3.RequestBody?, session: String? = sessionId): String =
         withContext(Dispatchers.IO) {
-            val sid = sessionId
+            val sid = session
             val bases = Endpoints.hostsFor(path)
             var last: Exception? = null
             for ((i, base) in bases.withIndex()) {
@@ -555,11 +557,44 @@ object Api {
         return LocalRadio.batch(limit) to LocalRadio.CURSOR
     }
 
-    suspend fun history(offset: Int = 0, limit: Int = 50, fresh: Boolean = false): HistoryPage =
-        getJson("$API_BASE/history?limit=$limit&offset=$offset", HistoryPage.serializer(), fresh)
+    internal suspend fun cachedLibraryPage(kind: LibraryPages.ListKind, page: Int, sid: String): LibraryPages.Page? = withContext(Dispatchers.IO) {
+        if (!::http.isInitialized || sid != sessionId) return@withContext null
+        val likes = kind == LibraryPages.ListKind.LIKES
+        val offset = page * 50
+        val path = if (likes) "/me/likes/tracks?limit=50&page=$page" else "/history?limit=50&offset=$offset"
+        for (host in Endpoints.hostsFor(path)) {
+            try {
+                val request = Request.Builder().url(host + path).header("x-session-id", sid).cacheControl(CacheControl.FORCE_CACHE).build()
+                val text = apiClient.newCall(request).await().use { response ->
+                    val cached = response.cacheResponse
+                    if (response.isSuccessful && cached?.request?.header("x-session-id") == sid) response.body?.string() else null
+                } ?: continue
+                if (sid != sessionId) return@withContext null
+                if (likes) {
+                    val batch = json.decodeFromString(PagedTracks.serializer(), text)
+                    if (batch.snapshotReady) return@withContext LibraryPages.Page(batch.collection, batch.has_more)
+                } else {
+                    val batch = json.decodeFromString(HistoryPage.serializer(), text)
+                    return@withContext LibraryPages.Page(batch.collection.map { it.toTrack() }, offset + batch.collection.size < batch.total)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) {}
+        }
+        null
+    }
+
+    suspend fun history(offset: Int = 0, limit: Int = 50, fresh: Boolean = false): HistoryPage {
+        val session = sessionId
+        return getJson("$API_BASE/history?limit=$limit&offset=$offset", HistoryPage.serializer(), fresh).also { entries ->
+            if (limit == 50 && offset % limit == 0) LibraryPages.save(LibraryPages.ListKind.HISTORY, offset / limit,
+                entries.collection.map { it.toTrack() }, offset + entries.collection.size < entries.total, session)
+        }
+    }
 
     suspend fun clearHistory() {
+        val session = sessionId
         mutate("DELETE", "/history", null)
+        LibraryPages.save(LibraryPages.ListKind.HISTORY, 0, emptyList(), false, session)
     }
 
     suspend fun logout(sid: String): Unit = withContext(Dispatchers.IO) {
@@ -577,19 +612,32 @@ object Api {
         }.onFailure { Logs.add("auth", "logout failed: ${it.javaClass.simpleName}") }
     }
 
-    suspend fun likedTracks(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedTracks =
-        getReadyJson("$API_BASE/me/likes/tracks?limit=$limit&page=$page", PagedTracks.serializer(), fresh)
+    suspend fun likedTracks(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedTracks {
+        val session = sessionId
+        return getReadyJson("$API_BASE/me/likes/tracks?limit=$limit&page=$page", PagedTracks.serializer(), fresh).also {
+            if (limit == 50 && it.snapshotReady) LibraryPages.save(LibraryPages.ListKind.LIKES, page, it.collection, it.has_more, session)
+        }
+    }
 
     private fun jsonBody(text: String) = text.toRequestBody("application/json".toMediaType())
 
     private val emptyBody get() = ByteArray(0).toRequestBody(null)
 
-    suspend fun likeTrack(track: Track) {
-        mutate("POST", "/likes/tracks/${enc(track.urn)}", jsonBody(json.encodeToString(Track.serializer(), track)))
+    suspend fun likeTrack(track: Track, session: String? = sessionId) {
+        mutate("POST", "/likes/tracks/${enc(track.urn)}", jsonBody(json.encodeToString(Track.serializer(), track)), session)
     }
 
-    suspend fun unlikeTrack(urn: String) {
-        mutate("DELETE", "/likes/tracks/${enc(urn)}", null)
+    suspend fun superlikes(offset: Int, limit: Int): SuperlikesPage =
+        getJson("$API_BASE/superlikes?limit=$limit&offset=$offset", SuperlikesPage.serializer(), fresh = true)
+
+    suspend fun setSuperlike(urn: String, enabled: Boolean, session: String): Boolean {
+        val path = "/superlikes/${enc(urn)}"
+        val body = if (enabled) mutate("POST", path, emptyBody, session) else mutate("DELETE", path, null, session)
+        return json.decodeFromString(SuperlikeResult.serializer(), body).superliked
+    }
+
+    suspend fun unlikeTrack(urn: String, session: String? = sessionId) {
+        mutate("DELETE", "/likes/tracks/${enc(urn)}", null, session)
     }
 
     suspend fun myPlaylists(page: Int = 0, limit: Int = 50, fresh: Boolean = false): PagedPlaylists =
@@ -1118,6 +1166,22 @@ data class PagedTracks(
     val complete: Boolean get() = !has_more && snapshotReady
 }
 
+@Serializable
+data class SuperlikesPage(val collection: List<SuperlikeEntry>, val next_href: String? = null) {
+    fun nextOffset(current: Int): Int? {
+        val query = next_href?.substringAfter('?') ?: return null
+        return query.split('&').firstOrNull { it.startsWith("offset=") }
+            ?.substringAfter('=')?.toIntOrNull()?.takeIf { it > current }
+            ?: throw IOException("Invalid superlikes page offset")
+    }
+}
+
+@Serializable
+data class SuperlikeEntry(val urn: String)
+
+@Serializable
+private data class SuperlikeResult(val superliked: Boolean)
+
 data class ApkAsset(val name: String, val url: String, val size: Long)
 
 data class ReleaseInfo(val tag: String, val url: String, val assets: List<ApkAsset>)
@@ -1144,6 +1208,9 @@ data class Track(
     val favoritings_count: Long? = null,
     val reposts_count: Long? = null,
     val comment_count: Long? = null,
+    val release_date: String? = null,
+    val created_at: String? = null,
+    val publisher_metadata: TrackPublisher? = null,
 ) {
     val catalogArtist: EnrichmentArtist? get() = enrichment?.primary_artist?.takeIf { it.id.isNotBlank() }
 
@@ -1155,10 +1222,11 @@ data class Track(
             policy == "SNIP" ||
             monetization_model == "SUB_HIGH_TIER"
 
-    val starLocked: Boolean get() = access == "preview" && !Prefs.star
-
     val unavailable: Boolean get() = access == "blocked"
 }
+
+@Serializable
+data class TrackPublisher(val artist: String? = null)
 
 @Serializable
 data class ScdMeta(

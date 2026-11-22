@@ -156,7 +156,7 @@ data class Fx(val mode: FxMode) {
     val drift: Boolean get() = mode != FxMode.Light && mode != FxMode.Off
     val twinkle: Boolean get() = mode == FxMode.Max
     val pulse: Boolean get() = mode == FxMode.Max
-    val reflection: Boolean get() = mode == FxMode.Max
+    val reflection: Boolean get() = mode != FxMode.Off
     val idle: Boolean get() = mode != FxMode.Light && mode != FxMode.Off
     val stars: Boolean get() = mode != FxMode.Off
 }

@@ -37,6 +37,8 @@ object AudioOutput {
         ) BLUETOOTH else null
     }
 
+    fun isBluetooth(device: AudioDeviceInfo): Boolean = kindOf(device.type) == BLUETOOTH
+
     private fun keyOf(d: AudioDeviceInfo, kind: String): String =
         if (kind == SPEAKER) SPEAKER else kind + ":" + d.productName.toString()
 

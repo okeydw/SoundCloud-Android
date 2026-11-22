@@ -7,6 +7,25 @@ import org.junit.Test
 class TrackPagerTest {
     private fun tracks(vararg ids: Int) = ids.map { Track(urn = "soundcloud:tracks:$it") }
 
+    @Test fun displaysCachedRowsWhileRefreshIsPendingAndAcceptsAnEmptyLibrary() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val pager = TrackPager(this) { _, fresh ->
+            if (fresh) {
+                entered.complete(Unit)
+                release.await()
+                emptyList<Track>() to false
+            } else tracks(1, 2) to false
+        }
+        pager.acceptEmptyRefresh = true
+        pager.refresh()
+        withTimeout(2000) { entered.await() }
+        assertEquals(tracks(1, 2), pager.items)
+        release.complete(Unit)
+        yield()
+        assertTrue(pager.items.isEmpty())
+    }
+
     @Test fun pageFailureCanRetryWithoutTruncatingOrSkipping() = runBlocking {
         var fail = true
         val pages = mutableListOf<Int>()

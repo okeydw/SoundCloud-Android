@@ -63,6 +63,7 @@ fun EqualizerPanel() {
         Switch(checked = enabled, onCheckedChange = { EqPresets.setEnabled(it) })
     }
     Spacer(Modifier.height(8.dp))
+    TrackEqBinding()
     Column(Modifier.alpha(if (enabled) 1f else 0.55f)) {
         val auto = Prefs.eqPreamp == null
         val shown = EqPresets.shownPreamp()

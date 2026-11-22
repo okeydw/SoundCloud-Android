@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -108,7 +109,6 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
     val drag = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     var dragTotal by remember { mutableStateOf(0f) }
-    val liked = currentUrn != null && Likes.isLiked(currentUrn)
 
     Surface(
         modifier = Modifier.offset { IntOffset(drag.value.roundToInt(), 0) },
@@ -149,19 +149,16 @@ fun PlayerBar(controller: MediaController?, onExpand: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                     FadingTrack(swipe, preview.current, Modifier.weight(1f).clickable(onClick = onExpand)) { md ->
-                        MiniContent(md.title?.toString().orEmpty(), md.artist?.toString().orEmpty(),
+                        MiniContent(md.formattedTitle, md.artist?.toString().orEmpty(),
                             md.artworkUri?.toString(), marquee = swipe.window == null)
                     }
-                    IconButton(onClick = {
-                        controller?.currentMediaItem?.toTrackOrNull()?.let { scope.launch { Likes.toggle(it) } }
-                    }) {
-                        Icon(
-                            painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                            iconLabel(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                            tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    if (isScUrn(currentUrn.orEmpty())) {
+                        controller?.currentMediaItem?.toTrackOrNull()?.let { track ->
+                            TrackLikeButton(track, Modifier.size(48.dp), MaterialTheme.colorScheme.primary,
+                                MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
-                    IconButton(onClick = {
+                    IconButton(enabled = !Together.isGuest, onClick = {
                         controller?.let { if (it.isPlaying) it.pause() else it.play() }
                     }) {
                         Icon(
@@ -203,33 +200,16 @@ private fun SeekSection(
     onSeek: (Float) -> Unit,
 ) {
     val position = NowPlaying.position
-    var dragging by remember { mutableStateOf(false) }
-    var dragValue by remember { mutableStateOf(0f) }
-    if (waveform != null) {
-        WaveformSeekBar(
-            samples = waveform,
-            progress = if (duration > 0) position.toFloat() / duration else 0f,
-            isPlaying = isPlaying,
-            onSeek = onSeek,
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-        )
-    } else {
-        Slider(
-            value = if (dragging) dragValue else if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
-            onValueChange = {
-                dragging = true
-                dragValue = it
-            },
-            onValueChangeFinished = {
-                onSeek(dragValue)
-                dragging = false
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+    WaveformSeekBar(
+        samples = waveform.orEmpty(),
+        progress = if (duration > 0) position.toFloat() / duration else 0f,
+        isPlaying = isPlaying,
+        onSeek = onSeek,
+        modifier = Modifier.fillMaxWidth().height(56.dp),
+    )
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(
-            formatDuration(if (dragging && duration > 0) (dragValue * duration).toLong() else position),
+            formatDuration(position),
             color = subColor,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -353,7 +333,6 @@ fun NowPlayingScreen(
         else -> "SQ"
     }
     val serverTag = streamHost?.split('.')?.take(2)?.joinToString(".")
-    val isGoPlus = fullTrack?.goPlus == true
     val apiDuration = maxOf(
         fullTrack?.displayDuration ?: 0L,
         currentUrn?.let { DurationCache.get(it) } ?: 0L,
@@ -372,15 +351,8 @@ fun NowPlayingScreen(
         controller.seekTo(target)
     }
 
-    var waveform by remember(currentUrn) { mutableStateOf(WaveCache.get(currentUrn)) }
-    LaunchedEffect(currentUrn, fullTrack) {
-        if (waveform != null) return@LaunchedEffect
-        val urn = currentUrn ?: return@LaunchedEffect
-        val url = NowPlaying.waveformUrl ?: fullTrack?.waveform_url ?: return@LaunchedEffect
-        val loaded = runCatching { Api.waveform(url) }.getOrNull() ?: return@LaunchedEffect
-        WaveCache.put(urn, loaded)
-        if (currentUrn == urn) waveform = loaded
-    }
+    val waveformUrl = NowPlaying.waveformUrl ?: fullTrack?.waveform_url
+    val waveform = rememberTrackWaveform(currentUrn, waveformUrl)
 
     val background = MaterialTheme.colorScheme.background
     val tintTarget = rememberArtworkColor(artworkUri)
@@ -396,6 +368,7 @@ fun NowPlayingScreen(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
+        KeepPlayerAwake()
         val immersive = Prefs.immersiveArtwork && artworkUri != null
         Surface(
             Modifier.fillMaxSize(),
@@ -579,9 +552,10 @@ fun NowPlayingScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SlidingTrack(swipe, preview.current, Modifier.weight(1f)) { md ->
                           Column {
-                            var titleOverflows by remember(md.title) { mutableStateOf(false) }
+                            val shownTitle = if (swipe.window == null || md === swipe.window?.current) fullTrack?.displayTitle ?: md.formattedTitle else md.formattedTitle
+                            var titleOverflows by remember(shownTitle) { mutableStateOf(false) }
                             Text(
-                                md.title?.toString().orEmpty(),
+                                shownTitle,
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -608,10 +582,6 @@ fun NowPlayingScreen(
                                         .basicMarquee()
                                 } else Modifier,
                             )
-                            if (isGoPlus) {
-                                Spacer(Modifier.height(6.dp))
-                                StarTag()
-                            }
                             if (YouTubeImport.isYouTube(currentUrn)) {
                                 Spacer(Modifier.height(6.dp))
                                 YouTubeBadge()
@@ -636,6 +606,14 @@ fun NowPlayingScreen(
                             val artistTrack = fullTrack?.takeIf { it.urn == currentUrn }
                                 ?: controller.currentMediaItem?.toTrackOrNull()
                             if (artistTrack != null && (swipe.window == null || md === swipe.window?.current)) {
+                                rememberTrackAlbum(artistTrack, resolve = false)?.let { album ->
+                                    Text(album.title.ifBlank { stringResource(R.string.kind_album) },
+                                        modifier = Modifier.clickable(enabled = swipe.window == null) {
+                                            onClose()
+                                            if (album.playlist != null) NavEvents.openPlaylist(album.id, album.title) else NavEvents.openAlbum(album.id)
+                                        },
+                                        style = MaterialTheme.typography.bodySmall, color = subColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
                                 TrackArtistNames(
                                     artistTrack,
                                     style = MaterialTheme.typography.bodyLarge,
@@ -677,20 +655,13 @@ fun NowPlayingScreen(
                     if (currentUrn != null) {
                         Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            val liked = Likes.isLiked(currentUrn)
                             val disliked = Dislikes.isDisliked(currentUrn)
-                            IconButton(onClick = {
-                                controller.currentMediaItem?.toTrackOrNull()?.let {
-                                    scope.launch { Likes.toggle(it) }
+                            if (isScUrn(currentUrn)) {
+                                controller.currentMediaItem?.toTrackOrNull()?.let { track ->
+                                    TrackLikeButton(track, Modifier.size(48.dp), MaterialTheme.colorScheme.primary, subColor)
                                 }
-                            }) {
-                                Icon(
-                                    painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                                    iconLabel(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                                    tint = if (liked) MaterialTheme.colorScheme.primary else subColor,
-                                )
                             }
-                            IconButton(onClick = {
+                            IconButton(enabled = !Together.isGuest, onClick = {
                                 controller.currentMediaItem?.toTrackOrNull()?.let {
                                     scope.launch { if (Dislikes.toggle(it)) controller.seekToNext() }
                                 }
@@ -773,6 +744,7 @@ fun NowPlayingScreen(
 
                     Spacer(Modifier.height(8.dp))
 
+                    if (Together.isGuest) Text(stringResource(R.string.together_you_guest), color = subColor)
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
@@ -780,7 +752,7 @@ fun NowPlayingScreen(
                     ) {
                         val waveNow = ShuffleQueue.isWave(NowPlaying.urn)
                         val liteContext = androidx.compose.ui.platform.LocalContext.current
-                        IconButton(onClick = {
+                        IconButton(enabled = !Together.isGuest, onClick = {
                             if (waveNow) {
                                 android.widget.Toast.makeText(liteContext, liteContext.getString(R.string.shuffle_wave_off), android.widget.Toast.LENGTH_SHORT).show()
                             } else {
@@ -795,7 +767,7 @@ fun NowPlayingScreen(
                             )
                         }
                         Spacer(Modifier.width(12.dp))
-                        IconButton(onClick = { controller.seekToPrevious() }, modifier = Modifier.size(56.dp)) {
+                        IconButton(enabled = !Together.isGuest, onClick = { controller.seekToPrevious() }, modifier = Modifier.size(56.dp)) {
                             Icon(painterResource(R.drawable.ic_prev), iconLabel(R.drawable.ic_prev), modifier = Modifier.size(36.dp), tint = titleColor)
                         }
                         Spacer(Modifier.width(12.dp))
@@ -804,7 +776,7 @@ fun NowPlayingScreen(
                             color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier
                                 .size(72.dp)
-                                .clickable { if (controller.isPlaying) controller.pause() else controller.play() },
+                                .clickable(enabled = !Together.isGuest) { if (controller.isPlaying) controller.pause() else controller.play() },
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -816,12 +788,12 @@ fun NowPlayingScreen(
                             }
                         }
                         Spacer(Modifier.width(12.dp))
-                        IconButton(onClick = { controller.seekToNext() }, modifier = Modifier.size(56.dp)) {
+                        IconButton(enabled = !Together.isGuest, onClick = { controller.seekToNext() }, modifier = Modifier.size(56.dp)) {
                             Icon(painterResource(R.drawable.ic_next), iconLabel(R.drawable.ic_next), modifier = Modifier.size(36.dp), tint = titleColor)
                         }
                         Spacer(Modifier.width(12.dp))
                         Box {
-                            IconButton(onClick = {
+                            IconButton(enabled = !Together.isGuest, onClick = {
                                 controller.repeatMode = when (repeatMode) {
                                     Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
                                     Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
@@ -960,6 +932,8 @@ fun WaveformSeekBar(
     var dragFrac by remember { mutableStateOf<Float?>(null) }
     val played = MaterialTheme.colorScheme.primary
     val rest = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+    val guest = Together.isGuest
+    val seek by rememberUpdatedState(onSeek)
 
     val pulseState = if (isPlaying) {
         rememberInfiniteTransition(label = "wfPulse").animateFloat(
@@ -974,19 +948,21 @@ fun WaveformSeekBar(
 
     Canvas(
         modifier
-            .pointerInput(samples) {
+            .pointerInput(NowPlaying.urn, guest) {
+                if (guest) return@pointerInput
                 detectTapGestures { offset ->
-                    onSeek((offset.x / size.width).coerceIn(0f, 1f))
+                    seek((offset.x / size.width).coerceIn(0f, 1f))
                 }
             }
-            .pointerInput(samples) {
+            .pointerInput(NowPlaying.urn, guest) {
+                if (guest) return@pointerInput
                 detectHorizontalDragGestures(
                     onDragStart = { dragFrac = (it.x / size.width).coerceIn(0f, 1f) },
                     onHorizontalDrag = { change, _ ->
                         dragFrac = (change.position.x / size.width).coerceIn(0f, 1f)
                     },
                     onDragEnd = {
-                        dragFrac?.let(onSeek)
+                        dragFrac?.let(seek)
                         dragFrac = null
                     },
                     onDragCancel = { dragFrac = null },

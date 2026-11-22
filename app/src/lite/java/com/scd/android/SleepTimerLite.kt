@@ -57,6 +57,7 @@ fun SleepTimerDialog(onDismiss: () -> Unit) {
                         label = { Text(stringResource(R.string.sleep_timer_end_of_track), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     )
                 }
+                CustomSleepTime(onDismiss)
             }
         },
         confirmButton = {

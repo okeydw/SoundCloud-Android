@@ -129,9 +129,10 @@ Después viene el inicio de sesión, a través de SoundCloud o con un código QR
 
 - **Ola y recomendaciones** - sistema de recomendaciones propio basado en tus me gusta y tu historial de escucha
 - **Búsqueda** - pistas, artistas, listas, álbumes y búsqueda por vibra (una red neuronal elige pistas según el contexto)
-- **Reproductor** - aleatorio, repetición, cola, letras, me gusta y no me gusta
+- **Reproductor** - aleatorio, repetición, cola, letras, me gusta y no me gusta. Toca el nombre del artista en el reproductor expandido para abrir su perfil. En las listas, tocar el nombre reproduce la pista.
 - **Ecualizador** - presets listos y la opción de crear el tuyo
 - **Listas** - tus propias listas locales sincronizadas con SoundCloud, públicas o privadas, el orden de las pistas se cambia arrastrando y se guarda
+- **Ordenación y orden de favoritos** - un icono compacto sobre las pistas en «Yo»: título, artista, duración y otros campos. Usa «Cambiar orden» para mover manualmente tus favoritos; el orden se guarda en el dispositivo y se usa al reproducir. Las playlists no tienen control de ordenación.
 - **Historial y estadísticas** - tiempo de escucha, pistas y artistas más escuchados, gráficos por días y por horas
 - **Perfiles** - seguir y dejar de seguir, enlaces del perfil de SoundCloud
 - **SoundCloud Auto (beta)** - escenarios para conectarse a dispositivos Bluetooth
@@ -139,6 +140,7 @@ Después viene el inicio de sesión, a través de SoundCloud o con un código QR
 ### Modo sin conexión
 
 - Descarga de pistas y listas, modo sin conexión con caché
+- **Reparación de HLS** - comprobación automática de descargas antiguas y manual desde «Ajustes → Almacenamiento → Comprobar integridad». Se reconstruye el índice para avanzar y retroceder sin recodificar el audio; las copias incompletas se descargan de nuevo cuando hay conexión. El resultado indica cuántos archivos siguen pendientes.
 - Ajuste manual del límite de caché y del momento en que se vacía
 - Descargas y listas compartidas entre Full y Lite si tienes las dos instaladas (beta, funciona de forma parcial)
 
@@ -189,9 +191,9 @@ La lista completa de cambios está en [CHANGELOG.md](../../CHANGELOG.md).
 **Compilación:** JDK 17, Android SDK 35.
 
 ```bash
-./gradlew assembleLiteDebug assembleFullDebug   # APK en app/build/outputs/apk/<flavor>/debug/
-./gradlew testLiteDebugUnitTest                 # pruebas unitarias
-./gradlew lintLiteDebug                         # lint (con baseline: ./gradlew updateLintBaseline)
+./gradlew assembleLiteDebug assembleFullDebug         # APK en app/build/outputs/apk/<flavor>/debug/
+./gradlew testLiteDebugUnitTest testFullDebugUnitTest # pruebas unitarias
+./gradlew lintLiteDebug lintFullDebug                 # lint (con baseline: ./gradlew updateLintBaseline)
 ```
 
 **Código fuente:**

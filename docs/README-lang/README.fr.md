@@ -129,9 +129,10 @@ Vient ensuite la connexion, via SoundCloud ou avec un QR code depuis la version 
 
 - **Vague et recommandations** - notre propre système de recommandations basé sur tes likes et ton historique d'écoute
 - **Recherche** - titres, artistes, playlists, albums et recherche par ambiance (un réseau neuronal choisit les titres selon le contexte)
-- **Lecteur** - lecture aléatoire, répétition, file d'attente, paroles, likes et dislikes
+- **Lecteur** - lecture aléatoire, répétition, file d'attente, paroles, likes et dislikes. Touche le nom de l’artiste dans le lecteur déplié pour ouvrir son profil. Dans les listes, toucher le nom lance le titre.
 - **Égaliseur** - préréglages prêts à l'emploi et possibilité de créer le tien
 - **Playlists** - tes propres playlists locales synchronisées avec SoundCloud, publiques ou privées, l'ordre des titres se change par glisser-déposer et reste enregistré
+- **Tri et ordre des favoris** - une icône compacte au-dessus des titres dans « Moi » : titre, artiste, durée et autres champs. « Modifier l’ordre » permet de déplacer les favoris manuellement ; cet ordre est enregistré sur l’appareil et utilisé pour la lecture. Les playlists n’ont pas de commande de tri.
 - **Historique et statistiques** - temps d'écoute, top titres et artistes, graphiques par jour et par heure
 - **Profils** - s'abonner et se désabonner, liens du profil SoundCloud
 - **SoundCloud Auto (bêta)** - scénarios de connexion aux appareils Bluetooth
@@ -139,6 +140,7 @@ Vient ensuite la connexion, via SoundCloud ou avec un QR code depuis la version 
 ### Mode hors ligne
 
 - Téléchargement de titres et de playlists, mode hors ligne avec cache
+- **Réparation HLS** - vérification automatique des anciens téléchargements et manuelle dans « Paramètres → Stockage → Vérifier l'intégrité ». Le conteneur est reconstruit sans réencoder le son pour rétablir la navigation dans le morceau ; les copies incomplètes sont téléchargées à nouveau avec une connexion. Le résultat indique les fichiers restant à réparer.
 - Réglage manuel de la limite du cache et du moment où il est vidé
 - Téléchargements et playlists partagés entre Full et Lite si les deux sont installées (bêta, fonctionne partiellement)
 
@@ -189,9 +191,9 @@ La liste complète des changements se trouve dans [CHANGELOG.md](../../CHANGELOG
 **Compilation :** JDK 17, Android SDK 35.
 
 ```bash
-./gradlew assembleLiteDebug assembleFullDebug   # APK dans app/build/outputs/apk/<flavor>/debug/
-./gradlew testLiteDebugUnitTest                 # tests unitaires
-./gradlew lintLiteDebug                         # lint (avec baseline : ./gradlew updateLintBaseline)
+./gradlew assembleLiteDebug assembleFullDebug         # APK dans app/build/outputs/apk/<flavor>/debug/
+./gradlew testLiteDebugUnitTest testFullDebugUnitTest # tests unitaires
+./gradlew lintLiteDebug lintFullDebug                 # lint (avec baseline : ./gradlew updateLintBaseline)
 ```
 
 **Sources :**

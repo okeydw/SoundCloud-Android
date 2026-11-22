@@ -53,7 +53,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import androidx.lifecycle.repeatOnLifecycle
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -68,7 +67,6 @@ fun GlassTrackRow(
     note: String? = null,
 ) {
     val p = LocalGlass.current
-    val scope = rememberCoroutineScope()
     val current = NowPlaying.urn == track.urn
     var menu by remember { mutableStateOf(false) }
     if (menu) TrackActionsSheet(track, onDismiss = { menu = false }, onRemove = onRemove, onPlay = onClick)
@@ -105,7 +103,7 @@ fun GlassTrackRow(
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    track.title,
+                    track.displayTitle,
                     style = GlassType.rowTitle,
                     color = p.text,
                     maxLines = 1,
@@ -113,10 +111,6 @@ fun GlassTrackRow(
                     overflow = if (current) TextOverflow.Clip else TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false).then(if (current) Modifier.basicMarquee() else Modifier),
                 )
-                if (track.goPlus) {
-                    Spacer(Modifier.width(6.dp))
-                    StarBadgeGlass()
-                }
             }
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -124,7 +118,7 @@ fun GlassTrackRow(
                     Icon(painterResource(R.drawable.ic_check), null, tint = p.accent, modifier = Modifier.size(13.dp))
                     Spacer(Modifier.width(5.dp))
                 }
-                TrackArtistNames(track, style = GlassType.small, color = p.text2)
+                TrackArtistNames(track, style = GlassType.small, color = p.text2, enabled = false)
             }
         }
         Spacer(Modifier.width(8.dp))
@@ -138,19 +132,8 @@ fun GlassTrackRow(
         }
         if (trailing != null) {
             trailing()
-        } else {
-            val liked = Likes.isLiked(track.urn)
-            Box(
-                Modifier.size(40.dp).clip(CircleShape).clickable { scope.launch { Likes.toggle(track) } },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                    stringResource(if (liked) R.string.notif_unlike else R.string.notif_like),
-                    tint = if (liked) p.accent else p.text3,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+        } else if (!track.external) {
+            TrackLikeButton(track, Modifier.size(40.dp), p.accent, p.text3, 20.dp)
         }
     }
 }
@@ -194,8 +177,8 @@ fun TrackCard(track: Track, onClick: () -> Unit, width: Dp = 138.dp) {
             }
         }
         Spacer(Modifier.height(8.dp))
-        Text(track.title, style = GlassType.small.copy(fontWeight = FontWeight.SemiBold), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        TrackArtistNames(track, style = GlassType.small, color = p.text2)
+        Text(track.displayTitle, style = GlassType.small.copy(fontWeight = FontWeight.SemiBold), color = p.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        TrackArtistNames(track, style = GlassType.small, color = p.text2, enabled = false)
     }
 }
 

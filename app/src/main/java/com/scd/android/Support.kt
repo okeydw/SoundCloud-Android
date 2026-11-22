@@ -47,6 +47,14 @@ object Support {
             put("device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
             put("android", "${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
             put("abi", android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "")
+            val audio = context.getSystemService(android.media.AudioManager::class.java)
+            audio?.let {
+                put("mediaVolume", it.getStreamVolume(android.media.AudioManager.STREAM_MUSIC))
+                put("mediaMuted", it.isStreamMute(android.media.AudioManager.STREAM_MUSIC))
+            }
+            put("preferredOutput", Prefs.audioOutput.substringBefore(':'))
+            put("availableOutputs", AudioOutput.outputs(context).map { it.kind }.distinct().joinToString(", "))
+            put("equalizerEnabled", EqLive.params.enabled)
             put("language", Prefs.language)
             put("offline", Prefs.offline)
             put("api", Api.API_BASE.removePrefix("https://"))

@@ -10,7 +10,7 @@ import kotlinx.coroutines.launch
 class ArtistProfileState(
     private val urn: String,
     private val user: suspend (String) -> Artist = { Api.user(it) },
-    private val userPlaylists: suspend (String) -> List<Playlist> = { Api.userPlaylists(it).collection },
+    private val userPlaylists: suspend (String) -> List<Playlist> = { urn -> artistPlaylists { page -> Api.userPlaylists(urn, page) } },
     private val webProfiles: suspend (String) -> List<WebProfile> = { Api.webProfiles(it) },
     private val report: (String, Exception) -> Unit = { part, error ->
         Logs.add("artist", "$part $urn: ${if (error is ApiHttpException) "HTTP ${error.code} ${error.serviceCode.orEmpty()}" else error.javaClass.simpleName}")
@@ -50,12 +50,23 @@ class ArtistProfileState(
 
     private suspend fun part(name: String, load: suspend () -> Unit) {
         try {
-            load()
+            CatalogRead.observe { load() }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             failed = true
             report(name, e)
         }
+    }
+}
+
+internal suspend fun artistPlaylists(fetch: suspend (Int) -> PagedPlaylists): List<Playlist> {
+    val lists = LinkedHashMap<String, Playlist>()
+    var page = 0
+    while (true) {
+        val batch = fetch(page)
+        batch.collection.forEach { lists[it.urn] = it }
+        if (!batch.has_more) return lists.values.toList()
+        check(++page < 500) { "The artist playlist list is too large to load at once" }
     }
 }

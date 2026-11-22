@@ -25,7 +25,49 @@ import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 
 object Downloads {
+    internal val fileAccess = TrackFileAccess()
+    data class MoveProgress(val selection: String, val total: Int, val done: Int = 0, val moved: Int = 0, val running: Boolean = true)
+    var moveProgress by mutableStateOf<MoveProgress?>(null)
+        private set
+    var onFileMoved: ((String, File, File) -> Unit)? = null
+
+    fun moveDownloads(selection: String) {
+        if (moveProgress?.running == true) return
+        val target = selection.takeIf { it.isNotEmpty() }?.let(::File) ?: volumes.internal
+        if (target != volumes.internal && target.path !in volumes.available()) return
+        val cleanup = volumes.unfinished()
+        val urns = downloaded.filter { volumes.saved(it) != target || it in cleanup }
+        moveProgress = MoveProgress(selection, urns.size)
+        App.scope.launch(Dispatchers.IO) {
+            var done = 0
+            var moved = 0
+            try {
+                for (urn in urns) {
+                    if (!volumes.writable(target) || (!target.isDirectory && !target.mkdirs())) break
+                    try {
+                        if (fileAccess.tryMove(urn) {
+                            if (!volumes.cleanup(urn) || !isDownloaded(urn)) return@tryMove false
+                            if (volumes.saved(urn) == target) return@tryMove true
+                            val source = localFile(urn) ?: return@tryMove false
+                            val base = baseName(urn)
+                            if (audioExts.any { it != source.extension && File(target, "$base.$it").exists() }) return@tryMove false
+                            val copy = AudioFileTransfer.copyVerified(source, target)
+                            if (!volumes.commitMove(urn, source, target)) return@tryMove false
+                            withContext(Dispatchers.Main) { onFileMoved?.invoke(urn, source, copy) }
+                            volumes.cleanup(urn, verify = false)
+                        }) moved++
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Exception) { Logs.add("download", "move $urn: ${e.javaClass.simpleName}") }
+                    done++
+                    moveProgress = MoveProgress(selection, urns.size, done, moved)
+                }
+            } finally { moveProgress = MoveProgress(selection, urns.size, done, moved, running = false) }
+        }
+    }
+
     private lateinit var dir: File
+    internal lateinit var volumes: DownloadVolumes
+        private set
     private lateinit var indexFile: File
     private lateinit var appContext: Context
     private val json = Json { ignoreUnknownKeys = true }
@@ -89,8 +131,17 @@ object Downloads {
         track: Track,
         priority: TrackTurns.Priority = TrackTurns.Priority.BACKGROUND,
         wanted: Quality = QualityLadder.downloadWanted(),
+    ): Boolean = fileAccess.use(track.urn) {
+        upgradeOneFile(track, priority, wanted)
+    }
+
+    private suspend fun upgradeOneFile(
+        track: Track,
+        priority: TrackTurns.Priority,
+        wanted: Quality,
     ): Boolean = withContext(Dispatchers.IO) {
         if (track.urn in inProgress || YouTubeImport.isYouTube(track.urn)) return@withContext false
+        val directory = volumes.destination(track.urn, existing = true) ?: return@withContext false
         val old = fileFor(track.urn)
         if (!old.exists()) return@withContext false
         ScDataSource.noteStorageQuality(track.urn, track.scdMeta?.storage_quality, overwrite = false)
@@ -99,8 +150,8 @@ object Downloads {
         if (current.rank >= target.rank) return@withContext false
         inProgress = inProgress + track.urn
         val base = baseName(track.urn)
-        val tmp = File(dir, "$base.upgrade.part")
-        val fallback = File(dir, "$base.upgrade.fallback.part")
+        val tmp = File(directory, "$base.upgrade.part")
+        val fallback = File(directory, "$base.upgrade.fallback.part")
         try {
             val oldMs = AudioProbe.durationMs(old)
             var reached = false
@@ -147,9 +198,9 @@ object Downloads {
             fallback.copyTo(tmp, overwrite = true)
             if (!awaitNotPlaying(track.urn)) return@withContext false
             val ext = audioExt(tmp)
-            val targetFile = File(dir, "$base.$ext")
+            val targetFile = File(directory, "$base.$ext")
             java.nio.file.Files.move(tmp.toPath(), targetFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-            audioExts.map { File(dir, "$base.$it") }.filter { it != targetFile }.forEach { it.delete() }
+            audioExts.map { File(directory, "$base.$it") }.filter { it != targetFile }.forEach { it.delete() }
             rememberQuality(track.urn, tier.badge)
             qualityLabels.remove(track.urn)
             Logs.add("download", "${track.title.take(24)}: ${current.badge} → ${tier.badge} $ext @${audioSourceLabel(selection.url)}")
@@ -235,6 +286,7 @@ object Downloads {
             NotificationChannel(CHANNEL_ID, context.getString(R.string.downloads), NotificationManager.IMPORTANCE_LOW)
         )
         dir = File(context.filesDir, "tracks").apply { mkdirs() }
+        volumes = DownloadVolumes(appContext, dir)
         indexFile = File(dir, "index.json")
         runCatching {
             val atomic = android.util.AtomicFile(indexFile)
@@ -250,8 +302,9 @@ object Downloads {
         }
         downloaded = synchronized(index) { index.keys.toSet() }
         App.scope.launch {
+            volumes.unfinished().forEach { urn -> fileAccess.tryMove(urn) { runCatching { volumes.cleanup(urn) }.getOrDefault(false) } }
             val snapshot = synchronized(index) { index.keys.toList() }
-            val missing = snapshot.filter { !fileFor(it).exists() }
+            val missing = snapshot.filter { volumes.saved(it) == dir && !fileFor(it).exists() }
             if (missing.isEmpty()) return@launch
             synchronized(index) {
                 missing.forEach { index.remove(it) }
@@ -268,8 +321,9 @@ object Downloads {
 
     fun fileFor(urn: String): File {
         val base = baseName(urn)
-        return audioExts.map { File(dir, "$base.$it") }.firstOrNull { it.exists() }
-            ?: File(dir, "$base.m4a")
+        val directory = volumes.saved(urn)
+        return audioExts.map { File(directory, "$base.$it") }.firstOrNull { it.exists() }
+            ?: File(directory, "$base.m4a")
     }
 
     private fun audioExt(file: File): String {
@@ -457,7 +511,7 @@ object Downloads {
                 val body = res.body ?: return@use false
                 onHeader(res.header("x-audio-quality")?.lowercase())
                 tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
-                ClearMp4.repair(tmp)
+                AudioNormalize.repair(tmp)
                 val ok = looksLikeAudio(tmp)
                 if (!ok) Logs.add("download", "not audio (${tmp.length()} B) @$host")
                 ok
@@ -525,15 +579,25 @@ object Downloads {
 
     fun localFile(urn: String): File? = if (ready && isDownloaded(urn)) fileFor(urn).takeIf { it.exists() } else null
 
-    suspend fun importFrom(track: Track, audio: java.io.InputStream, art: java.io.InputStream?): Boolean = withContext(Dispatchers.IO) {
+    suspend fun importFrom(track: Track, audio: java.io.InputStream, art: java.io.InputStream?): Boolean = fileAccess.use(track.urn) {
+        importFromFile(track, audio, art)
+    }
+
+    private suspend fun importFromFile(track: Track, audio: java.io.InputStream, art: java.io.InputStream?): Boolean = withContext(Dispatchers.IO) {
         if (isDownloaded(track.urn) || track.urn in inProgress) {
             audio.close()
             art?.close()
             return@withContext isDownloaded(track.urn)
         }
+        val directory = volumes.destination(track.urn, existing = false)
+        if (directory == null) {
+            audio.close()
+            art?.close()
+            return@withContext false
+        }
         inProgress = inProgress + track.urn
         val base = baseName(track.urn)
-        val tmp = File(dir, "$base.import.part")
+        val tmp = File(directory, "$base.import.part")
         try {
             tmp.delete()
             audio.use { input -> tmp.outputStream().use { input.copyTo(it) } }
@@ -541,15 +605,17 @@ object Downloads {
                 tmp.delete()
                 return@withContext false
             }
-            val target = File(dir, "$base.${audioExt(tmp)}")
-            audioExts.forEach { File(dir, "$base.$it").delete() }
+            val target = File(directory, "$base.${audioExt(tmp)}")
+            audioExts.forEach { File(directory, "$base.$it").delete() }
             if (!tmp.renameTo(target)) return@withContext false
             art?.use { input -> runCatching { artFor(track.urn).outputStream().use { input.copyTo(it) } } }
             synchronized(index) {
+                volumes.record(track.urn, directory)
                 index[track.urn] = track
                 saveIndex()
             }
             downloaded = downloaded + track.urn
+            WaveCache.prefetch(track.urn, track.waveform_url)
             finishedListeners.remove(track.urn)?.let { cb -> runCatching { cb(target) } }
             true
         } catch (_: Exception) {
@@ -563,18 +629,36 @@ object Downloads {
 
     fun tracks(): List<Track> = synchronized(index) { index.values.toList() }.reversed()
 
+    internal fun savedTrack(urn: String): Track? = synchronized(index) { index[urn] }
+
     suspend fun download(
         track: Track,
         priority: TrackTurns.Priority = TrackTurns.Priority.BACKGROUND,
+        replace: Boolean = false,
+    ): Boolean = fileAccess.use(track.urn) {
+        downloadFile(track, priority, replace)
+    }
+
+    private suspend fun downloadFile(
+        track: Track,
+        priority: TrackTurns.Priority,
+        replace: Boolean,
     ): Boolean = withContext(Dispatchers.IO) {
-        if (isDownloaded(track.urn) || track.urn in inProgress) {
+        if (track.urn in inProgress) return@withContext false
+        if (isDownloaded(track.urn) && !replace) {
             if (isDownloaded(track.urn)) queued = queued - track.urn
-            return@withContext true
+            return@withContext localFile(track.urn) != null
+        }
+        val directory = volumes.destination(track.urn, existing = isDownloaded(track.urn))
+        if (directory == null) {
+            queued = queued - track.urn
+            Logs.add("download", "selected storage unavailable")
+            return@withContext false
         }
         inProgress = inProgress + track.urn
         val base = baseName(track.urn)
-        val tmp = File(dir, "$base.part")
-        val fromCache = File(dir, "$base.cache.part")
+        val tmp = File(directory, "$base.part")
+        val fromCache = File(directory, "$base.cache.part")
         try {
             tmp.delete()
             fromCache.delete()
@@ -596,8 +680,11 @@ object Downloads {
             val viaNetwork = picked == null && !YouTubeImport.isYouTube(track.urn)
             val wantedTier = QualityLadder.allowed(QualityLadder.downloadWanted())
             var cachedTier: Quality? = null
-            if (viaNetwork) {
-                cachedTier = CachedCopy.extract(track.urn, fromCache)?.takeIf { usable(fromCache, track) }
+            if (viaNetwork && !replace) {
+                cachedTier = CachedCopy.extract(track.urn, fromCache)?.takeIf {
+                    AudioNormalize.repair(fromCache, track.displayDuration)
+                    usable(fromCache, track)
+                }
                 if (cachedTier == null) {
                     fromCache.delete()
                 } else if (cachedTier.rank >= wantedTier.rank && fromCache.renameTo(tmp)) {
@@ -636,10 +723,12 @@ object Downloads {
                 return@withContext false
             }
             val ext = audioExt(tmp)
-            val target = File(dir, "$base.$ext")
-            audioExts.forEach { File(dir, "$base.$it").delete() }
-            if (!tmp.renameTo(target)) return@withContext false
+            val target = File(directory, "$base.$ext")
+            if (replace && !isDownloaded(track.urn)) return@withContext false
+            java.nio.file.Files.move(tmp.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            audioExts.map { File(directory, "$base.$it") }.filter { it != target }.forEach { it.delete() }
             rememberQuality(track.urn, quality)
+            qualityLabels.remove(track.urn)
             Logs.add(
                 "download",
                 "${track.title.take(24)} → $quality $ext ${target.length() / 1024} KB " +
@@ -648,10 +737,12 @@ object Downloads {
             DownloadFailures.clear(track.urn)
             runCatching { downloadArt(track) }
             synchronized(index) {
+                volumes.record(track.urn, directory)
                 index[track.urn] = track
                 saveIndex()
             }
             downloaded = downloaded + track.urn
+            WaveCache.prefetch(track.urn, track.waveform_url)
             finishedListeners.remove(track.urn)?.let { cb -> runCatching { cb(target) } }
             true
         } catch (_: Exception) {
@@ -662,6 +753,13 @@ object Downloads {
             inProgress = inProgress - track.urn
             queued = queued - track.urn
         }
+    }
+
+    suspend fun repair(track: Track): Boolean {
+        if (Prefs.offline || !isDownloaded(track.urn) || track.urn in inProgress) return false
+        val ok = download(track, replace = true)
+        if (ok) Logs.add("cache", "repaired ${track.urn}")
+        return ok
     }
 
     fun enqueue(
@@ -800,7 +898,10 @@ object Downloads {
 
     suspend fun removeAll(urns: Collection<String>, demote: Boolean = false): Unit = withContext(Dispatchers.IO) {
         if (urns.isEmpty()) return@withContext
-        for (urn in urns) {
+        val removed = mutableSetOf<String>()
+        for (urn in urns) fileAccess.use(urn) {
+            val directory = volumes.saved(urn)
+            if (!volumes.cleanup(urn) || !volumes.writable(directory)) return@use
             if (demote && !YouTubeImport.isYouTube(urn)) {
                 val file = fileFor(urn)
                 if (file.exists() && looksLikeAudio(file)) {
@@ -809,16 +910,19 @@ object Downloads {
                 }
             }
             val base = baseName(urn)
-            audioExts.forEach { File(dir, "$base.$it").delete() }
+            val files = audioExts.map { File(directory, "$base.$it") }
+            if (files.any { it.exists() && !it.delete() }) return@use
+            removed += urn
+            volumes.forget(urn)
             artFor(urn).delete()
         }
-        withContext(Dispatchers.Main) { urns.forEach { qualityLabels.remove(it) } }
-        runCatching { qualityPrefs().edit().apply { urns.forEach { remove(it) } }.apply() }
+        withContext(Dispatchers.Main) { removed.forEach { qualityLabels.remove(it) } }
+        runCatching { qualityPrefs().edit().apply { removed.forEach { remove(it) } }.apply() }
         synchronized(index) {
-            urns.forEach { index.remove(it) }
+            removed.forEach { index.remove(it) }
             saveIndex()
         }
-        downloaded = downloaded - urns.toSet()
+        downloaded = downloaded - removed
     }
 
     @SuppressLint("MissingPermission")

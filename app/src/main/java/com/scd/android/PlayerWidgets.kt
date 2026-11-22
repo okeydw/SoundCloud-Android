@@ -20,6 +20,8 @@ import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -37,6 +39,9 @@ object PlayerWidgets {
         val artist: String = "",
         val playing: Boolean = false,
         val art: String? = null,
+        val urn: String? = null,
+        val waveUrl: String? = null,
+        val step: Int = 0,
     ) {
         val hasTrack: Boolean get() = title.isNotBlank()
     }
@@ -52,6 +57,11 @@ object PlayerWidgets {
     private var surfaceArt: Bitmap? = null
     private var surfaceAccent: Int? = null
     private var surfaces: WidgetArtwork.Surfaces? = null
+    private var largeVisible = false
+    private data class WaveKey(val urn: String?, val url: String?, val offline: Boolean, val downloaded: Boolean)
+    private var waveKey: WaveKey? = null
+    private var waveJob: Job? = null
+    private var waveform: List<Float> = emptyList()
     private var appContext: Context? = null
 
     private val providers = listOf(PlayerWidgetSmall::class.java, PlayerWidgetLarge::class.java)
@@ -71,6 +81,9 @@ object PlayerWidgets {
             artist = md?.artist?.toString().orEmpty(),
             playing = playing,
             art = md?.artworkUri?.toString(),
+            urn = player.currentMediaItem?.mediaId,
+            waveUrl = md?.extras?.getString("waveform_url"),
+            step = progressStep(player),
         )
         if (state == last) return
         last = state
@@ -78,6 +91,46 @@ object PlayerWidgets {
         if (ids(app).isEmpty()) return
         render(app, state)
         if (state.art != artKey) loadArt(app, state)
+    }
+
+    private fun progressStep(player: Player): Int =
+        if (player.duration > 0) (player.currentPosition.toDouble() * 32 / player.duration).toInt().coerceIn(0, 32) else 0
+
+    fun updateProgress(context: Context, player: Player) {
+        if (largeVisible && last?.step != progressStep(player)) publish(context, player)
+    }
+
+    private fun loadWave(context: Context, state: State) {
+        val key = WaveKey(state.urn, state.waveUrl, Prefs.offline || Health.noInternet, state.urn?.let(Downloads::isDownloaded) == true)
+        if (waveKey == key) return
+        waveJob?.cancel()
+        waveKey = key
+        waveform = waveBars(WaveCache.initial(state.urn), 56)
+        val urn = state.urn ?: return
+        waveJob = App.scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+            WaveCache.display(urn, state.waveUrl).collect { result ->
+                val bars = waveBars(result, 56)
+                if (waveKey == key && last?.urn == urn && waveform != bars) {
+                    waveform = bars
+                    last?.let { render(context, it) }
+                }
+            }
+        }
+    }
+
+    private fun waveImage(step: Int): Bitmap {
+        val bmp = Bitmap.createBitmap(448, 60, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        waveform.forEachIndexed { i, peak ->
+            val h = (peak * 40f).coerceAtLeast(3f)
+            val left = i * 8f + 1
+            paint.color = if (i * 32 < step * waveform.size) Prefs.accent else 0x99ffffff.toInt()
+            canvas.drawRoundRect(left, 20 - h / 2, left + 5, 20 + h / 2, 2.5f, 2.5f, paint)
+            paint.alpha = 60
+            canvas.drawRoundRect(left, 43f, left + 5, 43 + h * .32f, 2f, 2f, paint)
+        }
+        return bmp
     }
 
     fun refreshTheme() {
@@ -143,6 +196,8 @@ object PlayerWidgets {
     private fun render(context: Context, state: State) {
         val mgr = AppWidgetManager.getInstance(context)
         val widgets = ids(context)
+        largeVisible = PlayerWidgetLarge::class.java in widgets
+        if (largeVisible) loadWave(context, state)
         if (widgets.isEmpty()) return
         val bmp = art?.takeIf { state.hasTrack && state.art == artKey && !it.isRecycled }
         if (surfaces == null || surfaceArt !== bmp || surfaceAccent != Prefs.accent) {
@@ -188,6 +243,9 @@ object PlayerWidgets {
         val hideArtist = fontScale > if (compact) 1.25f else if (large) 1.75f else 1.5f
         v.setViewVisibility(R.id.widget_artist, if (hideArtist) View.GONE else View.VISIBLE)
         if (large) {
+            val showWave = state.hasTrack && waveform.isNotEmpty() && (!compact || !hideArtist)
+            v.setViewVisibility(R.id.widget_wave, if (showWave) View.VISIBLE else View.GONE)
+            if (showWave) v.setImageViewBitmap(R.id.widget_wave, waveImage(state.step))
             v.setViewVisibility(R.id.widget_brand, if (compact || fontScale > 1.15f) View.GONE else View.VISIBLE)
             v.setViewPadding(R.id.widget_details, 0, if (compact || fontScale > 1.15f) 0 else (6 * context.resources.displayMetrics.density).toInt(), 0, 0)
             v.setImageViewBitmap(R.id.widget_backdrop, surfaces!!.wide)
@@ -256,12 +314,13 @@ object PlayerWidgets {
             .putString("title", s.title)
             .putString("artist", s.artist)
             .putString("art", s.art)
+            .putString("urn", s.urn).putString("wave_url", s.waveUrl).putInt("wave_step", s.step)
             .apply()
     }
 
     private fun restore(context: Context): State {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return State(p.getString("title", "").orEmpty(), p.getString("artist", "").orEmpty(), false, p.getString("art", null))
+        return State(p.getString("title", "").orEmpty(), p.getString("artist", "").orEmpty(), false, p.getString("art", null), p.getString("urn", null), p.getString("wave_url", null), p.getInt("wave_step", 0))
     }
 }
 

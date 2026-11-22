@@ -607,7 +607,6 @@ object Together {
         private var lastSignature = ""
         private var lastAlign = 0L
         private var lastNotice = 0L
-        private val savedRate = Prefs.playbackRate
         private var gateJob: Job? = null
         private val driftJob = scope.launch {
             while (true) {
@@ -632,7 +631,7 @@ object Together {
             p = null
             gateJob?.cancel()
             driftJob.cancel()
-            Prefs.changePlaybackRate(savedRate)
+            Prefs.setRoomPlaybackRate(null)
             sync = Sync.SYNCED
         }
 
@@ -657,7 +656,7 @@ object Together {
             lastSignature = signature
             if (pb.status == IDLE || pb.trackUrn == null) return
             val track = decodeTrack(pb.track) ?: return
-            if (kotlin.math.abs(Prefs.playbackRate - pb.rate) > 0.001) Prefs.changePlaybackRate(pb.rate.toFloat())
+            Prefs.setRoomPlaybackRate(pb.rate.toFloat())
             val player = p ?: return
             val playing = pb.status != PAUSED
             if (player.currentMediaItem?.mediaId != pb.trackUrn) {

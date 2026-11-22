@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.*
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
@@ -34,6 +35,7 @@ class TrackSwipeFade(private val scope: CoroutineScope) {
 
     fun begin(preview: QueuePreview, thresholdPx: Float, travelPx: Float = thresholdPx, limitPx: Float = Float.MAX_VALUE) {
         reset()
+        if (Together.isGuest) return
         window = preview
         threshold = thresholdPx.coerceAtLeast(1f)
         travel = travelPx.coerceAtLeast(threshold)
@@ -56,6 +58,7 @@ class TrackSwipeFade(private val scope: CoroutineScope) {
     }
 
     fun finish(controller: MediaController?, slide: Boolean = false) {
+        if (Together.isGuest) { reset(); return }
         if (settling) return
         val snapshot = window ?: return
         val next = distance < 0f
@@ -111,12 +114,12 @@ fun SlidingTrack(
     val direction = sign(state.distance)
     Box(modifier.clipToBounds()) {
         Box(Modifier.fillMaxWidth().graphicsLayer {
-            translationX = direction * progress * size.width
+            translationX = direction * progress * (size.width + 24.dp.toPx())
             if (tilt) rotationZ = direction * progress * 6f
         }) { content(from) }
         if (to != null && progress > 0f) {
             Box(Modifier.matchParentSize().graphicsLayer {
-                translationX = direction * (progress - 1f) * size.width
+                translationX = direction * (progress - 1f) * (size.width + 24.dp.toPx())
                 if (tilt) rotationZ = direction * (progress - 1f) * 6f
             }) { content(to) }
         }
@@ -154,6 +157,4 @@ fun FadingTrack(
 }
 
 private fun currentTrackMetadata(state: TrackSwipeFade, current: MediaMetadata?): MediaMetadata =
-    state.window?.current ?: current ?: MediaMetadata.Builder()
-        .setTitle(NowPlaying.title).setArtist(NowPlaying.artist)
-        .setArtworkUri(NowPlaying.artworkUri?.let(android.net.Uri::parse)).build()
+    state.window?.current ?: current ?: NowPlaying.metadata ?: MediaMetadata.EMPTY

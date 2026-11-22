@@ -42,7 +42,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -60,7 +59,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @Composable
 fun TileGrid(
@@ -412,13 +410,11 @@ fun TrackRow(
     trailing: (@Composable () -> Unit)? = null,
     onRemove: (() -> Unit)? = null,
 ) {
-    val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
     if (menu) TrackMenuDialog(track, onDismiss = { menu = false }, onPlay = onClick, onRemove = onRemove)
-    val liked = Likes.isLiked(track.urn)
     val isCurrent = NowPlaying.urn == track.urn
     val accent = MaterialTheme.colorScheme.primary
-    val dim = dimmed || track.starLocked || (track.unavailable && !Prefs.playBlocked)
+    val dim = dimmed || (track.unavailable && !Prefs.playBlocked)
     val rowAlpha = if (dim) 0.4f else 1f
     LaunchedEffect(track.urn) {
         if (track.goPlus && track.displayDuration in 1L..35_000L && !Prefs.offline) {
@@ -469,7 +465,7 @@ fun TrackRow(
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    track.title,
+                    track.displayTitle,
                     maxLines = 1,
                     overflow = if (isCurrent) TextOverflow.Clip else TextOverflow.Ellipsis,
                     softWrap = !isCurrent,
@@ -477,15 +473,12 @@ fun TrackRow(
                     color = if (isCurrent) accent else MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f, fill = false).then(if (isCurrent) Modifier.basicMarquee() else Modifier),
                 )
-                if (track.goPlus) {
-                    Spacer(Modifier.width(6.dp))
-                    StarTag()
-                }
             }
             TrackArtistNames(
                 track,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
+                enabled = false,
             )
         }
         Spacer(Modifier.width(4.dp))
@@ -518,15 +511,9 @@ fun TrackRow(
         )
         if (trailing != null) {
             trailing()
-        } else {
-            IconButton(onClick = { scope.launch { Likes.toggle(track) } }, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    painterResource(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                    iconLabel(if (liked) R.drawable.ic_heart_filled else R.drawable.ic_heart),
-                    tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+        } else if (!track.external) {
+            TrackLikeButton(track, Modifier.size(40.dp), MaterialTheme.colorScheme.primary,
+                MaterialTheme.colorScheme.onSurfaceVariant, 20.dp)
         }
     }
 }

@@ -1,14 +1,18 @@
 package com.scd.android
 
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.Player
+import androidx.media3.common.MediaMetadata
 import androidx.media3.session.MediaController
 
 object NowPlaying {
     var urn by mutableStateOf<String?>(null)
-    var title by mutableStateOf("")
+    var metadata by mutableStateOf<MediaMetadata?>(null)
+        private set
+    val title by derivedStateOf { metadata?.formattedTitle.orEmpty() }
     var artist by mutableStateOf("")
     var artistUrn by mutableStateOf<String?>(null)
     var artworkUri by mutableStateOf<String?>(null)
@@ -24,17 +28,25 @@ object NowPlaying {
 
     fun sync(c: MediaController) {
         val md = c.currentMediaItem?.mediaMetadata
-        urn = c.currentMediaItem?.mediaId
-        title = md?.title?.toString() ?: ""
-        artist = md?.artist?.toString() ?: ""
-        artistUrn = md?.extras?.getString("artist_urn")
-        artworkUri = md?.artworkUri?.toString()
-        waveformUrl = md?.extras?.getString("waveform_url")
-        genre = md?.extras?.getString("genre")
-        isPlaying = c.isPlaying
-        shuffle = ShuffleQueue.on && !ShuffleQueue.isWave(urn)
-        repeatMode = c.repeatMode
+        androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+            urn = c.currentMediaItem?.mediaId
+            metadata = md
+            artist = md?.artist?.toString() ?: ""
+            artistUrn = md?.extras?.getString("artist_urn")
+            artworkUri = md?.artworkUri?.toString()
+            waveformUrl = md?.extras?.getString("waveform_url")
+            genre = md?.extras?.getString("genre")
+            isPlaying = c.isPlaying
+            shuffle = ShuffleQueue.on && !ShuffleQueue.isWave(urn)
+            repeatMode = c.repeatMode
+        }
         WaveState.remember(urn, c.currentPosition)
+        WaveCache.prefetch(urn, waveformUrl)
+        val next = c.nextMediaItemIndex
+        if (next in 0 until c.mediaItemCount) {
+            val item = c.getMediaItemAt(next)
+            WaveCache.prefetch(item.mediaId, item.mediaMetadata.extras?.getString("waveform_url"))
+        }
     }
 }
 

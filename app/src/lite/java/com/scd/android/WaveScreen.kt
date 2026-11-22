@@ -185,7 +185,7 @@ fun WaveFeed(
                 }
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    track.title,
+                    track.displayTitle,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,

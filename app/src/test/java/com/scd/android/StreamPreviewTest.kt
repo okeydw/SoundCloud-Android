@@ -10,6 +10,14 @@ import java.io.File
 import java.io.IOException
 
 class StreamPreviewTest {
+    @Test fun cacheRepairRejectsArbitraryHlsFragmentsButKeepsRealShortSongs() {
+        assertNotNull(AudioProbe.shortReason(AudioInfo(true, 63_000), 4_000_000, 154_000))
+        assertNotNull(AudioProbe.shortReason(AudioInfo(true, 110_000), 4_000_000, 154_000))
+        assertNull(AudioProbe.shortReason(AudioInfo(true, 30_000), 400_000, 30_000))
+        assertNull(AudioProbe.shortReason(AudioInfo(true, 10_000), 100_000, 0))
+        assertNull(AudioProbe.shortReason(AudioInfo(true, 154_000, declaredMs = 30_000), 4_000_000, 154_000))
+    }
+
     @Test fun aPreviewNeverBecomesFullAfterRepeatedAttempts() {
         repeat(5) {
             assertNotNull(AudioProbe.shortReason(AudioInfo(true, 10_000), 400_000, 154_000))

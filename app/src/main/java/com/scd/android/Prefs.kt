@@ -57,6 +57,10 @@ object Prefs {
         private set
     var language by mutableStateOf("system")
         private set
+    var hideTitleArtists by mutableStateOf(true)
+        private set
+    var keepPlayerAwake by mutableStateOf(false)
+        private set
     var immersiveArtwork by mutableStateOf(false)
         private set
     var backgroundImage by mutableStateOf<String?>(null)
@@ -81,8 +85,7 @@ object Prefs {
         private set
     var crossfade by mutableStateOf(false)
         private set
-    var playBlocked by mutableStateOf(false)
-        private set
+    val playBlocked: Boolean get() = true
     var star by mutableStateOf(false)
         private set
     var hqStreaming by mutableStateOf(true)
@@ -97,12 +100,12 @@ object Prefs {
     var streamQuality by mutableStateOf(QUALITY_AUTO)
         private set
 
-    var playbackRate by mutableStateOf(1f)
-        private set
-    var pitchSemitones by mutableStateOf(0f)
-        private set
-    var pitchMode by mutableStateOf("auto")
-        private set
+    private var playback by mutableStateOf(TrackPlaybackSetting())
+    private var playbackBeforeTrack = TrackPlaybackSetting()
+    private var roomRate by mutableStateOf<Float?>(null)
+    val playbackRate: Float get() = roomRate ?: playback.rate
+    val pitchSemitones: Float get() = playback.semitones
+    val pitchMode: String get() = playback.pitchMode
 
     var themeFontPath by mutableStateOf<String?>(null)
         private set
@@ -196,6 +199,8 @@ object Prefs {
         offlineManual = sp.getBoolean("offline_manual", offline)
         autoOffline = sp.getBoolean("auto_offline", true)
         language = sp.getString("language", "system") ?: "system"
+        hideTitleArtists = sp.getBoolean("hide_title_artists", true)
+        keepPlayerAwake = sp.getBoolean("keep_player_awake", false)
         immersiveArtwork = sp.getBoolean("immersive_artwork", false)
         backgroundImage = sp.getString("background_image", null)?.takeIf { java.io.File(it).exists() }
         backgroundBlur = sp.getBoolean("background_blur", true)
@@ -208,16 +213,14 @@ object Prefs {
         avatarUrl = sp.getString("avatar_url", null)
         userUrn = sp.getString("user_urn", null)
         crossfade = sp.getBoolean("crossfade", false)
-        playBlocked = sp.getBoolean("play_blocked", false)
+        sp.edit().putBoolean("play_blocked", true).apply()
         star = sp.getBoolean("star", false)
         hqStreaming = sp.getBoolean("hq_streaming", true)
         streamQuality = sp.getString("stream_quality", null)?.takeIf { it in streamQualities }
             ?: if (star && !hqStreaming) QUALITY_SQ else QUALITY_AUTO
         hqStreaming = streamQuality != QUALITY_SQ
-        playbackRate = SpeedPitch.clampRate(sp.getFloat("playback_rate", SpeedPitch.RATE_DEFAULT))
-        pitchSemitones = SpeedPitch.clampSemitones(sp.getFloat("pitch_semitones", 0f))
-        pitchMode = sp.getString("pitch_mode", SpeedPitch.MODE_AUTO)
-            ?.takeIf { it == SpeedPitch.MODE_AUTO || it == SpeedPitch.MODE_MANUAL } ?: SpeedPitch.MODE_AUTO
+        playback = globalPlayback()
+        playbackBeforeTrack = playback
         themeFontPath = sp.getString("theme_font_path", null)?.takeIf { java.io.File(it).isFile }
         themeFontName = if (themeFontPath != null) sp.getString("theme_font_name", "") ?: "" else ""
         apiStar = sp.getBoolean("api_star", true)
@@ -432,24 +435,33 @@ object Prefs {
         sp.edit().putBoolean("stream_tags", value).apply()
     }
 
-    fun changePlaybackRate(value: Float) {
-        val v = SpeedPitch.clampRate(value)
-        if (v == playbackRate) return
-        playbackRate = v
-        sp.edit().putFloat("playback_rate", v).apply()
+    private fun globalPlayback() = TrackPlaybackSetting(
+        sp.getFloat("playback_rate", SpeedPitch.RATE_DEFAULT),
+        sp.getString("pitch_mode", SpeedPitch.MODE_AUTO) ?: SpeedPitch.MODE_AUTO,
+        sp.getFloat("pitch_semitones", 0f),
+    ).normalized()
+
+    private fun SharedPreferences.Editor.putPlayback(value: TrackPlaybackSetting) =
+        putFloat("playback_rate", value.rate)
+            .putString("pitch_mode", value.pitchMode)
+            .putFloat("pitch_semitones", value.semitones)
+
+    private fun changePlayback(value: TrackPlaybackSetting) {
+        if (playback == value) return
+        playback = value
+        if (!trackEqActive) sp.edit().putPlayback(value).apply()
     }
 
-    fun changePitchSemitones(value: Float) {
-        val v = SpeedPitch.clampSemitones(value)
-        if (v == pitchSemitones) return
-        pitchSemitones = v
-        sp.edit().putFloat("pitch_semitones", v).apply()
-    }
+    fun changePlaybackRate(value: Float) = changePlayback(playback.copy(rate = SpeedPitch.clampRate(value)))
+
+    fun changePitchSemitones(value: Float) = changePlayback(playback.copy(semitones = SpeedPitch.clampSemitones(value)))
 
     fun changePitchMode(value: String) {
-        if (value != SpeedPitch.MODE_AUTO && value != SpeedPitch.MODE_MANUAL) return
-        pitchMode = value
-        sp.edit().putString("pitch_mode", value).apply()
+        if (value == SpeedPitch.MODE_AUTO || value == SpeedPitch.MODE_MANUAL) changePlayback(playback.copy(pitchMode = value))
+    }
+
+    internal fun setRoomPlaybackRate(value: Float?) {
+        roomRate = value?.let(SpeedPitch::clampRate)
     }
 
     fun changeThemeFont(path: String?, name: String) {
@@ -481,9 +493,66 @@ object Prefs {
         sp.edit().putBoolean("auto_cache_likes", value).apply()
     }
 
+    private var eqTrack: String? = null
+    var trackEqActive by mutableStateOf(false)
+        private set
+
+    private var savedTrackSetting by mutableStateOf<TrackEqSetting?>(null)
+    private fun currentTrackSetting() = TrackEqSetting(eqEnabled, eqGains, eqPresetId, eqPreamp, playback)
+    val trackEqSaved: Boolean get() = trackEqActive && savedTrackSetting == currentTrackSetting()
+
+    fun activateTrackEq(urn: String?, force: Boolean = false) {
+        if (!force && urn == eqTrack) return
+        eqTrack = urn
+        val wasActive = trackEqActive
+        val saved = if (urn == null || carEqBackup() != null) null else sp.getString("track_eq:$urn", null)?.let {
+            runCatching { kotlinx.serialization.json.Json.decodeFromString(TrackEqSetting.serializer(), it) }.getOrNull()
+        }
+        playbackBeforeTrack = if (wasActive) globalPlayback() else playback
+        playback = saved?.playback?.normalized() ?: playbackBeforeTrack
+        savedTrackSetting = null
+        trackEqActive = saved != null
+        if (saved != null) {
+            eqEnabled = saved.enabled
+            eqGains = EqCurve.bandGains(saved.gains).toList()
+            eqPresetId = saved.preset
+            eqPreamp = saved.preamp
+            savedTrackSetting = currentTrackSetting()
+        } else if (wasActive) {
+            eqEnabled = sp.getBoolean("eq_enabled", false)
+            eqGains = EqCurve.bandGains((sp.getString("eq_gains", "") ?: "").split(',').mapNotNull { it.trim().toDoubleOrNull() }).toList()
+            eqPresetId = sp.getString("eq_preset_id", EqPresets.FLAT)?.takeIf { it.isNotBlank() } ?: EqPresets.FLAT
+            eqPreamp = sp.getString("eq_preamp", "")?.toDoubleOrNull()?.takeIf { it.isFinite() }
+        } else return
+        EqLive.publish(eqEnabled, eqGains, eqPreamp)
+    }
+
+    fun bindTrackEq(urn: String, bind: Boolean) {
+        if (urn != eqTrack || carEqBackup() != null) return
+        if (bind) {
+            val config = currentTrackSetting()
+            val editor = sp.edit().putString("track_eq:$urn", kotlinx.serialization.json.Json.encodeToString(TrackEqSetting.serializer(), config))
+            if (!trackEqActive && playback != playbackBeforeTrack) editor.putPlayback(playbackBeforeTrack)
+            editor.apply()
+            savedTrackSetting = config
+            trackEqActive = true
+        } else {
+            sp.edit().remove("track_eq:$urn").apply()
+            activateTrackEq(urn, force = true)
+        }
+    }
+
+    fun suspendTrackEq() {
+        val urn = eqTrack
+        activateTrackEq(null)
+        eqTrack = urn
+    }
+
+    fun resumeTrackEq() = activateTrackEq(eqTrack, force = true)
+
     fun changeEqEnabled(on: Boolean) {
         eqEnabled = on
-        sp.edit().putBoolean("eq_enabled", on).apply()
+        if (!trackEqActive) sp.edit().putBoolean("eq_enabled", on).apply()
         EqLive.publish(eqEnabled, eqGains, eqPreamp)
     }
 
@@ -493,7 +562,7 @@ object Prefs {
         eqGains = g
         eqPresetId = presetId
         eqPreamp = pre
-        sp.edit()
+        if (!trackEqActive) sp.edit()
             .putString("eq_gains", g.joinToString(","))
             .putString("eq_preset_id", presetId)
             .putString("eq_preamp", pre?.toString() ?: "")
@@ -515,11 +584,6 @@ object Prefs {
         if (star != value) QualityLadder.forgetRefusal()
         star = value
         sp.edit().putBoolean("star", value).apply()
-    }
-
-    fun changePlayBlocked(value: Boolean) {
-        playBlocked = value
-        sp.edit().putBoolean("play_blocked", value).apply()
     }
 
     fun changeCrossfade(value: Boolean) {
@@ -576,6 +640,16 @@ object Prefs {
     fun changeTextColor(value: Int) {
         textColor = value
         sp.edit().putInt("text_color", value).apply()
+    }
+
+    fun changeHideTitleArtists(value: Boolean) {
+        hideTitleArtists = value
+        sp.edit().putBoolean("hide_title_artists", value).apply()
+    }
+
+    fun changeKeepPlayerAwake(value: Boolean) {
+        keepPlayerAwake = value
+        sp.edit().putBoolean("keep_player_awake", value).apply()
     }
 
     fun changeImmersiveArtwork(value: Boolean) {

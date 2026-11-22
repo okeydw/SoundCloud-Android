@@ -1,3 +1,56 @@
+## [0.4.7] **Superlikes, albums and SD cards**
+[Русский](../CHANGELOG.md)
+
+> sound works for me on One UI 9. If yours is still silent, send the log and metrics from Settings → About
+
+<h1>Added </h1>
+
+- Superlikes. Double-tap the like button to give a track one
+
+- Choose where to save tracks in Settings → Storage. You can use internal storage or an SD card
+
+- You can now save albums and open a track’s album from the track itself
+
+- Save an EQ preset for a specific track
+
+- Track sorting
+
+- Set your own sleep timer, up to 1,440 minutes
+
+- “Keep screen on” in Settings → Appearance
+
+- The large widget now shows the track’s waveform
+
+- You can hide duplicate artist names in track titles. It’s on by default. Check Settings → Appearance
+
+<h1>Changed </h1>
+
+- Reworked the cache 🖤
+
+- SoundCloud Auto can start when your Bluetooth device connects, even with the app closed. Turn on “Background start” and pick the device in the system prompt
+
+- Removed the like button from YouTube tracks
+
+<h1>Fixed </h1>
+
+- Fixed downloaded HLS tracks freezing when you seek
+
+- Downloaded tracks show their cached waveform right away
+
+- Fixed seeking from the notification for AAC and MP3 files without a seek index
+
+- In Full, the artwork colour now fades smoothly between tracks
+
+- The player could unpause itself after 30 seconds while looking for the full track instead of a preview. A late radio response could also take you back a track
+
+- If audio output fails, the player tries to open it again and keeps the downloaded file
+
+- Fixed the week and month labels in the yearly and all-time stats
+
+**Something broke? - Issues are your friend**
+
+---
+
 ## [0.4.6] **Encryption - DONE**
 [Русский](../CHANGELOG.md)
 

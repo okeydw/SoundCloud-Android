@@ -82,7 +82,7 @@ fun ReorderDialog(tracks: List<Track>, onDismiss: () -> Unit, onSave: (List<Stri
                             )
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                                Text(t.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                                 Text(
                                     t.user?.username ?: "",
                                     maxLines = 1,

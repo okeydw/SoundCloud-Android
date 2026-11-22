@@ -112,6 +112,7 @@ object HlsDownload {
             target.delete()
             throw e
         }
+        AudioNormalize.repair(target)
         if (!Downloads.looksLikeAudio(target)) {
             target.delete()
             throw IOException("hls: not audio")

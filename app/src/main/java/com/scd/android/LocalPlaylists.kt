@@ -22,6 +22,14 @@ import java.util.UUID
 data class PlaylistOp(val type: String, val track: String? = null, val value: String? = null)
 
 @Serializable
+data class SavedAlbumInfo(
+    val kind: String? = null,
+    val owner: TrackUser? = null,
+    val primaryArtist: AlbumArtist? = null,
+    val year: Int? = null,
+)
+
+@Serializable
 data class LocalPlaylist(
     val id: String,
     val title: String,
@@ -46,7 +54,9 @@ data class LocalPlaylist(
     val seenRemote: Boolean = false,
     val pushedAt: Long = 0,
     val pulledOnce: Boolean = false,
+    val albumInfo: SavedAlbumInfo? = null,
 ) {
+    val savedAlbum: Boolean get() = localOnly && source?.startsWith("album:") == true
     val fromYouTube: Boolean get() = source?.startsWith(YouTubeImport.SOURCE) == true || (localOnly && tracks.isNotEmpty() && tracks.all { YouTubeImport.isYouTube(it.urn) })
     val syncing: Boolean get() = !deleted && !localOnly && (remoteUrn == null || ops.isNotEmpty())
     val isPrivate: Boolean get() = sharing == "private"
@@ -58,6 +68,8 @@ data class LocalPlaylist(
         title = title,
         artwork_url = artworkUrl,
         track_count = count,
+        kind = if (savedAlbum) albumInfo?.kind?.takeIf { it in setOf("album", "ep", "single", "compilation") } ?: "album" else null,
+        user = albumInfo?.owner ?: albumInfo?.primaryArtist?.let { TrackUser(username = it.name) },
         sharing = sharing,
     )
 }
@@ -125,6 +137,24 @@ object LocalPlaylists {
 
     fun find(urn: String): LocalPlaylist? =
         all.firstOrNull { !it.deleted && (it.id == urn || it.remoteUrn == urn) }
+
+    fun cachedAlbum(id: String): CatalogAlbum? = find("local:album:catalog:$id")?.let {
+        CatalogAlbum(id = id, title = it.title, cover_url = it.artworkUrl, tracks = it.tracks,
+            type = it.albumInfo?.kind ?: "album", primary_artist = it.albumInfo?.primaryArtist, release_year = it.albumInfo?.year)
+    }
+
+    fun saveAlbum(key: String, title: String, cover: String?, tracks: List<Track>, info: SavedAlbumInfo? = null) {
+        require(key.startsWith("album:"))
+        val id = "local:$key"
+        update { albums ->
+            val old = albums.firstOrNull { it.id == id }
+            val saved = (old ?: LocalPlaylist(id = id, title = title, localOnly = true, source = key)).copy(
+                albumInfo = info ?: old?.albumInfo,
+                title = title, artworkUrl = cover ?: old?.artworkUrl, tracks = tracks.distinctBy { it.urn }, tracksLoaded = true, deleted = false,
+            )
+            listOf(saved) + albums.filterNot { it.id == id }
+        }
+    }
 
     fun owns(urn: String): Boolean = find(urn) != null
 

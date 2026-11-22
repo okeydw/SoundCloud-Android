@@ -5,6 +5,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -96,7 +99,14 @@ fun Backdrop(
     val p = LocalGlass.current
     val fx = LocalFx.current
     val time by rememberAmbientTime(fx.drift && NowPlaying.isPlaying)
-    val orbColors = colors.ifEmpty { listOf(p.accent) }
+    val targets = colors.ifEmpty { listOf(p.accent) }
+    val orbColors = List(3) { index ->
+        animateColorAsState(
+            targetValue = targets[index % targets.size],
+            animationSpec = tween(650, easing = FastOutSlowInEasing),
+            label = "ambient colour $index",
+        ).value
+    }
     Box(modifier.fillMaxSize().background(p.bgBrush())) {
         val path = if (wallpaper) Prefs.backgroundImage else null
         if (path != null) {
@@ -158,9 +168,12 @@ fun Backdrop(
 @Composable
 fun rememberArtColor(model: Any?): Color? {
     val context = LocalContext.current
-    var color by remember(model) { mutableStateOf<Color?>(null) }
-    LaunchedEffect(model) {
-        if (model == null) return@LaunchedEffect
+    var color by remember { mutableStateOf<Color?>(null) }
+    LaunchedEffect(model, context) {
+        if (model == null) {
+            color = null
+            return@LaunchedEffect
+        }
         color = runCatching {
             val request = ImageRequest.Builder(context).data(model).allowHardware(false).size(96).build()
             val bitmap = ((context.imageLoader.execute(request) as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap
@@ -170,9 +183,14 @@ fun rememberArtColor(model: Any?): Color? {
                 val swatch = palette.vibrantSwatch ?: palette.lightVibrantSwatch ?: palette.dominantSwatch
                 swatch?.rgb?.let { Color(it) }
             }
-        }.getOrNull()
+        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrNull()
     }
-    return color
+    val tint by animateColorAsState(
+        targetValue = color ?: LocalGlass.current.accent,
+        animationSpec = tween(650, easing = FastOutSlowInEasing),
+        label = "artwork tint",
+    )
+    return tint
 }
 
 @Composable

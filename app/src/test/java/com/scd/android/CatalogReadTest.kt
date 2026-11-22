@@ -82,8 +82,75 @@ class CatalogReadTest {
             }
             fail("Must propagate cancellation")
         } catch (e: CancellationException) {
-            assertSame(cancelled, e)
+            assertEquals(cancelled.message, e.message)
         }
         assertEquals(1, calls)
+    }
+
+    @Test fun visibleCollectionKeepsWaitingBeyondTheBackgroundBudget() = runBlocking {
+        var time = 0L
+        var calls = 0
+        var pending = 0
+        val waits = mutableListOf<Long>()
+        val result = CatalogRead.observe({ pending++ }) {
+            CatalogRead.awaitReady(now = { time }, pause = { waits += it; time += it }) {
+                if (++calls <= 20) throw ApiHttpException(503, """{"code":"collection_refresh_pending"}""")
+                "ready"
+            }
+        }
+        assertEquals("ready", result)
+        assertEquals(20, pending)
+        assertTrue(time > 60_000L)
+        assertTrue(waits.all { it in 5_000L..30_000L })
+        assertEquals(30_000L, waits.last())
+    }
+
+    @Test fun visibleCollectionCanBeCancelledAndDoesNotHideTerminalErrors() = runBlocking {
+        val cancelled = CancellationException("closed")
+        try {
+            CatalogRead.observe {
+                CatalogRead.awaitReady(pause = { throw cancelled }) {
+                    throw ApiHttpException(503, """{"code":"collection_refresh_pending"}""")
+                }
+            }
+            fail("Cancellation expected")
+        } catch (e: CancellationException) {
+            assertEquals(cancelled.message, e.message)
+        }
+        val forbidden = ApiHttpException(403, "forbidden")
+        try {
+            CatalogRead.observe {
+                CatalogRead.awaitReady(pause = { fail("No retry") }) { throw forbidden }
+            }
+            fail("Forbidden expected")
+        } catch (e: ApiHttpException) {
+            assertSame(forbidden, e)
+        }
+    }
+
+    @Test fun observerCancellationSurvivesNonCancellableSync() = runBlocking {
+        val owner = kotlinx.coroutines.Job()
+        var calls = 0
+        var waits = 0
+        try {
+            kotlinx.coroutines.withContext(owner) {
+                CatalogRead.observe {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        CatalogRead.awaitReady(pause = {
+                            assertEquals(1, ++waits)
+                            owner.cancel()
+                            kotlinx.coroutines.yield()
+                        }) {
+                            calls++
+                            throw ApiHttpException(503, """{"code":"collection_refresh_pending"}""")
+                        }
+                    }
+                }
+            }
+            fail("Cancelled screen must stop waiting")
+        } catch (_: CancellationException) {
+            assertEquals(1, calls)
+            assertEquals(1, waits)
+        } finally { owner.cancel() }
     }
 }

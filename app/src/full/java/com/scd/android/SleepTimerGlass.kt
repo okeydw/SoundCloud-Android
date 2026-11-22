@@ -51,6 +51,7 @@ fun SleepTimerSheet(onDismiss: () -> Unit) {
                     onDismiss()
                 }
             }
+            CustomSleepTime(onDismiss, Modifier.padding(horizontal = 20.dp))
             if (SleepTimer.active) {
                 Spacer(Modifier.height(4.dp))
                 if (SleepTimer.endsAt > 0L) {

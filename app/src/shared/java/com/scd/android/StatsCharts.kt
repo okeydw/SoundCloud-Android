@@ -1,6 +1,9 @@
 package com.scd.android
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -98,17 +101,29 @@ fun ListeningStats.filledTimeline(): List<TimelinePoint> {
 }
 
 @Composable
+fun timelineLabel(unit: String): String = stringResource(when (unit) {
+    "month" -> R.string.stats_timeline_month
+    "week" -> R.string.stats_timeline_week
+    else -> R.string.stats_timeline
+})
+
+@Composable
 fun TimelineChart(points: List<TimelinePoint>, color: Color, track: Color, modifier: Modifier = Modifier) {
     val max = (points.maxOfOrNull { it.listenedMs } ?: 0L).coerceAtLeast(1L)
-    Canvas(modifier.fillMaxWidth().height(110.dp)) {
-        if (points.isEmpty()) return@Canvas
-        val gap = 2.dp.toPx()
-        val w = ((size.width - gap * (points.size - 1)) / points.size).coerceAtLeast(1f)
-        points.forEachIndexed { i, pt ->
-            val x = i * (w + gap)
-            drawRoundRect(track, Offset(x, 0f), Size(w, size.height), CornerRadius(w / 2, w / 2))
-            val h = (pt.listenedMs.toFloat() / max * size.height).coerceAtLeast(if (pt.listenedMs > 0) 3.dp.toPx() else 0f)
-            if (h > 0f) drawRoundRect(color, Offset(x, size.height - h), Size(w, h), CornerRadius(w / 2, w / 2))
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val chartWidth = maxOf(maxWidth, (points.size * 7).dp)
+        androidx.compose.foundation.layout.Box(Modifier.horizontalScroll(rememberScrollState())) {
+        Canvas(Modifier.width(chartWidth).height(150.dp)) {
+            if (points.isEmpty()) return@Canvas
+            val gap = 2.dp.toPx()
+            val w = ((size.width - gap * (points.size - 1)) / points.size).coerceAtLeast(1f)
+            points.forEachIndexed { i, pt ->
+                val x = i * (w + gap)
+                drawRoundRect(track, Offset(x, 0f), Size(w, size.height), CornerRadius(w / 2, w / 2))
+                val h = (pt.listenedMs.toFloat() / max * size.height).coerceAtLeast(if (pt.listenedMs > 0) 3.dp.toPx() else 0f)
+                if (h > 0f) drawRoundRect(color, Offset(x, size.height - h), Size(w, h), CornerRadius(w / 2, w / 2))
+            }
+        }
         }
     }
 }

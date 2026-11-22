@@ -129,9 +129,10 @@ Ardından giriş gelir: SoundCloud üzerinden ya da masaüstü sürümündeki QR
 
 - **Dalga ve öneriler** - beğenilere ve dinleme geçmişine dayanan kendi öneri sistemimiz
 - **Arama** - parçalar, sanatçılar, çalma listeleri, albümler ve vibe araması (bir sinir ağı bağlama göre parça seçer)
-- **Oynatıcı** - karıştırma, tekrar, sıra, şarkı sözleri, beğeni ve beğenmeme
+- **Oynatıcı** - karıştırma, tekrar, sıra, şarkı sözleri, beğeni ve beğenmeme. Sanatçının profilini açmak için genişletilmiş oynatıcıda adına dokun. Parça listelerinde ada dokunmak parçayı çalar.
 - **Ekolayzır** - hazır ön ayarlar ve kendi ön ayarını oluşturma
 - **Çalma listeleri** - SoundCloud ile senkronize kendi yerel listelerin, herkese açık veya gizli, parça sırası sürükleyerek değişir ve kaydedilir
+- **Sıralama ve beğenilenlerin sırası** - «Ben» bölümündeki parçaların üzerinde küçük bir simgeyle başlık, sanatçı, süre ve diğer alanlara göre sıralama. «Sırayı değiştir» ile beğenilen parçaları elle taşıyabilirsin; sıra cihazda saklanır ve çalarken kullanılır. Çalma listelerinde sıralama kontrolü yoktur.
 - **Geçmiş ve istatistikler** - dinleme süresi, en çok dinlenen parçalar ve sanatçılar, günlere ve saatlere göre grafik
 - **Profiller** - takip etme ve takibi bırakma, SoundCloud profilindeki bağlantılar
 - **SoundCloud Auto (beta)** - Bluetooth cihazlara bağlanma senaryoları oluşturma
@@ -139,6 +140,7 @@ Ardından giriş gelir: SoundCloud üzerinden ya da masaüstü sürümündeki QR
 ### Çevrimdışı mod
 
 - Parça ve çalma listesi indirme, önbellekli çevrimdışı mod
+- **HLS onarımı** - eski indirmeler otomatik olarak veya «Ayarlar → Depolama → Bütünlüğü kontrol et» üzerinden elle kontrol edilir. Ses yeniden kodlanmadan kapsayıcı düzenlenir ve parça içinde ileri ve geri atlama dizini yeniden oluşturulur; bağlantı varsa eksik dosyalar tekrar indirilir. Sonuç, onarılması gereken kalan dosyaları gösterir.
 - Önbellek sınırını ve temizlenme zamanını elle ayarlama
 - İki sürüm de kuruluysa Full ve Lite arasında ortak indirmeler ve listeler (beta, kısmen çalışır)
 
@@ -189,9 +191,9 @@ Tüm değişiklikler [CHANGELOG.md](../../CHANGELOG.md) dosyasında.
 **Derleme:** JDK 17, Android SDK 35.
 
 ```bash
-./gradlew assembleLiteDebug assembleFullDebug   # APK app/build/outputs/apk/<flavor>/debug/ içinde
-./gradlew testLiteDebugUnitTest                 # birim testleri
-./gradlew lintLiteDebug                         # lint (baseline ile: ./gradlew updateLintBaseline)
+./gradlew assembleLiteDebug assembleFullDebug         # APK app/build/outputs/apk/<flavor>/debug/ içinde
+./gradlew testLiteDebugUnitTest testFullDebugUnitTest # birim testleri
+./gradlew lintLiteDebug lintFullDebug                 # lint (baseline ile: ./gradlew updateLintBaseline)
 ```
 
 **Kaynak kod:**

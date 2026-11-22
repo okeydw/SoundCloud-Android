@@ -2,7 +2,10 @@ package com.scd.android
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothLeAudio
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -17,7 +20,6 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -30,8 +32,7 @@ object CarAutoplay {
     const val DOWNLOADS = "downloads"
     const val PLAYLIST_PREFIX = "playlist:"
 
-    @Volatile
-    private var lastStart = 0L
+    private var connectedAddress: String? = null
 
     fun needsPermission(context: Context): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -48,138 +49,94 @@ object CarAutoplay {
         }.getOrDefault(emptyList())
     }
 
-    private fun a2dpActive(context: Context): Boolean {
-        val am = context.getSystemService(AudioManager::class.java) ?: return false
-        return am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
+    private fun audioReady(context: Context, address: String, name: String): Boolean {
+        val manager = context.getSystemService(AudioManager::class.java) ?: return false
+        val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { AudioOutput.isBluetooth(it) }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return outputs.isNotEmpty()
+        return outputs.any { it.address.equals(address, ignoreCase = true) || it.productName.toString() == name } ||
+            outputs.singleOrNull()?.let { it.address.isBlank() || it.address == "02:00:00:00:00:00" } == true
     }
 
     @SuppressLint("MissingPermission")
-    fun onConnected(context: Context, device: BluetoothDevice?, pending: BroadcastReceiver.PendingResult) {
-        val app = context.applicationContext
-        Prefs.init(app)
-        if (!Prefs.carAutoplay) {
-            pending.finish()
-            return
-        }
-        val address = runCatching { device?.address }.getOrNull()
-        val name = runCatching { device?.name }.getOrNull() ?: address ?: "?"
-        val scenario = CarScenarios.forDevice(address)
-        if (scenario == null) {
-            Logs.add("car", "$name: no scenario for this device")
-            pending.finish()
-            return
-        }
-        val now = System.currentTimeMillis()
-        val autoplay = now - lastStart >= 60_000L
-        if (autoplay) lastStart = now
-        App.scope.launch {
-            try {
-                val routed = withTimeoutOrNull(12_000) {
-                    while (!a2dpActive(app)) delay(500)
-                    true
-                } ?: false
-                if (!routed) {
-                    Logs.add("car", "$name connected, but audio is not routed to it")
-                    return@launch
-                }
-                withContext(Dispatchers.Main) { EqPresets.applyCar(scenario.eq) }
-                if (autoplay) start(app, name, scenario) else resume(app, name, scenario)
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                Logs.add("car", "autoplay failed: ${e.javaClass.simpleName} ${e.message?.take(80) ?: ""}")
-            } finally {
-                pending.finish()
-            }
+    fun onConnected(context: Context, device: BluetoothDevice) {
+        if (!Prefs.carAutoplay || needsPermission(context)) return
+        val address = device.address ?: return
+        if (address == connectedAddress || CarScenarios.forDevice(address) == null) return
+        val name = runCatching { device.name }.getOrNull() ?: address
+        val intent = Intent(context, CarStartService::class.java)
+            .putExtra("address", address).putExtra("deviceName", name)
+        try {
+            ContextCompat.startForegroundService(context, intent)
+            connectedAddress = address
+        } catch (e: RuntimeException) {
+            Logs.add("car", "$name: background start refused (${e.javaClass.simpleName})")
         }
     }
 
-    @SuppressLint("MissingPermission")
-    fun onDisconnected(context: Context, device: BluetoothDevice?) {
-        Prefs.init(context.applicationContext)
-        if (Prefs.carEqBackup() == null) return
-        val address = runCatching { device?.address }.getOrNull()
-        if (CarScenarios.forDevice(address) == null) return
-        App.scope.launch(Dispatchers.Main) { EqPresets.restoreCar() }
+    fun onDisconnected(context: Context, address: String) {
+        if (connectedAddress != null && address != connectedAddress) return
+        if (connectedAddress == null && (Prefs.carEqBackup() == null || CarScenarios.forDevice(address) == null)) return
+        connectedAddress = null
+        context.stopService(Intent(context, CarStartService::class.java))
+        EqPresets.restoreCar()
     }
 
-    private suspend fun resume(context: Context, deviceName: String, scenario: CarScenario): Boolean = withContext(Dispatchers.Main) {
+    internal fun startFailed(address: String) {
+        if (connectedAddress == address) connectedAddress = null
+    }
+
+    internal suspend fun runScenario(context: Context, address: String, name: String) {
+        fun connected() = Prefs.carAutoplay && connectedAddress == address
+        if (!connected()) return
+        val routed = withTimeoutOrNull(20_000) {
+            while (connected() && !audioReady(context, address, name)) delay(250)
+            connected()
+        } == true
+        if (!routed) {
+            Logs.add("car", "$name: Bluetooth audio output did not become ready")
+            startFailed(address)
+            return
+        }
+        val scenario = CarScenarios.forDevice(address) ?: return
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val controller = connect(context, token)
         try {
-            if (controller.isPlaying) {
-                Logs.add("car", "$deviceName: already playing")
-                return@withContext true
-            }
+            fun ready() = connected() && audioReady(context, address, name)
+            if (!ready()) return
+            EqPresets.applyCar(scenario.eq)
+            if (controller.isPlaying || controller.playWhenReady && controller.playbackState != androidx.media3.common.Player.STATE_ENDED) return
             val finished = controller.playbackState == androidx.media3.common.Player.STATE_ENDED && !controller.hasNextMediaItem()
-            if (controller.mediaItemCount == 0 || controller.currentMediaItem == null || finished) return@withContext false
-            if (controller.playbackState == androidx.media3.common.Player.STATE_IDLE) controller.prepare()
-            val title = controller.currentMediaItem?.mediaMetadata?.title?.toString()?.take(30) ?: "?"
-            if (!scenario.autostart) {
-                Logs.add("car", "$deviceName: kept the current queue ($title), waiting for play")
-                return@withContext true
-            }
-            controller.play()
-            Logs.add("car", "$deviceName: continuing $title")
-            var resumes = 0
-            repeat(10) {
-                delay(500)
-                if (!controller.playWhenReady && resumes < 2) {
-                    resumes++
-                    controller.play()
+            if (controller.currentMediaItem == null || finished) {
+                val tracks = withContext(Dispatchers.IO) {
+                    val online = hasNetwork(context) && !Prefs.offline
+                    tracksFor(scenario.source, online)
+                        .filter { online || Downloads.isDownloaded(it.urn) }
+                        .ifEmpty { Downloads.tracks() }
+                        .filter { Playback.playable(it) && !it.hidden }
                 }
-            }
-            true
-        } finally {
-            controller.release()
-        }
-    }
-
-    private suspend fun start(context: Context, deviceName: String, scenario: CarScenario) {
-        if (resume(context, deviceName, scenario)) return
-        val online = hasNetwork(context) && !Prefs.offline
-        var tracks = tracksFor(scenario.source, online)
-        if (!online) tracks = tracks.filter { Downloads.isDownloaded(it.urn) }
-        if (tracks.isEmpty() && scenario.source != DOWNLOADS) {
-            Logs.add("car", "source is empty, falling back to downloads")
-            tracks = Downloads.tracks()
-        }
-        tracks = tracks.filter { Playback.playable(it) && !it.hidden }
-        if (scenario.shuffle) tracks = tracks.shuffled()
-        if (tracks.isEmpty()) {
-            Logs.add("car", "$deviceName: nothing to play")
-            return
-        }
-        withContext(Dispatchers.Main) {
-            val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
-            val controller = connect(context, token)
-            try {
-                if (controller.isPlaying) {
-                    Logs.add("car", "$deviceName: already playing")
-                    return@withContext
+                if (!ready() || controller.isPlaying) return
+                if (tracks.isEmpty()) {
+                    Logs.add("car", "$name: nothing to play")
+                    return
                 }
                 NowPlaying.autoContinue = scenario.source == WAVE
                 LocalRadio.stopTrackRadio()
-                controller.setMediaItems(tracks.map { it.toMediaItem() }, 0, 0)
-                controller.prepare()
-                if (!scenario.autostart) {
-                    Logs.add("car", "$deviceName: ${sourceLabelForLog(scenario)} (${tracks.size}) is ready, waiting for play")
-                    return@withContext
-                }
-                controller.play()
-                Logs.add("car", "$deviceName: playing ${sourceLabelForLog(scenario)} (${tracks.size})")
-                var resumes = 0
-                repeat(20) {
-                    delay(500)
-                    if (!controller.playWhenReady && resumes < 2) {
-                        resumes++
-                        Logs.add("car", "$deviceName: paused right after start (${stateName(controller)}), resuming")
-                        controller.play()
-                    }
-                }
-                Logs.add("car", "$deviceName: ${stateName(controller)}")
-            } finally {
-                controller.release()
+                val queue = if (scenario.shuffle) tracks.shuffled() else tracks
+                controller.setMediaItems(queue.map { it.toMediaItem() }, 0, 0)
             }
+            if (controller.playbackState == androidx.media3.common.Player.STATE_IDLE) controller.prepare()
+            if (!scenario.autostart) {
+                Logs.add("car", "$name: queue ready, waiting for play")
+                return
+            }
+            controller.play()
+            Logs.add("car", "$name: starting playback")
+            withTimeoutOrNull(30_000) {
+                while (connected() && controller.playWhenReady && !controller.isPlaying && controller.playerError == null) delay(250)
+            }
+            Logs.add("car", "$name: ${stateName(controller)}")
+        } finally {
+            controller.release()
         }
     }
 
@@ -209,8 +166,6 @@ object CarAutoplay {
         return "playing=${c.isPlaying} play=${c.playWhenReady} state=$state$suppressed$error"
     }
 
-    private fun sourceLabelForLog(s: CarScenario): String = s.name.ifBlank { s.sourceTitle.ifEmpty { s.source } }
-
     suspend fun tracksFor(source: String, online: Boolean): List<Track> = when {
         source == LIKED -> {
             val remote = if (online) runCatching { Api.likedTracks(0, 100) }.getOrNull()?.collection else null
@@ -234,17 +189,19 @@ object CarAutoplay {
 class CarConnectReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
-        if (action != BluetoothDevice.ACTION_ACL_CONNECTED && action != BluetoothDevice.ACTION_ACL_DISCONNECTED) return
+        if (action != BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED &&
+            !(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && action == BluetoothLeAudio.ACTION_LE_AUDIO_CONNECTION_STATE_CHANGED)) return
+        if (CarAutoplay.needsPermission(context)) return
         val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
         }
-        if (action == BluetoothDevice.ACTION_ACL_DISCONNECTED) {
-            CarAutoplay.onDisconnected(context, device)
-        } else {
-            CarAutoplay.onConnected(context, device, goAsync())
+        device ?: return
+        when (intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)) {
+            BluetoothProfile.STATE_CONNECTED -> CarAutoplay.onConnected(context, device)
+            BluetoothProfile.STATE_DISCONNECTED -> CarAutoplay.onDisconnected(context, device.address)
         }
     }
 }
